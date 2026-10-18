@@ -1,0 +1,19 @@
+## Interface: 16001
+## Title: Cabbie map data: Eastern Kingdoms shortcuts
+## Notes: Faster route search on foot in Eastern Kingdoms for Cabbie. Loaded by Cabbie when needed; keep it enabled.
+## Author: Cabbie contributors
+## Version: 1.0.0
+## LoadOnDemand: 1
+## Dependencies: Cabbie, Cabbie_Data_EK
+## X-Cabbie-Instance: 0
+## X-Cabbie-Part: landmarks
+## X-Cabbie-DataVersion: 2026.10.18.3
+## X-License: GPL-3.0-or-later
+
+
+Open.lua
+Graph_0_07.lua
+Graph_0_08.lua
+Graph_0_09.lua
+Graph_0_10.lua
+Register.lua

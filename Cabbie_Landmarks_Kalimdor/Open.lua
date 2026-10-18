@@ -1,0 +1,3 @@
+
+local _, ns = ...
+ns.Data = { graphs = { [1] = {} } }

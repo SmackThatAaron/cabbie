@@ -1,0 +1,21 @@
+## Interface: 16001
+## Title: Cabbie map data: Kalimdor
+## Notes: Road map of Kalimdor for Cabbie. Loaded by Cabbie when needed; keep it enabled.
+## Author: Cabbie contributors
+## Version: 1.0.0
+## LoadOnDemand: 1
+## Dependencies: Cabbie
+## X-Cabbie-Instance: 1
+## X-Cabbie-Part: graph
+## X-Cabbie-DataVersion: 2026.10.18.3
+## X-License: GPL-3.0-or-later
+
+
+Graph_1_01.lua
+Graph_1_02.lua
+Graph_1_03.lua
+Graph_1_04.lua
+Graph_1_05.lua
+Graph_1_06.lua
+Graph_1_07.lua
+Register.lua

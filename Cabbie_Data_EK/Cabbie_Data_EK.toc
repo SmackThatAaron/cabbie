@@ -1,0 +1,20 @@
+## Interface: 16001
+## Title: Cabbie map data: Eastern Kingdoms
+## Notes: Road map of Eastern Kingdoms for Cabbie. Loaded by Cabbie when needed; keep it enabled.
+## Author: Cabbie contributors
+## Version: 1.0.0
+## LoadOnDemand: 1
+## Dependencies: Cabbie
+## X-Cabbie-Instance: 0
+## X-Cabbie-Part: graph
+## X-Cabbie-DataVersion: 2026.10.18.3
+## X-License: GPL-3.0-or-later
+
+
+Graph_0_01.lua
+Graph_0_02.lua
+Graph_0_03.lua
+Graph_0_04.lua
+Graph_0_05.lua
+Graph_0_06.lua
+Register.lua

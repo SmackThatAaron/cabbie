@@ -1,0 +1,16 @@
+## Interface: 16001
+## Title: Cabbie map data: Zephras Isle
+## Notes: Road map of Zephras Isle for Cabbie. Loaded by Cabbie when needed; keep it enabled.
+## Author: Cabbie contributors
+## Version: 1.0.0
+## LoadOnDemand: 1
+## Dependencies: Cabbie
+## X-Cabbie-Instance: 2991
+## X-Cabbie-Part: graph
+## X-Cabbie-DataVersion: 2026.10.18.3
+## X-License: GPL-3.0-or-later
+
+
+Graph_2991_01.lua
+Graph_2991_02.lua
+Register.lua
