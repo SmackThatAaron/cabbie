@@ -1,0 +1,48 @@
+<Bindings>
+	<!--
+		Key bindings for Cabbie. The client loads this file from the add-on folder by itself; it is
+		not listed in the table of contents. The display names live in Cabbie/UI/Bindings.lua
+		(BINDING_HEADER_CABBIE and the BINDING_NAME_CABBIE_* strings), and every action goes through
+		one dispatcher there so the bindings keep working when a module is missing and so nothing
+		protected is ever called from a key press.
+	-->
+	<Binding name="CABBIE_GOTO" runOnUp="true" category="BINDING_HEADER_CABBIE">
+		if Cabbie and Cabbie.UI and Cabbie.UI.Bindings and keystate == "up" then Cabbie.UI.Bindings.Run("goTo") end
+	</Binding>
+
+	<Binding name="CABBIE_SEARCH" category="BINDING_HEADER_CABBIE">
+		if Cabbie and Cabbie.UI and Cabbie.UI.Bindings then Cabbie.UI.Bindings.Run("search") end
+	</Binding>
+
+	<Binding name="CABBIE_STEP_LIST" category="BINDING_HEADER_CABBIE">
+		if Cabbie and Cabbie.UI and Cabbie.UI.Bindings then Cabbie.UI.Bindings.Run("stepList") end
+	</Binding>
+
+	<Binding name="CABBIE_PAUSE_RESUME" category="BINDING_HEADER_CABBIE">
+		if Cabbie and Cabbie.UI and Cabbie.UI.Bindings then Cabbie.UI.Bindings.Run("pauseResume") end
+	</Binding>
+
+	<Binding name="CABBIE_REPEAT" category="BINDING_HEADER_CABBIE">
+		if Cabbie and Cabbie.UI and Cabbie.UI.Bindings then Cabbie.UI.Bindings.Run("repeat") end
+	</Binding>
+
+	<Binding name="CABBIE_MUTE" category="BINDING_HEADER_CABBIE">
+		if Cabbie and Cabbie.UI and Cabbie.UI.Bindings then Cabbie.UI.Bindings.Run("mute") end
+	</Binding>
+
+	<Binding name="CABBIE_CANCEL" category="BINDING_HEADER_CABBIE">
+		if Cabbie and Cabbie.UI and Cabbie.UI.Bindings then Cabbie.UI.Bindings.Run("cancel") end
+	</Binding>
+
+	<Binding name="CABBIE_CLEAR" category="BINDING_HEADER_CABBIE">
+		if Cabbie and Cabbie.UI and Cabbie.UI.Bindings then Cabbie.UI.Bindings.Run("clear") end
+	</Binding>
+
+	<Binding name="CABBIE_ARROW" category="BINDING_HEADER_CABBIE">
+		if Cabbie and Cabbie.UI and Cabbie.UI.Bindings then Cabbie.UI.Bindings.Run("arrow") end
+	</Binding>
+
+	<Binding name="CABBIE_MAP_DESTINATION" category="BINDING_HEADER_CABBIE">
+		if Cabbie and Cabbie.UI and Cabbie.UI.Bindings then Cabbie.UI.Bindings.Run("mapDestination") end
+	</Binding>
+</Bindings>

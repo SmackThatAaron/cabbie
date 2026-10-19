@@ -1,0 +1,110 @@
+## Interface: 16001
+## Title: Cabbie
+## Notes: Turn-by-turn navigation for World of Warcraft: Forever. Search a destination, preview the fastest route including flights and boats, then follow the route steps beside your quest list, a turn call-out, map lines and optional voice guidance.
+## Author: Cabbie contributors
+## Version: 1.1.0
+## SavedVariables: CabbieDB, CabbieQuests
+## SavedVariablesPerCharacter: CabbieCharDB
+## X-License: GPL-3.0-or-later
+## X-Category: Map & Minimap
+## IconTexture: Interface\AddOns\Cabbie\Media\icon
+
+# Load order follows docs/ARCHITECTURE.md section 4: Libs -> Locale -> Core -> Data -> Nav -> UI -> Core\Boot.lua.
+# Every addon file receives (ADDON_NAME, FGPS) through the vararg and attaches itself to FGPS.
+
+Libs\LibStub\LibStub.lua
+Libs\CallbackHandler-1.0\CallbackHandler-1.0.lua
+Libs\HereBeDragons\HereBeDragons-2.0.lua
+Libs\HereBeDragons\HereBeDragons-Pins-2.0.lua
+
+# enUS loads first: it builds FGPS.L and the catalogue every other locale overrides. Each of the
+# other files applies itself only when GetLocale() matches, so the client loads ten small no-ops.
+Locale\enUS.lua
+Locale\deDE.lua
+Locale\esES.lua
+Locale\esMX.lua
+Locale\frFR.lua
+Locale\itIT.lua
+Locale\koKR.lua
+Locale\ptBR.lua
+Locale\ruRU.lua
+Locale\zhCN.lua
+Locale\zhTW.lua
+
+Core\Init.lua
+Core\Log.lua
+Core\Events.lua
+Core\DB.lua
+Core\Scheduler.lua
+Core\Perf.lua
+Core\DataLoad.lua
+Core\SelfTest.lua
+
+Data\Manifest.lua
+Data\Maps.lua
+Data\POI.lua
+Data\Taxi.lua
+Data\Transports.lua
+Data\Interiors.lua
+Data\Danger.lua
+Data\Links.lua
+Data\Water.lua
+Data\Chokepoints.lua
+Data\Quests.lua
+Data\QuestGivers.lua
+Data\QuestAreas_0.lua
+Data\QuestAreas_1.lua
+Data\QuestAreas_X.lua
+Data\QuestIndex.lua
+Data\QuestsForever.lua
+
+Nav\Coords.lua
+Nav\Graph.lua
+Nav\Access.lua
+Nav\Cost.lua
+Nav\RouteModel.lua
+Nav\Router.lua
+Nav\Instructions.lua
+Nav\Personal.lua
+Nav\Transport.lua
+Nav\Destinations.lua
+Nav\Quests.lua
+Nav\QuestData.lua
+Nav\Services.lua
+Nav\Social.lua
+Nav\Calibrate.lua
+Nav\Navigator.lua
+
+UI\Look.lua
+UI\Guide.lua
+UI\RouteBlock.lua
+UI\Callout.lua
+UI\Go.lua
+UI\Menus.lua
+UI\SearchRows.lua
+UI\SearchLine.lua
+UI\Skins.lua
+UI\Frames.lua
+UI\Positions.lua
+UI\EditMode.lua
+UI\WorldMap.lua
+UI\MapPlaces.lua
+UI\Minimap.lua
+UI\Launcher.lua
+UI\QuestMap.lua
+UI\QuestMarks.lua
+UI\QuestPanel.lua
+UI\Search.lua
+UI\Preview.lua
+UI\Favorites.lua
+UI\Itinerary.lua
+UI\Voice.lua
+UI\InWorldPin.lua
+UI\Settings.lua
+UI\Setup.lua
+UI\Cues.lua
+UI\Bindings.lua
+UI\Compat.lua
+UI\MapShot.lua
+
+Core\Boot.lua

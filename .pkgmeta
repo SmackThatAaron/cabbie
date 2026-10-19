@@ -1,0 +1,14 @@
+# CurseForge's packager: the root is the Cabbie add-on, and the five map add-ons move out beside it.
+package-as: Cabbie
+
+manual-changelog: CHANGELOG.md
+
+move-folders:
+  Cabbie/Cabbie_Data_EK: Cabbie_Data_EK
+  Cabbie/Cabbie_Data_Kalimdor: Cabbie_Data_Kalimdor
+  Cabbie/Cabbie_Data_Zephras: Cabbie_Data_Zephras
+  Cabbie/Cabbie_Landmarks_EK: Cabbie_Landmarks_EK
+  Cabbie/Cabbie_Landmarks_Kalimdor: Cabbie_Landmarks_Kalimdor
+
+ignore:
+  - README.md
