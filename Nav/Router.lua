@@ -2724,14 +2724,14 @@ local function labelClimb(leg)
         local up = leg.steepClimb > 0
         if leg.climbGuessed then
             if up then
-                leg.climbNote = string.format(L["No known path nearby leads up here: the way on may be about %d yd above you."], yards)
+                leg.climbNote = string.format(L["No road nearby leads up here: the way on may be about %d yd above you."], yards)
             else
-                leg.climbNote = string.format(L["No known path nearby leads down here: the way on may be about %d yd below you."], yards)
+                leg.climbNote = string.format(L["No road nearby leads down here: the way on may be about %d yd below you."], yards)
             end
         elseif up then
-            leg.climbNote = string.format(L["No known path nearby leads up here: the way on is about %d yd above the straight line."], yards)
+            leg.climbNote = string.format(L["No road nearby leads up here: the way on is about %d yd above the direct line."], yards)
         else
-            leg.climbNote = string.format(L["No known path nearby leads down here: the way on is about %d yd below the straight line."], yards)
+            leg.climbNote = string.format(L["No road nearby leads down here: the way on is about %d yd below the direct line."], yards)
         end
     end
 end
@@ -2751,9 +2751,7 @@ local function finishWalk(leg)
 
 
 
-
-
-    local dashed = R.DashedKinds()
+    local stroke = R.Stroke
     local straightYards, connectorYards, meshYards = 0, 0, 0
     for i = 2, #pts do
         local k = pts[i].k
@@ -2765,8 +2763,9 @@ local function finishWalk(leg)
             else straightYards = straightYards + d end
         end
         if i < #pts then
-            local a, b = dashed[k] or false, dashed[pts[i + 1].k] or false
-            if a ~= b then pts[i].f = R.AddFlag(pts[i].f, R.FLAGS.BOUNDARY) end
+            if stroke(k) ~= stroke(pts[i + 1].k) then
+                pts[i].f = R.AddFlag(pts[i].f, R.FLAGS.BOUNDARY)
+            end
         end
     end
     leg.unverified = leg.unverifiedYards > 0
@@ -2776,7 +2775,7 @@ local function finishWalk(leg)
         and (leg.terrainRoadYards or 0) < ZERO_YARDS and (leg.terrainGroundYards or 0) < ZERO_YARDS
         and (leg.surfaceYards or 0) < ZERO_YARDS and (leg.surfaceSwimYards or 0) < ZERO_YARDS then
         leg.straight = true
-        leg.label = L["Straight line (no verified path)"]
+        leg.label = L["Open ground"]
     end
     labelClimb(leg)
     return leg
@@ -3293,7 +3292,7 @@ local function straightLeg(ctx)
     end
     local leg = { kind = "walk", inst = o.inst, points = { { x = o.x, y = o.y, f = F.ORIGIN }, { x = d.x, y = d.y, f = F.STOP, k = KIND_ATTACH } },
                   yards = yards, seconds = honest, verifiedYards = 0, unverifiedYards = yards, roadYards = 0, straightYards = yards, connectorYards = 0, meshYards = 0,
-                  unverified = true, straight = true, label = L["Straight line (no verified path)"] }
+                  unverified = true, straight = true, label = L["Open ground"] }
     if o.inst == d.inst then
         noteClimb(leg, leg.points[2], yards, originZ, destZ, ctx.originGuessed or destGuessed or nil)
         labelClimb(leg)
@@ -3971,6 +3970,10 @@ local function positionHeight(p)
     end
     return nil
 end
+
+
+
+
 
 
 
@@ -4662,11 +4665,47 @@ local function removeActive(handle)
     end
 end
 
+
+
+function Router._noteTiming(handle, route, err)
+    local Perf = FGPS.Perf
+    if not Perf or not Perf.NoteRoute then return end
+    if type(handle) ~= "table" or handle.cancelled then return end
+    if type(err) == "table" and err.code == "CANCELLED" then return end
+    local request = handle.request
+    local origin = handle.origin
+    if type(origin) ~= "table" and type(request) == "table" then origin = request.origin end
+    if type(origin) ~= "table" or type(origin.inst) ~= "number" then return end
+    local task = handle.task
+    local now = GetTime and GetTime() or nil
+    local wall = (now and handle.askedAt) and ((now - handle.askedAt) * 1000) or 0
+    local reason = type(request) == "table" and request.reason or nil
+    if reason == "alt" then reason = "alternative" end
+    local expansions = 0
+    if not handle.cached then
+        expansions = route and route.expansions or nil
+        if expansions == nil and type(err) == "table" and type(err.partial) == "table" then
+            expansions = err.partial.expansions
+        end
+    end
+    Perf:NoteRoute({
+        cpuMs = task and task.elapsedMs or 0,
+        wallMs = wall,
+        frames = task and task.slices or 0,
+        expansions = expansions or 0,
+        budgetMs = handle.budgetMs or 0,
+        fps = handle.fps,
+        reason = reason,
+        continent = origin.inst,
+    })
+end
+
 local function deliver(handle, route, err)
     if handle.delivered then return end
     handle.delivered = true
     handle.done = true
     removeActive(handle)
+    Router._noteTiming(handle, route, err)
     if type(handle.callback) == "function" then
         local ok, callErr = pcall(handle.callback, route, err)
         if not ok and FGPS.Log then FGPS.Log:Error("Route callback failed: %s", tostring(callErr)) end
@@ -4798,6 +4837,12 @@ function Router:RequestRoute(request, callback)
     local access = request.access or Access():Snapshot()
     request.access = access
     syncCacheHash(access.hash)
+    handle.askedAt = GetTime and GetTime() or nil
+    if GetFramerate then
+        local fpsOk, fpsValue = pcall(GetFramerate)
+        handle.fps = fpsOk and type(fpsValue) == "number" and fpsValue or nil
+    end
+    if Scheduler().RouteBudget then handle.budgetMs = Scheduler():RouteBudget() end
 
 
 

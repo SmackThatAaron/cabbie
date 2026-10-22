@@ -160,7 +160,7 @@ end
 
 
 
-local UNVERIFIED_KINDS = { [3] = true, [4] = true, [14] = true, [15] = true, [19] = true }
+local UNVERIFIED_KINDS = { [3] = true, [14] = true, [15] = true, [19] = true }
 
 local function unverifiedKinds()
     local Route = FGPS.Route
@@ -1163,7 +1163,12 @@ function WorldMap:OnCanvasClick(mapCanvas, button, cursorX, cursorY)
             local Guide = FGPS.UI.Guide
             if Guide and Guide.Say then Guide.Say(L["That spot cannot be reached"], WorldMap.GO_REFUSED_SECONDS) end
         else
-            FGPS:Print(L["That map position cannot be used as a destination%s"], err and (": " .. tostring(err)) or ".")
+
+            local Guide = FGPS.UI and FGPS.UI.Guide
+            if Guide and Guide.Say then
+                Guide.Say((L["That map position cannot be used as a destination%s"]):format(err and (": " .. tostring(err)) or "."),
+                    WorldMap.GO_REFUSED_SECONDS)
+            end
         end
         return true
     end
@@ -1193,14 +1198,14 @@ end
 
 
 WorldMap.LEGEND = {
-    { style = "solid", color = "routeVerified", text = "Solid line: known path" },
-    { style = "dashed", color = "routeUnverified", text = "Dashed line: rough direction" },
+    { style = "solid", color = "routeVerified", text = "Solid line: road or walkable ground" },
+    { style = "dashed", color = "routeUnverified", text = "Dashed line: open ground or a guess" },
     { style = "transport", color = "routeTransport", text = "Dotted coloured line: flight, boat or zeppelin" },
     { style = "icon", icon = DOCK_ICONS.boat, color = "routeTransport",
       text = "Boat or zeppelin icon: where you board; the label beside it names the far side" },
 }
 
-WorldMap.LEGEND_MINIMAP = "On the minimap a solid dot is a known path and a larger hollow dot is a rough direction."
+WorldMap.LEGEND_MINIMAP = "On the minimap a solid dot is a road or walkable ground, and a larger hollow dot is open ground or a guess."
 
 local function colorEscape(colorName)
     local r, g, b = skinColor(colorName)
@@ -1381,15 +1386,29 @@ end
 
 function WorldMap:ClearAll()
     local Navigator = FGPS.Navigator
+    local cleared = false
     if Navigator and Navigator.Clear then
-        local ok, err = pcall(Navigator.Clear, Navigator, "user")
-        if not ok and FGPS.Log then FGPS.Log:Error("Navigator:Clear failed: %s", tostring(err)) end
+        local ok, result = pcall(Navigator.Clear, Navigator, "user", { quiet = true })
+        if ok then
+            cleared = result and true or false
+        elseif FGPS.Log then
+            FGPS.Log:Error("Navigator:Clear failed: %s", tostring(result))
+        end
     end
     if self.route or self.markers then
         self.route, self.routeIsPreview, self.markers = nil, false, nil
         self:Redraw()
     end
     self:UpdateClearButton()
+
+
+    if cleared then
+        local Guide = FGPS.UI and FGPS.UI.Guide
+        if Guide and Guide.Say then
+            Guide.Say((L["Cleared. No route and no stops are set. Undo for %d seconds (/cabbie undo)."]):format(Navigator.UNDO_SECONDS),
+                Navigator.CLEARED_HOLD)
+        end
+    end
 end
 
 

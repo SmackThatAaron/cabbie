@@ -84,7 +84,7 @@ Voice.CLIP_SECONDS = {
     ["head_south"] = 0.80, ["head_southeast"] = 1.03, ["head_southwest"] = 1.02, ["head_west"] = 0.80, ["hearthstone"] = 1.19,
     ["in_100"] = 1.46, ["in_150"] = 1.62, ["in_200"] = 1.42, ["in_25"] = 1.41, ["in_300"] = 1.54,
     ["in_50"] = 1.19, ["in_500"] = 1.53, ["in_80"] = 1.10, ["keep_left"] = 0.77, ["keep_right"] = 0.79,
-    ["level_down"] = 1.54, ["level_up"] = 1.39, ["no_known_path"] = 3.14, ["no_route"] = 0.99, ["now"] = 0.53,
+    ["level_down"] = 1.54, ["level_up"] = 1.39, ["no_route"] = 0.99, ["now"] = 0.53,
     ["off_route"] = 1.65, ["open_ground"] = 1.88, ["portal"] = 0.99, ["ramp_down"] = 1.03, ["ramp_up"] = 0.83,
     ["ride_long"] = 1.30, ["route_cleared"] = 0.88, ["route_start"] = 0.98, ["route_updated"] = 1.01, ["sharp_left"] = 0.83,
     ["sharp_right"] = 0.84, ["stairs_down"] = 1.25, ["stairs_up"] = 1.11, ["stop_reached"] = 2.86, ["teleport"] = 1.17,

@@ -308,11 +308,11 @@ function MapPlaces.TooltipLines(index)
         if ok and type(pos) == "table" and pos.inst == P.inst[index] and pos.x and pos.y then
             local dx, dy = pos.x - P.x[index], pos.y - P.y[index]
             local s = settings()
-            lines[#lines + 1] = format(L["%s away in a straight line"], Util.FormatDistance(sqrt(dx * dx + dy * dy), s and s.units))
+            lines[#lines + 1] = format(L["%s away directly"], Util.FormatDistance(sqrt(dx * dx + dy * dy), s and s.units))
         end
     end
     lines[#lines + 1] = L["Click: guide me here"]
-    lines[#lines + 1] = L["During a trip, left-click asks before replacing the route"]
+    lines[#lines + 1] = L["During a route, left-click asks before replacing the route"]
     return lines
 end
 
@@ -382,7 +382,9 @@ local function onClick(icon, button)
     if not dest then
         local Guide = FGPS.UI.Guide
         if not goNow then
-            FGPS:Print(L["That map position cannot be used as a destination%s"], ".")
+            if Guide and Guide.Say then
+                Guide.Say((L["That map position cannot be used as a destination%s"]):format("."), WorldMap.GO_REFUSED_SECONDS)
+            end
         elseif Guide and Guide.Say then
             Guide.Say(L["That spot cannot be reached"], WorldMap.GO_REFUSED_SECONDS)
         end

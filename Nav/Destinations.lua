@@ -1063,7 +1063,7 @@ function Destinations.Describe(dest)
     if dest.reachable == "adjusted" and dest.adjustedYards then
         text = format("%s %s", text, format(L["(adjusted %d yd)"], dest.adjustedYards))
     elseif dest.reachable == false then
-        text = format("%s %s", text, L["(no verified path nearby)"])
+        text = format("%s %s", text, L["(open ground)"])
     end
     return text
 end

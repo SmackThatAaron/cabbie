@@ -111,35 +111,19 @@ local function actionClear()
         FGPS:Print(L["Navigation is not available right now."])
         return false
     end
-    return Navigator:Clear("user") and true or false
+    local cleared = Navigator:Clear("user", { quiet = true })
+    if cleared then
+        local Guide = FGPS.UI and FGPS.UI.Guide
+        if Guide and Guide.Say then
+            Guide.Say((L["Cleared. No route and no stops are set. Undo for %d seconds (/cabbie undo)."]):format(Navigator.UNDO_SECONDS),
+                Navigator.CLEARED_HOLD)
+        end
+    end
+    return cleared and true or false
 end
 
 
 local actionCancel = actionClear
-
-
-
-local function actionArrow()
-    local DB = FGPS.DB
-    if not DB or not DB.Set then return false end
-    local enabled = DB:Get("arrow.enabled") ~= false
-    DB:Set("arrow.enabled", not enabled)
-    FGPS:Print(enabled and L["Arrow disabled."] or L["Arrow enabled."])
-    return true
-end
-
-
-
-local function actionStepList()
-    local DB = FGPS.DB
-    if not DB or not DB.Set then return false end
-    local enabled = DB:Get("panel.enabled") == true
-    DB:Set("panel.enabled", not enabled)
-    local Panel = FGPS.UI.Panel
-    if Panel and Panel.UpdateVisibility then Panel.UpdateVisibility() end
-    FGPS:Print(enabled and L["Step list hidden."] or L["Step list shown."])
-    return true
-end
 
 
 local function actionPauseResume()
@@ -207,11 +191,10 @@ end
 
 
 
-Bindings.ORDER = { "goTo", "search", "stepList", "pauseResume", "repeat", "mute", "cancel", "clear", "arrow", "mapDestination" }
+Bindings.ORDER = { "goTo", "search", "pauseResume", "repeat", "mute", "cancel", "clear", "mapDestination" }
 Bindings.ACTIONS = {
     goTo = { binding = "CABBIE_GOTO", label = "Go to a place", run = actionGoTo },
     search = { binding = "CABBIE_SEARCH", label = "Open the destination search", run = actionSearch },
-    stepList = { binding = "CABBIE_STEP_LIST", label = "Toggle step list", run = actionStepList },
     pauseResume = { binding = "CABBIE_PAUSE_RESUME", label = "Pause or resume guidance", run = actionPauseResume },
     ["repeat"] = { binding = "CABBIE_REPEAT", label = "Repeat the current instruction", run = actionRepeat },
     mute = { binding = "CABBIE_MUTE", label = "Mute voice guidance", run = actionMute },
@@ -219,7 +202,6 @@ Bindings.ACTIONS = {
 
     cancel = { binding = "CABBIE_CANCEL", label = "Clear route", run = actionCancel },
     clear = { binding = "CABBIE_CLEAR", label = "Clear route", run = actionClear },
-    arrow = { binding = "CABBIE_ARROW", label = "Show or hide the guidance arrow", run = actionArrow },
     mapDestination = { binding = "CABBIE_MAP_DESTINATION", label = "Set a destination at the world map cursor", run = actionMapDestination },
 }
 

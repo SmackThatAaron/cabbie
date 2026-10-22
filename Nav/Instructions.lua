@@ -25,6 +25,8 @@
 
 
 
+
+
 local ADDON_NAME, FGPS = ...
 
 local Instructions = {
@@ -37,6 +39,10 @@ local Instructions = {
     MIN_REVERSAL_YARDS = 12,
     ZONE_CONFIRM_YARDS = 50,
     LANDMARK_YARDS = 60,
+
+
+
+    TOWN_YARDS = 50,
     LANDMARK_LEVEL_YARDS = 12,
     MIN_SEGMENT_YARDS = 3,
     MIN_UNVERIFIED_YARDS = 20,
@@ -65,6 +71,9 @@ local Instructions = {
 
 
 Instructions.WAY_KINDS = { [1] = true, [2] = true, [4] = true, [6] = true, [12] = true, [16] = true, [17] = true, [18] = true }
+
+
+Instructions.ROAD_KINDS = { [4] = true, [16] = true, [17] = true, [18] = true }
 
 
 
@@ -240,8 +249,96 @@ function Instructions.LandmarkNear(inst, x, y, radius, skip, z)
     return poi.name[best], sqrt(bestD), best
 end
 
+
+
+local TOWN_TYPE = { [1] = true, [5] = true }
+
+function Instructions.TownNear(inst, x, y, radius, z)
+    if inst == nil or x == nil or y == nil then return nil end
+    radius = radius or Instructions.TOWN_YARDS
+    local poi = FGPS.Data and FGPS.Data.poi
+    if not poi or not poi.name then return nil end
+    local grid = poiGrid(inst)
+    local cx, cy = floor(x / POI_CELL), floor(y / POI_CELL)
+    if type(z) ~= "number" then z = nil end
+    local level = Instructions.LANDMARK_LEVEL_YARDS
+    local best, bestD
+    local radiusSq = radius * radius
+    for dx = -1, 1 do
+        for dy = -1, 1 do
+            local cell = grid[poiCellKey(cx + dx, cy + dy)]
+            if cell then
+                for j = 1, #cell do
+                    local i = cell[j]
+                    if TOWN_TYPE[poi.type[i]] then
+                        local ex, ey = poi.x[i] - x, poi.y[i] - y
+                        local d2 = ex * ex + ey * ey
+                        if d2 <= radiusSq then
+                            local h = z and poiHeight(poi, i)
+                            if not (h and abs(h - z) > level) then
+                                if not bestD or d2 < bestD then best, bestD = i, d2 end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    if not best then return nil end
+    return poi.name[best], sqrt(bestD), best
+end
+
+local function pointKind(p)
+    return p and (p.k or p.kind)
+end
+
+
+
+
+local legTowns = setmetatable({}, { __mode = "k" })
+
+local function townsOfLeg(leg)
+    local cached = legTowns[leg]
+    if cached then return cached end
+    local pts = leg.points or {}
+    local n = #pts
+    local at, first, second = {}, {}, {}
+    for j = 1, n do
+        local _, _, idx = Instructions.TownNear(leg.inst, pts[j].x, pts[j].y, Instructions.TOWN_YARDS, pts[j].z)
+        at[j] = idx
+    end
+    for i = n - 1, 1, -1 do
+        if Instructions.ROAD_KINDS[pointKind(pts[i + 1])] then
+            local t, f2, s2 = at[i + 1], first[i + 1], second[i + 1]
+            if t and t ~= f2 then
+                first[i], second[i] = t, f2
+            else
+                first[i], second[i] = f2, s2
+            end
+        end
+    end
+    cached = { at = at, first = first, second = second }
+    legTowns[leg] = cached
+    return cached
+end
+
+
+
+local function townAhead(leg, at)
+    local pts = leg.points
+    local n = pts and #pts or 0
+    if at < 1 or at >= n then return nil end
+    if not Instructions.ROAD_KINDS[pointKind(pts[at + 1])] then return nil end
+    local towns = townsOfLeg(leg)
+    local pick = towns.first[at]
+    if pick and pick == towns.at[at] then pick = towns.second[at] end
+    if not pick then return nil end
+    return FGPS.Data.poi.name[pick]
+end
+
 function Instructions.ResetLandmarks()
     poiGrids, gridSource, gridCount = {}, nil, nil
+    legTowns = setmetatable({}, { __mode = "k" })
 end
 
 
@@ -304,6 +401,15 @@ local function describeTurn(step)
     if step.kind == "ramp" then
         text, short = L["Follow the ramp"], L["Follow the ramp"]
         voice = text .. "."
+    elseif step.toward then
+
+
+        local base = turnTexts(step.kind, nil)
+        local sink, voiceLine
+        sink, sink, voiceLine = turnTexts(step.kind, step.landmark)
+        text = format(L["%s toward %s"], base, step.toward)
+        short = text
+        voice = voiceLine
     else
         text, short, voice = turnTexts(step.kind, step.landmark)
     end
@@ -311,7 +417,7 @@ local function describeTurn(step)
     if guess and guess.checked then
         text = format(L["%s, then continue %s across open ground for %s"], text, guess.compass, guess.distance)
     elseif guess then
-        text = format(L["%s, then continue %s across open ground for %s (no verified path)"], text, guess.compass, guess.distance)
+        text = format(L["%s, then continue %s across open ground for %s"], text, guess.compass, guess.distance)
         if guess.steepNote then text = text .. " " .. guess.steepNote end
     end
     step.text, step.shortText, step.voiceText = text, short, voice
@@ -537,9 +643,16 @@ local function walkSteps(route, steps, leg, li, state)
         local landmark = Instructions.LandmarkNear(leg.inst, pts[1].x, pts[1].y, nil, skip, pts[1].z)
         local text = format(L["Head %s"], compass)
         if landmark then text = format(L["Head %s from %s"], compass, landmark) end
+        local shortText = format(L["Head %s"], compass)
+        local voiceText = text .. "."
+        local toward = townAhead(leg, 1)
+        if toward then
+            text = format(L["Follow the road toward %s"], toward)
+            shortText = text
+        end
         addStep(steps, { kind = "depart", legIndex = li, pointIndex = 1, inst = leg.inst, x = pts[1].x, y = pts[1].y,
-                         distanceFromStart = state.dist, seconds = state.secs, text = text, shortText = format(L["Head %s"], compass),
-                         voiceText = text .. ".", landmark = landmark, bearing = bearing })
+                         distanceFromStart = state.dist, seconds = state.secs, text = text, shortText = shortText,
+                         voiceText = voiceText, landmark = landmark, bearing = bearing, toward = toward })
         state.needDepart = false
     end
 
@@ -664,8 +777,8 @@ local function walkSteps(route, steps, leg, li, state)
                     text = format(L["Continue %s across open ground for %s"], compass, distance)
                     voiceText = format(L["Continue %s across open ground for %s."], compass, spokenDistance(stretch))
                 else
-                    text = format(L["Continue %s across open ground for %s (no verified path)"], compass, distance)
-                    voiceText = format(L["Continue %s across open ground for %s. There is no verified path here."], compass, spokenDistance(stretch))
+                    text = format(L["Continue %s across open ground for %s"], compass, distance)
+                    voiceText = format(L["Continue %s across open ground for %s."], compass, spokenDistance(stretch))
                 end
                 if steepNote then
                     text = text .. " " .. steepNote
@@ -751,7 +864,7 @@ local function walkSteps(route, steps, leg, li, state)
                             local step = { legIndex = li, pointIndex = i, inst = leg.inst, x = p.x, y = p.y,
                                            distanceFromStart = absolute, seconds = eta(along), turned = deg, sharp = sharp,
                                            lastAt = absolute, landmark = landmark, near = near,
-                                           surface = how == "surface" or nil,
+                                           surface = how == "surface" or nil, toward = townAhead(leg, i),
                                            windowed = (how == "surface" or how == "corner") or nil }
                             if guess then
                                 step.guess, step.unverified, step.steep = guess, not guess.checked or nil, guess.steepNote ~= nil or nil

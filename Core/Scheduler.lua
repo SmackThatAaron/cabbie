@@ -10,10 +10,14 @@ local debugprofilestop = debugprofilestop
 local coroutine, pcall, type, select, unpack = coroutine, pcall, type, select, unpack
 
 local MIN_BUDGET_MS, MAX_BUDGET_MS, DEFAULT_BUDGET_MS = 1, 8, 4
+local MIN_MAX_MS, MAX_MAX_MS, DEFAULT_MAX_MS = 4, 16, 12
 
 local Scheduler = {
     tasks = {},
     frameBudgetMs = DEFAULT_BUDGET_MS,
+    frameBudgetMaxMs = DEFAULT_MAX_MS,
+    spareFrame = true,
+    routeBudget = DEFAULT_BUDGET_MS,
     frameStart = 0,
     current = nil,
     rotation = 0,
@@ -21,6 +25,71 @@ local Scheduler = {
     stats = { started = 0, completed = 0, failed = 0, cancelled = 0, sliceMs = 0, slices = 0 },
 }
 FGPS.Scheduler = Scheduler
+
+local function clampMax(ms)
+    ms = tonumber(ms) or DEFAULT_MAX_MS
+    if ms < MIN_MAX_MS then ms = MIN_MAX_MS end
+    if ms > MAX_MAX_MS then ms = MAX_MAX_MS end
+    return ms
+end
+
+local function spareWanted()
+    local DB = FGPS.DB
+    if DB and DB.Get then
+        local value = DB:Get("perf.spareFrame")
+        if value ~= nil then return value and true or false end
+    end
+    return Scheduler.spareFrame ~= false
+end
+
+local function maxBudget()
+    local DB = FGPS.DB
+    local ms = DB and DB.Get and DB:Get("perf.frameBudgetMaxMs")
+    if ms == nil then ms = Scheduler.frameBudgetMaxMs end
+    return clampMax(ms)
+end
+
+local function frameShown(name)
+    local frame = _G[name]
+    if type(frame) ~= "table" or type(frame.IsShown) ~= "function" then return false end
+    local ok, shown = pcall(frame.IsShown, frame)
+    return ok and shown and true or false
+end
+
+
+
+local function playerBusy()
+    if InCombatLockdown and InCombatLockdown() then return true end
+    if frameShown("CinematicFrame") or frameShown("MovieFrame") then return true end
+    if frameShown("TaxiFrame") or frameShown("FlightMapFrame") then return true end
+    if InCinematic then
+        local ok, value = pcall(InCinematic)
+        if ok and value then return true end
+    end
+    return false
+end
+
+local function readFps()
+    if not GetFramerate then return nil end
+    local ok, value = pcall(GetFramerate)
+    if ok and type(value) == "number" then return value end
+    return nil
+end
+
+
+
+
+
+local function routeBudgetNow()
+    local base = Scheduler.frameBudgetMs
+    if not spareWanted() or playerBusy() then return base end
+    local cap = maxBudget()
+    if cap < base then cap = base end
+    local fps = readFps()
+    if not fps or fps < 30 then return base end
+    if fps >= 50 then return cap end
+    return base + (cap - base) * ((fps - 30) / 20)
+end
 
 local function logError(fmt, ...)
     if FGPS.Log then FGPS.Log:Error(fmt, ...) end
@@ -95,12 +164,16 @@ local function onUpdate()
     end
     local frameStart = debugprofilestop()
     Scheduler.frameStart = frameStart
+
+    Scheduler.routeBudget = routeBudgetNow()
     local offset = Scheduler.rotation % count
     for step = 0, count - 1 do
         local task = tasks[((offset + step) % count) + 1]
         if task and not task.done then resume(task) end
         Scheduler.rotation = offset + step + 1
-        if debugprofilestop() - frameStart >= Scheduler.frameBudgetMs then break end
+        local cap = Scheduler.frameBudgetMs
+        if task and task.label == "route" and not task.budgetFixed then cap = Scheduler.routeBudget end
+        if debugprofilestop() - frameStart >= cap then break end
     end
     for i = #tasks, 1, -1 do
         if tasks[i].done then table.remove(tasks, i) end
@@ -133,6 +206,8 @@ function Scheduler:Run(fn, opts, ...)
         co = coroutine.create(fn),
         label = opts.label or "task",
         budgetMs = opts.budgetMs or self.frameBudgetMs,
+
+        budgetFixed = opts.budgetMs ~= nil,
         onDone = opts.onDone,
         onError = opts.onError,
         args = { ... },
@@ -180,7 +255,12 @@ function Scheduler.Yield()
     local task = Scheduler.current
     if not task then return true end
     local now = debugprofilestop()
-    if now - task.sliceStart >= task.budgetMs or now - Scheduler.frameStart >= Scheduler.frameBudgetMs then
+    local slice, frameCap = task.budgetMs, Scheduler.frameBudgetMs
+    if task.label == "route" and not task.budgetFixed then
+        slice = Scheduler.routeBudget or slice
+        frameCap = slice
+    end
+    if now - task.sliceStart >= slice or now - Scheduler.frameStart >= frameCap then
         coroutine.yield()
     end
     return not task.cancelled
@@ -196,6 +276,16 @@ end
 
 function Scheduler:GetFrameBudget()
     return self.frameBudgetMs
+end
+
+
+function Scheduler:RouteBudget()
+    return routeBudgetNow()
+end
+
+function Scheduler:SetFrameBudgetMax(ms)
+    self.frameBudgetMaxMs = clampMax(ms)
+    return self.frameBudgetMaxMs
 end
 
 

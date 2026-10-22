@@ -1,14 +1,14 @@
 -- Cabbie/UI/Skins.lua
--- Visual presets. Three coherent skins share one set of functionality: "minimal" (default, an
--- unobtrusive flat look with a small arrow), "modern" (compact dark panels with restrained colours
--- and optional faction accents) and "classic" (parchment background with the game's own dialog
--- border textures). A skin is a plain table read by UI/Frames.lua and the HUD modules:
+-- The visual preset. One skin, "minimal" (an unobtrusive flat look), is the only preset; a saved
+-- name of one that is gone (modern, classic) loads as it (Core/DB.lua). Windows that wear the
+-- game's own look (UI/Look.lua) keep it whatever the skin. A skin is a plain table read by
+-- UI/Frames.lua and the HUD modules:
 --
 --   { name, label, font, titleFont, fontSize, smallFontSize, largeFontSize, titleFontSize,
 --     colors = { bg, border, text, textDim, title, accent, routeVerified, routeUnverified, arrow,
 --                button, buttonHover, buttonBorder, selection, highlight, editBox, titleBar },
---     backdrop, buttonBackdrop, arrowTexture, arrowSize, ringTexture, dotTexture, pinTexture,
---     buttonTemplate, panelAlpha, factionAccent, titleHeight, inset, closeButtonTemplate }
+--     backdrop, buttonBackdrop, dotTexture, pinTexture,
+--     buttonTemplate, panelAlpha, titleHeight, inset, closeButtonTemplate }
 --
 -- Skins.Apply(name) re-skins every frame registered with UI/Frames.lua and never touches the
 -- destination, routing preferences or custom positions; only Skins.Apply(name, { resetLayout = true })
@@ -39,7 +39,7 @@ end
 
 local Skins = {
     presets = {},
-    order = { "minimal", "modern", "classic" },
+    order = { "minimal" },
     current = nil,          -- resolved copy of the active preset
     currentName = nil,
     applying = false,       -- re-entrancy guard for the SETTINGS_CHANGED bridge
@@ -52,14 +52,6 @@ Skins.DEFAULT = "minimal"
 Skins.WHITE = "Interface\\Buttons\\WHITE8x8"
 
 local FONT_NORMAL = "Fonts\\FRIZQT__.TTF"
-local FONT_TITLE_CLASSIC = "Fonts\\MORPHEUS.TTF"
-
--- Faction accent colours (used by presets with factionAccent = true unless settings.factionAccent
--- is explicitly false).
-Skins.FACTION_COLORS = {
-    Alliance = { 0.29, 0.53, 0.90, 1 },
-    Horde = { 0.85, 0.24, 0.22, 1 },
-}
 
 -------------------------------------------------------------------------------
 -- Preset definitions
@@ -97,119 +89,15 @@ Skins.presets.minimal = {
                  insets = { left = 1, right = 1, top = 1, bottom = 1 } },
     buttonBackdrop = { bgFile = Skins.WHITE, edgeFile = Skins.WHITE, edgeSize = 1,
                        insets = { left = 1, right = 1, top = 1, bottom = 1 } },
-    arrowTexture = Skins.MEDIA .. "arrow_minimal",
-    arrowSize = 40,
-    ringTexture = Skins.MEDIA .. "ring",
     dotTexture = Skins.MEDIA .. "dot",
     pinTexture = Skins.MEDIA .. "pin",
     buttonTemplate = nil,
     closeButtonTemplate = nil,
     panelAlpha = 0.9,
-    factionAccent = false,
     titleHeight = 20,
     inset = 8,
     titleBarStyle = "flat",     -- "flat" draws a tinted strip; "none" relies on the border texture
     sliderStyle = "flat",       -- "flat" thin track and accent thumb; "blizzard" default slider art
-}
-
-Skins.presets.modern = {
-    name = "modern",
-    label = L["Modern"],
-    font = FONT_NORMAL,
-    titleFont = FONT_NORMAL,
-    fontSize = 12,
-    smallFontSize = 10,
-    largeFontSize = 18,
-    titleFontSize = 13,
-    colors = {
-        bg = { 0.09, 0.10, 0.12, 0.95 },
-        border = { 0.20, 0.22, 0.26, 1 },
-        text = { 0.90, 0.91, 0.93, 1 },
-        textDim = { 0.58, 0.61, 0.66, 1 },
-        title = { 0.96, 0.96, 0.97, 1 },
-        accent = { 0.36, 0.62, 0.86, 1 },
-        routeVerified = { 0.36, 0.72, 0.90, 1 },
-        routeUnverified = { 0.95, 0.60, 0.25, 1 },
-        routeTransport = { 0.76, 0.62, 0.98, 0.9 },
-        arrow = { 0.96, 0.96, 0.98, 1 },
-        arrowOutline = { 0, 0, 0, 0.85 },
-        button = { 0.15, 0.17, 0.20, 1 },
-        buttonHover = { 0.22, 0.25, 0.30, 1 },
-        buttonBorder = { 0.27, 0.30, 0.35, 1 },
-        selection = { 0.36, 0.62, 0.86, 0.30 },
-        highlight = { 1, 1, 1, 0.06 },
-        editBox = { 0.05, 0.06, 0.07, 1 },
-        titleBar = { 0.13, 0.15, 0.18, 1 },
-    },
-    backdrop = { bgFile = Skins.WHITE, edgeFile = Skins.WHITE, edgeSize = 1,
-                 insets = { left = 1, right = 1, top = 1, bottom = 1 } },
-    buttonBackdrop = { bgFile = Skins.WHITE, edgeFile = Skins.WHITE, edgeSize = 1,
-                       insets = { left = 1, right = 1, top = 1, bottom = 1 } },
-    arrowTexture = Skins.MEDIA .. "arrow_modern",
-    arrowSize = 52,
-    ringTexture = Skins.MEDIA .. "ring",
-    dotTexture = Skins.MEDIA .. "dot",
-    pinTexture = Skins.MEDIA .. "pin",
-    buttonTemplate = nil,
-    closeButtonTemplate = nil,
-    panelAlpha = 0.96,
-    factionAccent = true,
-    titleHeight = 24,
-    inset = 10,
-    titleBarStyle = "flat",
-    sliderStyle = "flat",
-}
-
-Skins.presets.classic = {
-    name = "classic",
-    label = L["Classic"],
-    font = FONT_NORMAL,
-    titleFont = FONT_TITLE_CLASSIC,
-    fontSize = 12,
-    smallFontSize = 10,
-    largeFontSize = 18,
-    titleFontSize = 15,
-    colors = {
-        bg = { 1, 1, 1, 1 },                      -- parchment tile is drawn at full colour
-        border = { 1, 1, 1, 1 },                  -- Blizzard border texture, untinted
-        text = { 0.16, 0.10, 0.04, 1 },
-        textDim = { 0.42, 0.32, 0.20, 1 },
-        -- Dark brown on parchment (gold titles were ~1.5:1 on the light tile).
-        title = { 0.30, 0.18, 0.06, 1 },
-        accent = { 0.80, 0.58, 0.12, 1 },
-        routeVerified = { 0.20, 0.55, 0.95, 1 },
-        routeUnverified = { 0.85, 0.35, 0.10, 1 },
-        routeTransport = { 0.55, 0.30, 0.75, 0.95 },
-        arrow = { 1, 1, 1, 1 },
-        arrowOutline = { 0, 0, 0, 0.85 },
-        button = { 0.30, 0.20, 0.10, 0.9 },
-        buttonHover = { 0.42, 0.30, 0.15, 0.95 },
-        buttonBorder = { 0.55, 0.42, 0.20, 1 },
-        selection = { 0.80, 0.58, 0.12, 0.30 },
-        highlight = { 0.60, 0.40, 0.10, 0.12 },
-        editBox = { 0.96, 0.92, 0.80, 1 },
-        titleBar = { 0.26, 0.16, 0.06, 0.95 },
-    },
-    -- Parchment tile behind the game's default dialog border (supported texture paths).
-    backdrop = { bgFile = Skins.MEDIA .. "parchment", edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
-                 tile = true, tileSize = 256, edgeSize = 24,
-                 insets = { left = 6, right = 6, top = 6, bottom = 6 } },
-    buttonBackdrop = { bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
-                       edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border", tile = true, tileSize = 16, edgeSize = 12,
-                       insets = { left = 3, right = 3, top = 3, bottom = 3 } },
-    arrowTexture = Skins.MEDIA .. "arrow_classic",
-    arrowSize = 56,
-    ringTexture = Skins.MEDIA .. "ring",
-    dotTexture = Skins.MEDIA .. "dot",
-    pinTexture = Skins.MEDIA .. "pin",
-    buttonTemplate = "UIPanelButtonTemplate",
-    closeButtonTemplate = "UIPanelCloseButton",
-    panelAlpha = 1.0,
-    factionAccent = false,
-    titleHeight = 26,
-    inset = 12,
-    titleBarStyle = "none",
-    sliderStyle = "blizzard",
 }
 
 -------------------------------------------------------------------------------
@@ -236,9 +124,6 @@ Skins.COLOR_SCHEMES = {
             routeTransport = { 0.80, 0.47, 0.65, 1 },    -- #CC79A7 reddish purple
             accent = { 0.34, 0.71, 0.91, 1 },            -- #57B4E9 sky blue
         },
-        -- The faction accent would put the two factions' red and blue back on top of the route
-        -- colours, so it stands down while this scheme is active.
-        suppressFactionAccent = true,
     },
 }
 Skins.COLOR_SCHEME_ORDER = { "preset", "colorblind" }
@@ -274,13 +159,13 @@ end
 -- Overwrites the meaning-carrying colours of a resolved skin with the active scheme's.
 local function applyColorScheme(skin)
     local scheme = Skins.ColorScheme()
-    if not scheme or type(scheme.colors) ~= "table" then return skin, false end
+    if not scheme or type(scheme.colors) ~= "table" then return skin end
     for key, color in pairs(scheme.colors) do
         skin.colors[key] = Util.ShallowCopy(color)
     end
     skin.colors.selection = { scheme.colors.accent[1], scheme.colors.accent[2], scheme.colors.accent[3], 0.30 }
     skin.colorScheme = Skins.ColorSchemeName()
-    return skin, scheme.suppressFactionAccent == true
+    return skin
 end
 
 -------------------------------------------------------------------------------
@@ -298,39 +183,13 @@ function Skins.List()
     return out
 end
 
-local function factionAccentEnabled()
-    local db = FGPS.DB
-    if db and db.settings then
-        local value = db.settings.factionAccent
-        if value == false then return false end
-    end
-    return true
-end
-
-local function playerFactionColor()
-    if type(UnitFactionGroup) ~= "function" then return nil end
-    local ok, faction = pcall(UnitFactionGroup, "player")
-    if ok and type(faction) == "string" then return Skins.FACTION_COLORS[faction] end
-    return nil
-end
-
--- Returns a fresh resolved copy of a preset (faction accent applied); callers may keep it
+-- Returns a fresh resolved copy of a preset (colour scheme applied); callers may keep it
 -- without affecting the preset definition. Unknown names resolve to the default preset.
 function Skins.Get(name)
     if not Skins.IsValid(name) then name = Skins.DEFAULT end
     local skin = Util.DeepCopy(Skins.presets[name])
     skin.colorScheme = Skins.DEFAULT_COLOR_SCHEME
-    local _, suppressFaction = applyColorScheme(skin)
-    if skin.factionAccent and not suppressFaction and factionAccentEnabled() then
-        local color = playerFactionColor()
-        if color then
-            -- Accent tints chrome only. The known-path colour stays semantic so Horde
-            -- red never turns the solid line into a danger colour next to orange dashes.
-            skin.colors.accent = Util.ShallowCopy(color)
-            skin.colors.selection = { color[1], color[2], color[3], 0.30 }
-        end
-    end
-    return skin
+    return applyColorScheme(skin)
 end
 
 function Skins.Current()
@@ -395,7 +254,7 @@ function Skins.Apply(name, opts)
     return skin
 end
 
--- Re-resolves the current skin (for example after the faction accent setting changed) and
+-- Re-resolves the current skin (for example after the colour scheme or the text size changed) and
 -- re-skins registered frames without changing the preset.
 function Skins.Refresh()
     Skins.current = Skins.Get(Skins.CurrentName())
@@ -431,7 +290,7 @@ local function onSettingsChanged(_, key, value)
         Skins.currentName = nil
         local name = Skins.CurrentName()
         if name ~= (Skins.current and Skins.current.name) then Skins.Apply(name) else Skins.Refresh() end
-    elseif key == "factionAccent" or key == "accessibility.colorScheme" or key == "textSize" then
+    elseif key == "accessibility.colorScheme" or key == "textSize" then
         Skins.Refresh()
     end
 end

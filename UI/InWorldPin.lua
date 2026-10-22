@@ -596,7 +596,7 @@ function InWorldPin.ClearLeftover(final)
     local removed = clearIfOurs(record)
     if removed and type(record.saved) == "table" then giveBack(record.saved) end
     if removed or final then forget() end
-    if removed and FGPS.Log then FGPS.Log:Info("Removed a map pin left behind by an earlier journey") end
+    if removed and FGPS.Log then FGPS.Log:Info("Removed a map pin left behind by an earlier route") end
     return removed
 end
 

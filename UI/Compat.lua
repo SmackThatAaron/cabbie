@@ -256,10 +256,10 @@ function Compat.Accept(dest, opts)
         and Destinations.Equal(previous, dest) == true
     if running and not samePlace then
         if previous then
-            FGPS:Print(L["Your trip to %s was replaced by %s. Use '/way add <coordinates>' to keep the trip and add a stop instead."],
+            FGPS:Print(L["Your route to %s was replaced by %s. Use '/way add <coordinates>' to keep the route and add a stop instead."],
                 describe(previous), describe(dest))
         else
-            FGPS:Print(L["The trip in progress was replaced by %s. Use '/way add <coordinates>' to keep the trip and add a stop instead."],
+            FGPS:Print(L["The route in progress was replaced by %s. Use '/way add <coordinates>' to keep the route and add a stop instead."],
                 describe(dest))
         end
     end
@@ -311,7 +311,7 @@ function Compat.FromUserWaypoint()
     local ok, point = pcall(C_Map.GetUserWaypoint)
     if not ok or type(point) ~= "table" then return nil, L["there is no map pin set"] end
     if Compat.PinIsOurs() then
-        return nil, L["that map pin is the one Cabbie placed for the current trip"]
+        return nil, L["that map pin is the one Cabbie placed for the current route"]
     end
     local position = point.position
     local px = position and (position.x or (position.GetXY and select(1, position:GetXY())))
@@ -389,7 +389,7 @@ function Compat.RemoveWaypoint(uid)
         local Navigator = FGPS.Navigator
         if Navigator and Navigator.Cancel then
             Navigator:Cancel("waypoint_removed")
-            FGPS:Print(L["The trip to %s was cancelled: its waypoint was removed."], describe(entry.dest))
+            FGPS:Print(L["The route to %s was cancelled: its waypoint was removed."], describe(entry.dest))
         end
     end
     return true
@@ -404,7 +404,7 @@ function Compat.ClearWaypoints()
         count = count + 1
     end
     if count > 0 and journeyRunning() then
-        FGPS:Print(L["%d waypoint(s) forgotten. The trip in progress is still running; type /cabbie cancel to stop it."], count)
+        FGPS:Print(L["%d waypoint(s) forgotten. The route in progress is still running; type /cabbie cancel to stop it."], count)
     end
     return count
 end

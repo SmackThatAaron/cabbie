@@ -1,7 +1,6 @@
 -- Cabbie/UI/EditMode.lua
--- Edit Mode emulation for the addon's persistent HUD elements. Nothing registers one now: the
--- floating arrow and the instruction panel were the only two, and both are gone. The Route block
--- places itself (UI/RouteBlock.lua). The module stays until the clean-out of stage 1b.
+-- Edit Mode emulation for the addon's persistent HUD elements. The turn call-out (UI/Callout.lua:
+-- the arrow and its words) registers here. The Route block places itself (UI/RouteBlock.lua).
 --
 -- Why emulation: Blizzard's Edit Mode (Blizzard_EditMode/Shared/EditModeManager.lua) manages
 -- "system frames" that it iterates with secureexecuterange over registeredSystemFrames and expects
@@ -303,27 +302,24 @@ end
 -------------------------------------------------------------------------------
 -- Settings dialog
 -------------------------------------------------------------------------------
-local ROW_HEIGHT_CONTROL = 46
-local ROW_HEIGHT_CHECK = 26
-local DIALOG_WIDTH = 260
+-- The panel of the selected frame wears the look of the game's own Edit Mode panels
+-- (EditModeSystemSettingsDialog in Blizzard_EditMode/Shared/EditModeDialogs.xml, its rows in
+-- EditModeTemplates.xml): the translucent dialog border, the title in the game's large white font
+-- 15 below the top, the game's close button in the top right corner, one row 32 high per setting
+-- with its label 100 wide on the left and the control beside it, and the game's red button under
+-- them. Every piece comes from UI/Look.lua with a fallback of its own. It can be dragged aside as
+-- the game's can, and stands beside the selected frame again when a frame is selected anew.
+local DIALOG_WIDTH = 390
+local DIALOG_PAD = 20
+local TITLE_TOP = 15
+local TITLE_HEIGHT = 20
+local ROW_HEIGHT = 32
+local LABEL_WIDTH = 100
+local CONTROL_WIDTH = 200
+local BUTTON_WIDTH, BUTTON_HEIGHT = 180, 28
 
-local function createRow(dialog, index)
-    local frames = Frames()
-    local row = CreateFrame("Frame", nil, dialog.Content)
-    row:SetHeight(ROW_HEIGHT_CONTROL)
-    row:SetPoint("LEFT", dialog.Content, "LEFT", 0, 0)
-    row:SetPoint("RIGHT", dialog.Content, "RIGHT", 0, 0)
-    row.Label = frames.CreateLabel(row, "", { kind = "small", color = "textDim" })
-    row.Label:SetPoint("TOPLEFT", row, "TOPLEFT", 0, 0)
-    row.Slider = frames.CreateSlider(row, { min = 0, max = 1, step = 0.01, width = DIALOG_WIDTH - 40 })
-    row.Slider:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", 6, 6)
-    row.Dropdown = frames.CreateDropdown(row, { options = {}, width = DIALOG_WIDTH - 30 })
-    row.Dropdown:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", 0, 4)
-    row.Checkbox = frames.CreateCheckbox(row, "", {})
-    row.Checkbox:SetPoint("LEFT", row, "LEFT", 0, 0)
-    dialog.rows[index] = row
-    return row
-end
+local function Look() return FGPS.UI.Look end
+local floor = math.floor
 
 local function safeGet(setting)
     if type(setting.get) ~= "function" then return setting.value end
@@ -340,65 +336,293 @@ local function safeSet(setting, value, entry)
     updateDialogAnchor()
 end
 
+-- The value a slider of a setting stands on: a whole number of steps from its least value, inside
+-- its range, without the dust of adding steps in floating point (3 * 0.05 is not 0.15).
+local function stepValue(setting, value)
+    local minV, maxV, step = setting.min or 0, setting.max or 1, setting.step or 0.01
+    value = tonumber(value) or minV
+    if step > 0 then value = minV + floor((value - minV) / step + 0.5) * step end
+    value = floor(value * 1e6 + 0.5) / 1e6
+    if value < minV then value = minV elseif value > maxV then value = maxV end
+    return value
+end
+
+local function formatValue(setting, value)
+    local fmt = setting.format or "%.2f"
+    if type(fmt) == "function" then return fmt(value) end
+    return string.format(fmt, value)
+end
+
+-- The player moved a slider: reported once per value, never while the code puts a value on it.
+local function sliderMoved(row, value)
+    if row.fgpsSilent or not row.fgpsSetting then return end
+    value = stepValue(row.fgpsSetting, value)
+    if value == row.fgpsValue then return end
+    row.fgpsValue = value
+    if row.fgpsOnChange then row.fgpsOnChange(value) end
+end
+
+-- The game's slider with a step arrow at each end, its value right of the bar, else the plain
+-- slider of UI/Frames.lua.
+local function createSlider(row)
+    local slider = Look().StepperSlider(row, CONTROL_WIDTH)
+    if slider then
+        slider.fgpsNative = true
+        local mixin = MinimalSliderWithSteppersMixin
+        local event = type(mixin) == "table" and type(mixin.Event) == "table" and mixin.Event.OnValueChanged or "OnValueChanged"
+        slider:RegisterCallback(event, function(_, value) sliderMoved(row, value) end, row)
+    else
+        slider = Frames().CreateSlider(row, { width = CONTROL_WIDTH - 40 })
+        slider:SetOnChange(function(_, value) sliderMoved(row, value) end)
+    end
+    slider:SetPoint("LEFT", row.Label, "RIGHT", 5, 0)
+    return slider
+end
+
+-- Puts a value on a row's slider without reporting it as the player's: the game's slider announces
+-- a value the code set as it does one the player chose (MinimalSlider.lua), so the row keeps quiet
+-- meanwhile. init: the setting is new to the row, so its range and its words are set too.
+local function showSliderValue(row, value, init)
+    local setting, slider = row.fgpsSetting, row.Slider
+    value = stepValue(setting, value)
+    row.fgpsSilent = true
+    if slider.fgpsNative then
+        if init then
+            local minV, maxV, step = setting.min or 0, setting.max or 1, setting.step or 0.01
+            local steps = math.max(1, floor((maxV - minV) / step + 0.5))
+            local labels = type(MinimalSliderWithSteppersMixin) == "table" and MinimalSliderWithSteppersMixin.Label
+            local right = type(labels) == "table" and labels.Right or 2
+            local ok, err = pcall(slider.Init, slider, value, minV, maxV, steps,
+                { [right] = function(v) return formatValue(setting, stepValue(setting, v)) end })
+            if not ok and FGPS.Log then FGPS.Log:Error("Edit Mode slider '%s' failed: %s", tostring(setting.label), tostring(err)) end
+        else
+            pcall(slider.SetValue, slider, value)
+        end
+    else
+        if init then
+            slider.fgpsMin, slider.fgpsMax, slider.fgpsStep = setting.min or 0, setting.max or 1, setting.step or 0.01
+            slider:SetMinMaxValues(slider.fgpsMin, slider.fgpsMax)
+            if slider.SetValueStep then slider:SetValueStep(slider.fgpsStep) end
+            slider.fgpsFormat = function(v) return formatValue(setting, v) end
+        end
+        slider:SetValueSilent(value)
+    end
+    row.fgpsValue = value
+    row.fgpsSilent = false
+end
+
+-- The game's check box, 32 square as in the game's Edit Mode rows, its words beside it in the
+-- row's font.
+local function createCheckbox(row)
+    local look = Look()
+    local check = look.CheckButton(row, "")
+    check:SetSize(32, 32)
+    check:SetPoint("LEFT", row, "LEFT", -5, 0)
+    local label = check.Label
+    if label then
+        if label.SetFontObject then label:SetFontObject(look.Font("setting")) end
+        label:ClearAllPoints()
+        label:SetPoint("LEFT", check, "RIGHT", 5, 0)
+    end
+    check:SetScript("OnClick", function(self)
+        if row.fgpsOnChange then row.fgpsOnChange(self:GetChecked() and true or false) end
+    end)
+    return check
+end
+
+-- The colour of a setting held as six hex digits (Look.HexColor), else of its default, else white.
+local function settingColor(setting, value)
+    local look = Look()
+    local r, g, b = look.HexColor(value)
+    if not r then r, g, b = look.HexColor(setting.default) end
+    if not r then r, g, b = 1, 1, 1 end
+    return r, g, b
+end
+
+-- The swatch was clicked: the game's colour picker opens on the colour now. Every colour picked
+-- while it is open is the setting at once (the frame shows it while the player looks); a cancel
+-- gives back the value from before. The setting and its handler are the ones of this click, in
+-- case the panel shows another frame before the picker is closed.
+local function pickRowColor(row)
+    local setting, onChange = row.fgpsSetting, row.fgpsOnChange
+    local look = Look()
+    if not (setting and onChange and look.CanPickColor()) then return end
+    local before = safeGet(setting)
+    local r, g, b = settingColor(setting, before)
+    look.PickColor(r, g, b, function(nr, ng, nb)
+        local hex = look.ColorHex(nr, ng, nb)
+        if hex then onChange(hex) end
+    end, function() onChange(before) end)
+end
+
+local function createSwatch(row)
+    local swatch = Look().ColorSwatch(row)
+    swatch:SetPoint("LEFT", row.Label, "RIGHT", 5, 0)
+    swatch:SetScript("OnClick", function() pickRowColor(row) end)
+    Frames().Tooltip(swatch, function()
+        return Look().CanPickColor() and L["Click to choose a colour"] or L["This client has no colour picker."]
+    end)
+    return swatch
+end
+
+-- A row of pictures to choose from (setting.options = { { value, label, texture } }): each a
+-- Look.PictureButton beside the label, its option's name in its tooltip, the chosen one marked. A
+-- setting may paint them itself (setting.picture(value) -> texture, r, g, b), so that they show
+-- what the frame would show, in its colour now.
+local PICTURE_SIZE, PICTURE_GAP = 32, 6
+
+local function ensurePictures(row, count)
+    row.Pictures = row.Pictures or {}
+    for i = #row.Pictures + 1, count do
+        local button = Look().PictureButton(row, PICTURE_SIZE)
+        button:SetPoint("LEFT", row.Label, "RIGHT", 5 + (i - 1) * (PICTURE_SIZE + PICTURE_GAP), 0)
+        button:SetScript("OnClick", function(self)
+            if row.fgpsOnChange and self.fgpsValue ~= nil then row.fgpsOnChange(self.fgpsValue) end
+        end)
+        Frames().Tooltip(button, function(self) return self.fgpsLabel end)
+        row.Pictures[i] = button
+    end
+end
+
+local function showPictures(row, setting)
+    local options = setting.options or {}
+    ensurePictures(row, #options)
+    local value = safeGet(setting)
+    for i, option in ipairs(options) do
+        local button = row.Pictures[i]
+        button.fgpsValue, button.fgpsLabel = option.value, option.label
+        local texture, r, g, b = option.texture, 1, 1, 1
+        if type(setting.picture) == "function" then
+            local ok, t, pr, pg, pb = pcall(setting.picture, option.value)
+            if ok and t then texture, r, g, b = t, pr or 1, pg or 1, pb or 1 end
+        end
+        if button.fgpsTexture ~= texture then
+            button.fgpsTexture = texture
+            button.Icon:SetTexture(texture)
+        end
+        button.Icon:SetVertexColor(r, g, b)
+        button:SetChosen(option.value == value)
+        button:Show()
+    end
+    for i = #options + 1, #row.Pictures do row.Pictures[i]:Hide() end
+end
+
+local function createRow(dialog, index)
+    local look = Look()
+    local row = CreateFrame("Frame", nil, dialog)
+    row:SetHeight(ROW_HEIGHT)
+    row.Label = row:CreateFontString(nil, "ARTWORK", look.Font("setting"))
+    row.Label:SetSize(LABEL_WIDTH, ROW_HEIGHT)
+    row.Label:SetPoint("LEFT", row, "LEFT", 0, 0)
+    if row.Label.SetJustifyH then row.Label:SetJustifyH("LEFT") end
+    row.Slider = createSlider(row)
+    row.Dropdown = Frames().CreateDropdown(row, { options = {}, width = CONTROL_WIDTH })
+    row.Dropdown:SetPoint("LEFT", row.Label, "RIGHT", 5, 0)
+    row.Checkbox = createCheckbox(row)
+    row.Swatch = createSwatch(row)
+    dialog.rows[index] = row
+    return row
+end
+
+-- Reads a setting into its row's control without reporting anything.
+local function showRowValue(row, setting)
+    if setting.type == "slider" then
+        showSliderValue(row, safeGet(setting), false)
+    elseif setting.type == "dropdown" then
+        row.Dropdown:SetValue(safeGet(setting))
+    elseif setting.type == "checkbox" then
+        row.Checkbox:SetChecked(safeGet(setting) and true or false)
+    elseif setting.type == "color" then
+        row.Swatch:SetColorRGB(settingColor(setting, safeGet(setting)))
+    elseif setting.type == "pictures" then
+        showPictures(row, setting)
+    end
+end
+
+local ROW_KINDS = { slider = true, dropdown = true, checkbox = true, color = true, pictures = true }
+
 local function configureRow(row, setting, entry)
     row.Slider:Hide()
     row.Dropdown:Hide()
     row.Checkbox:Hide()
-    row.Label:Hide()
-    if setting.type == "slider" then
-        row:SetHeight(ROW_HEIGHT_CONTROL)
+    row.Swatch:Hide()
+    for _, button in ipairs(row.Pictures or {}) do button:Hide() end
+    row.Label:SetText("")
+    row.fgpsSetting = setting
+    row.fgpsOnChange = function(value) safeSet(setting, value, entry) end
+    local kind = setting.type
+    if kind == "slider" then
         row.Label:SetText(setting.label or "")
-        row.Label:Show()
-        local slider = row.Slider
-        slider.fgpsMin, slider.fgpsMax, slider.fgpsStep = setting.min or 0, setting.max or 1, setting.step or 0.01
-        slider:SetMinMaxValues(slider.fgpsMin, slider.fgpsMax)
-        if slider.SetValueStep then slider:SetValueStep(slider.fgpsStep) end
-        slider.fgpsFormat = setting.format or "%.2f"
-        slider:SetOnChange(function(_, value) safeSet(setting, value, entry) end)
-        local current = tonumber(safeGet(setting)) or slider.fgpsMin
-        slider:SetValueSilent(current)
-        slider:Show()
-    elseif setting.type == "dropdown" then
-        row:SetHeight(ROW_HEIGHT_CONTROL)
+        showSliderValue(row, safeGet(setting), true)
+        row.Slider:Show()
+    elseif kind == "dropdown" then
         row.Label:SetText(setting.label or "")
-        row.Label:Show()
         local dd = row.Dropdown
         dd:SetOptions(setting.options or {})
         dd:SetValue(safeGet(setting))
-        dd:SetOnChange(function(_, value) safeSet(setting, value, entry) end)
+        dd:SetOnChange(function(_, value) row.fgpsOnChange(value) end)
         dd:Show()
-    elseif setting.type == "checkbox" then
-        row:SetHeight(ROW_HEIGHT_CHECK)
-        local cb = row.Checkbox
-        cb.Text:SetText(setting.label or "")
-        cb:SetValue(safeGet(setting) and true or false)
-        cb:SetOnChange(function(_, checked) safeSet(setting, checked, entry) end)
-        cb:Show()
-    else
-        row:SetHeight(0)
+    elseif kind == "checkbox" then
+        local check = row.Checkbox
+        if check.Label then check.Label:SetText(setting.label or "") end
+        check:SetChecked(safeGet(setting) and true or false)
+        check:Show()
+    elseif kind == "color" then
+        -- Without the game's colour picker the swatch only shows the colour.
+        row.Label:SetText(setting.label or "")
+        local swatch = row.Swatch
+        swatch:SetColorRGB(settingColor(setting, safeGet(setting)))
+        if Look().CanPickColor() then swatch:Enable() else swatch:Disable() end
+        swatch:Show()
+    elseif kind == "pictures" then
+        row.Label:SetText(setting.label or "")
+        showPictures(row, setting)
     end
+    row:SetHeight(ROW_KINDS[kind] and ROW_HEIGHT or 0)
     row:Show()
 end
 
 local function ensureDialog()
     if EditMode.dialog then return EditMode.dialog end
-    local frames = Frames()
-    if not frames then return nil end
-    local dialog = frames.CreateWindow("editmode", {
-        title = L["Cabbie"], width = DIALOG_WIDTH, height = 160, persist = false, strata = "DIALOG",
-        escape = false,
-        onClose = function()
-            if EditMode.selectedKey and not EditMode.closingDialog then EditMode.ClearSelection(true) end
-        end,
-    })
+    local look = Look()
+    if not (look and Frames()) then return nil end
+    local dialog, how = look.EditPanel(UIParent)
+    -- Hidden before its scripts are set: a hide now must not clear the selection being made.
+    dialog:Hide()
+    dialog.fgpsLook = how
+    dialog:SetSize(DIALOG_WIDTH, 160)
+    dialog:SetFrameStrata("DIALOG")
+    if dialog.SetToplevel then dialog:SetToplevel(true) end
+    dialog:SetClampedToScreen(true)
+    dialog:EnableMouse(true)
+    dialog:SetMovable(true)
+    dialog:RegisterForDrag("LeftButton")
+    dialog:SetScript("OnDragStart", function(self)
+        self.fgpsMoving = true
+        self:StartMoving()
+    end)
+    dialog:SetScript("OnDragStop", function(self)
+        self:StopMovingOrSizing()
+        self.fgpsMoving = false
+        self.fgpsPlaced = true
+    end)
+    dialog:SetScript("OnHide", function()
+        Frames().CloseMenus()
+        if EditMode.selectedKey and not EditMode.closingDialog then EditMode.ClearSelection(true) end
+    end)
+    dialog.Title = dialog:CreateFontString(nil, "ARTWORK", look.Font("panelTitle"))
+    dialog.Title:SetPoint("TOP", dialog, "TOP", 0, -TITLE_TOP)
+    dialog.Close = look.CloseButton(dialog, function() dialog:Hide() end)
+    dialog.Close:SetPoint("TOPRIGHT", dialog, "TOPRIGHT", 0, 0)
     dialog.rows = {}
-    dialog.Hint = frames.CreateLabel(dialog.Content, L["Drag to move. Arrow keys nudge the selection (Shift: 10 px)."],
-        { kind = "small", color = "textDim", justifyH = "LEFT", wordWrap = true })
-    dialog.Hint:SetPoint("LEFT", dialog.Content, "LEFT", 0, 0)
-    dialog.Hint:SetPoint("RIGHT", dialog.Content, "RIGHT", 0, 0)
-    dialog.Reset = frames.CreateButton(dialog.Content, L["Reset to default"], function()
+    dialog.Hint = dialog:CreateFontString(nil, "ARTWORK", look.Font("hint"))
+    if dialog.Hint.SetJustifyH then dialog.Hint:SetJustifyH("LEFT") end
+    if dialog.Hint.SetWordWrap then dialog.Hint:SetWordWrap(true) end
+    dialog.Hint:SetText(L["Drag to move. Arrow keys nudge the selection (Shift: 10 px)."])
+    dialog.Reset = look.Button(dialog, L["Reset to default"], BUTTON_WIDTH, BUTTON_HEIGHT)
+    dialog.Reset:SetScript("OnClick", function()
         if EditMode.selectedKey then EditMode.ResetEntry(EditMode.selectedKey) end
-    end, { width = 140 })
+    end)
     EditMode.dialog = dialog
     return dialog
 end
@@ -406,31 +630,29 @@ end
 local function buildDialog(entry)
     local dialog = ensureDialog()
     if not dialog then return nil end
-    dialog:SetTitle(entry.label)
-    local skin = Frames().Skin()
-    local inset = skin.inset or 8
-    local titleHeight = skin.titleHeight or 20
-    local y = 0
+    dialog.Title:SetText(entry.label or "")
+    local y = TITLE_TOP + TITLE_HEIGHT + 12
     local count = 0
     for _, setting in ipairs(entry.settings or {}) do
         count = count + 1
         local row = dialog.rows[count] or createRow(dialog, count)
         configureRow(row, setting, entry)
         row:ClearAllPoints()
-        row:SetPoint("TOPLEFT", dialog.Content, "TOPLEFT", 0, -y)
-        row:SetPoint("TOPRIGHT", dialog.Content, "TOPRIGHT", 0, -y)
-        y = y + (row:GetHeight() or 0) + 4
+        row:SetPoint("TOPLEFT", dialog, "TOPLEFT", DIALOG_PAD, -y)
+        row:SetPoint("TOPRIGHT", dialog, "TOPRIGHT", -DIALOG_PAD, -y)
+        y = y + (row:GetHeight() or 0) + 2
     end
     for i = count + 1, #dialog.rows do dialog.rows[i]:Hide() end
+    y = y + 10
     dialog.Hint:ClearAllPoints()
-    dialog.Hint:SetPoint("TOPLEFT", dialog.Content, "TOPLEFT", 0, -y)
-    dialog.Hint:SetPoint("TOPRIGHT", dialog.Content, "TOPRIGHT", 0, -y)
+    dialog.Hint:SetPoint("TOPLEFT", dialog, "TOPLEFT", DIALOG_PAD, -y)
+    dialog.Hint:SetPoint("TOPRIGHT", dialog, "TOPRIGHT", -DIALOG_PAD, -y)
     dialog.Hint:SetHeight(28)
     y = y + 32
     dialog.Reset:ClearAllPoints()
-    dialog.Reset:SetPoint("TOPLEFT", dialog.Content, "TOPLEFT", 0, -y)
-    y = y + 26
-    dialog:SetHeight(y + titleHeight + inset * 2)
+    dialog.Reset:SetPoint("TOP", dialog, "TOP", 0, -y)
+    y = y + BUTTON_HEIGHT + DIALOG_PAD
+    dialog:SetHeight(y)
     return dialog
 end
 
@@ -442,24 +664,17 @@ local function refreshDialogValues()
     if not dialog or not entry or not dialog:IsShown() then return end
     for i, setting in ipairs(entry.settings or {}) do
         local row = dialog.rows[i]
-        if row then
-            if setting.type == "slider" then
-                row.Slider:SetValueSilent(tonumber(safeGet(setting)) or row.Slider.fgpsMin)
-            elseif setting.type == "dropdown" then
-                row.Dropdown:SetValue(safeGet(setting))
-            elseif setting.type == "checkbox" then
-                row.Checkbox:SetValue(safeGet(setting) and true or false)
-            end
-        end
+        if row then showRowValue(row, setting) end
     end
 end
 EditMode.RefreshDialog = refreshDialogValues
 
--- Anchors the dialog beside the selected frame (right side when there is room, else left).
+-- Anchors the dialog beside the selected frame (right side when there is room, else left), unless
+-- the player dragged it aside for this selection.
 updateDialogAnchor = function()
     local dialog = EditMode.dialog
     local entry = EditMode.selectedKey and EditMode.entries[EditMode.selectedKey]
-    if not dialog or not entry or dialog.fgpsMoving then return end
+    if not dialog or not entry or dialog.fgpsMoving or dialog.fgpsPlaced then return end
     local frame = entry.frame
     local right = frame.GetRight and frame:GetRight()
     local es = frame:GetEffectiveScale() or 1
@@ -493,6 +708,7 @@ function EditMode.Select(key)
     if entry.overlay.EnableKeyboard and not inCombat() then pcall(entry.overlay.EnableKeyboard, entry.overlay, true) end
     local dialog = buildDialog(entry)
     if dialog then
+        dialog.fgpsPlaced = false
         updateDialogAnchor()
         dialog:Show()
     end

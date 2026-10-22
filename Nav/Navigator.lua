@@ -1311,7 +1311,9 @@ end
 
 
 
-function Navigator:Start(route, quiet, announced, askedBy)
+
+
+function Navigator:Start(route, quiet, announced, askedBy, keepStops)
     local list = stopsTable()
     if route == nil and #list > 0 and self:IsJourney() and (self.state == "in_transit" or self.riding) then
         return self:Reroute("destination", askedBy or "player")
@@ -1359,7 +1361,10 @@ function Navigator:Start(route, quiet, announced, askedBy)
 
 
 
-            if self.quiet and self.state == "idle" and not (type(err) == "table" and err.code == "CANCELLED") then
+
+
+
+            if self.quiet and keepStops ~= true and self.state == "idle" and not (type(err) == "table" and err.code == "CANCELLED") then
                 self:Cancel("no_way")
             end
         end
@@ -1557,7 +1562,7 @@ function Navigator:UndoClear(opts)
     end
     if snap.variant then self.variant = snap.variant end
     fireItinerary("undo")
-    if not quiet then FGPS:Print(L["Restored the cleared trip."]) end
+    if not quiet then FGPS:Print(L["Restored the cleared route."]) end
     if self.Start then self:Start(nil, quiet) end
     return true
 end
@@ -2171,6 +2176,9 @@ end
 
 function Navigator:Finish()
     self:CancelInflight()
+
+    self.quiet = false
+    if self.progress then self.progress.arrivedStopIndex = nil end
     self:SetState("arrived")
     local list = stopsTable()
     if #list > 0 then
@@ -2884,9 +2892,21 @@ local function ensureKeptPopup()
 
 
 
+
+
         OnAccept = function()
-            if not keptStillAsked() or Navigator:IsJourney() then return end
-            if Navigator.Start and #stopsTable() > 0 then Navigator:Start() end
+            if Navigator:IsJourney() then
+                keptStillAsked()
+                return
+            end
+            local Guide = FGPS.UI and FGPS.UI.Guide
+            if not keptStillAsked() or #stopsTable() == 0 then
+                if #stopsTable() == 0 and Guide and Guide.Say then
+                    Guide.Say(L["No destination set."], Guide.HOLD_FAILED)
+                end
+                return
+            end
+            if Navigator.Start then Navigator:Start(nil, true, nil, nil, true) end
         end,
 
 
@@ -2919,9 +2939,9 @@ function Navigator:AnnounceKeptItinerary()
 
     self.keptRev = self.itineraryRev
     local shown = ensureKeptPopup() and type(StaticPopup_Show) == "function"
-        and StaticPopup_Show(KEPT_POPUP, (L["Your trip from last time is still set (%d stop(s)). Continue or clear?"]):format(count))
+        and StaticPopup_Show(KEPT_POPUP, (L["Your route from last time is still set (%d stop(s)). Continue or clear?"]):format(count))
     if not shown then
-        FGPS:Print(L["Your itinerary from last time is still set (%d stop(s)). Type /cabbie start to continue or /cabbie cancel to clear it."], count)
+        FGPS:Print(L["Your stops from last time are still set (%d stop(s)). Type /cabbie start to continue or /cabbie cancel to clear them."], count)
     end
     Events:Fire("KEPT_ITINERARY", count)
     return true
@@ -2941,7 +2961,7 @@ function Navigator:Init()
                     FGPS:Print(L["Nothing to undo."])
                 end
             end
-        end, L["Restore the trip cleared in the last 30 seconds"])
+        end, L["Restore the route cleared in the last 30 seconds"])
     end
     Events:Register("COMBAT_STATE", function(_, inCombat) Navigator:OnCombat(inCombat) end, self)
     Events:Register("SETTINGS_CHANGED", function(_, key) Navigator:OnSettingsChanged(key) end, self)

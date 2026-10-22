@@ -36,16 +36,16 @@ L.HELP_LOG = "Print the internal log buffer (log clear empties it)"
 L.HELP_PERF_FULL = "Performance report; perf toggle|reset|sample|trip|on|off"
 L.HELP_SELFTEST = "Check this installation and print a pass/fail report"
 L.HELP_REPORT = "Write a diagnostic snapshot into the saved variables"
-L.HELP_MARK = "Mark the trip you are on, or the last one, with a note: /cabbie mark the harbor line went through a building"
-L.TRIP_SUMMARY = "Trip: %s. Longest straight %d yd. Off route %d. Recalculated %d."
-L.TRIP_NONE = "No finished trip to report yet."
-L.TRIP_MARKED = "Marked this trip: %s"
-L.TRIP_NO_MARK = "No trip to mark yet. Start a route first."
+L.HELP_MARK = "Mark the route you are on, or the last one, with a note: /cabbie mark the harbor line went through a building"
+L.TRIP_SUMMARY = "Route: %s. Longest stretch %d yd. Off route %d. Recalculated %d."
+L.TRIP_NONE = "No finished route to report yet."
+L.TRIP_MARKED = "Marked this route: %s"
+L.TRIP_NO_MARK = "No route to mark yet. Start a route first."
 -- The welcome window (UI/Setup.lua, redesigned 2026-10-17): one short window, three sentences and
 -- the one question ("Follow my quests", whose words and tooltip are in the guidance block below).
 L.SETUP_TITLE = "Welcome to Cabbie"
 L.SETUP_HELP = "Show the welcome window"
-L.SETUP_INTRO = "Cabbie guides you to a place and never moves your character for you. While a route is set, an arrow at the top of the screen points the way and your next steps stand beside the quest list. Shift-click the world map or type a place into the search at its top left to be guided there, and right-click a quest in your quest list and choose Take me there to go to it."
+L.SETUP_INTRO = "Cabbie guides you to a place and never moves your character for you. While a route is set, your next steps stand beside the quest list. Shift-click the world map or type a place into the search at its top left to be guided there, and right-click a quest in your quest list and choose Take me there to go to it."
 L.SETUP_LATER = "Everything else has a sensible default. Change it any time in Settings, and type /cabbie setup to see this again."
 L.SETUP_DONE = "Done"
 L.SETUP_SETTINGS = "Settings..."
@@ -63,9 +63,9 @@ L.PERF_METRIC = "  profiler %s: %.3f"
 -- a leak. What the budget in docs/PERFORMANCE_BUDGETS.md actually limits is what stays RETAINED
 -- after a full collection, which "/cabbie perf trip" measures against a baseline the tester takes.
 L.PERF_TRIPS_ALLOCATED = "  trips: %d measured, %.1f KB allocated per trip on average, %.1f KB worst (allocated, not collected - type /cabbie perf trip for retained memory)"
-L.PERF_RETAINED_BASELINE = "Retained memory baseline taken after a full collection: %.1f KB. Complete your trips, then type /cabbie perf trip again."
-L.PERF_RETAINED_REPORT = "Retained since the baseline: %.1f KB after %d trip(s), %.1f KB per trip (budget: 50 KB over 20 trips)."
-L.PERF_RETAINED_NO_TRIPS = "Retained since the baseline: %.1f KB, but no trip has finished yet."
+L.PERF_RETAINED_BASELINE = "Retained memory baseline taken after a full collection: %.1f KB. Complete your routes, then type /cabbie perf trip again."
+L.PERF_RETAINED_REPORT = "Retained since the baseline: %.1f KB after %d route(s), %.1f KB per route (budget: 50 KB over 20 routes)."
+L.PERF_RETAINED_NO_TRIPS = "Retained since the baseline: %.1f KB, but no route has finished yet."
 L.PERF_SCHEDULER = "  scheduler: %d task(s) queued, %d completed, %.2f ms spent in slices"
 L.PERF_GUIDANCE_ON = "Guidance work enabled."
 L.PERF_GUIDANCE_OFF = "Guidance work disabled for measurement; type /cabbie perf toggle to re-enable."
@@ -73,6 +73,8 @@ L.PERF_RESET = "Performance counters cleared."
 L.PERF_INSTRUMENT_ON = "Performance instrumentation enabled."
 L.PERF_INSTRUMENT_OFF = "Performance instrumentation disabled."
 L.PERF_SAMPLED = "Memory sample recorded."
+L.PERF_ROUTES_NONE = "  no route timings recorded yet"
+L.PERF_ROUTE_LINE = "  %s, continent %s: cpu %.0f ms, wall %.0f ms, %d frames, %d expansions, budget %.1f ms, %.0f fps"
 
 -- Self test and diagnostic report
 L.SELFTEST_HEADER = "Self test: %d checks - %d pass, %d note, %d warn, %d fail, %d skipped"
@@ -100,7 +102,7 @@ L.NAV_STATE_PAUSED = "Paused"
 L.ARROW_TURN_AROUND = "Turn around"
 L.ARROW_PAUSED_REASON = "Paused: %s"
 L.ARROW_ARRIVED = "Arrived at %s"
-L.ROUTE_UNVERIFIED_WARNING = "Parts of this route are rough direction and are drawn dashed."
+L.ROUTE_UNVERIFIED_WARNING = "Parts of this route cross open ground and are drawn dashed."
 L.ROUTE_CALCULATING = "Calculating..."
 L.ROUTE_NO_PATH = "No route could be found to that destination."
 L.ROUTE_NO_ORIGIN = "Your position is not available here."
@@ -128,7 +130,7 @@ local SELF = {
     "%d stops",
     "%d transfer",
     "%d transfers",
-    "%d waypoint(s) forgotten. The trip in progress is still running; type /cabbie cancel to stop it.",
+    "%d waypoint(s) forgotten. The route in progress is still running; type /cabbie cancel to stop it.",
     "%d metres",
     "%d yards",
     "%s %s",
@@ -143,30 +145,28 @@ local SELF = {
     "%s at %s",
     "%s can only be reached by %s; enable them in the transport settings or check the faction restriction.",
     "%s is reachable only through another continent's transports, which are currently disabled.",
-    "%s of this route is rough direction (drawn dashed).",
-    "%s of this route is rough direction (drawn dashed on the maps); expect obstacles.",
-    "%s rough direction",
+    "%s of this route is open ground (drawn dashed).",
+    "%s of this route is open ground (drawn dashed on the maps); expect obstacles.",
+    "%s open ground",
+    "%s toward %s",
     "%s, entering %s",
-    "%s, then continue %s across open ground for %s (rough direction)",
+    "%s, then continue %s across open ground for %s",
     "%s: %s",
     "(adjusted %d yd)",
     "(complete)",
     "(next)",
-    "(no known path nearby)",
-    "(rough direction)",
+    "(open ground)",
     "... and %d more steps",
     "100% mount",
     "60% mount",
     "< Back to categories",
     "< Back to lists",
-    "< Back to service types",
     "< Back to trainer kinds",
     "%s trainer",
     "%s (your class)",
     "Any trainer",
     "Choose",
     "No trainers are known on this continent for your faction.",
-    "Pick a kind of trainer; the number is how many are known within range.",
     "Alchemy", "Blacksmithing", "Cooking", "Enchanting", "Engineering", "First Aid", "Fishing", "Herbalism",
     "Leatherworking", "Mining", "Skinning", "Tailoring", "Weapon master", "Riding", "Pet", "Portal", "Other",
     "^",
@@ -197,31 +197,17 @@ local SELF = {
     "Advanced",
     "After you leave the route a new one is requested at most this often.",
     "All",
-    "Allow straight-line legs",
+    "Allow open ground",
     "Alt + Left-click",
     "Alternatives",
     "Alternatives are not available right now.",
     "An extra click that sets a destination on the world map. Choose its modifier and mouse button, or switch it off. Shift + Left-click always goes to the spot at once.",
     "and",
-    "Apply an interface preset: minimal|modern|classic",
     "Area",
     "Arrival radius (yards)",
     "Arrive",
     "Arrive at %s",
     "Arrived at stop %d.",
-    "Arrow disabled.",
-    "Arrow enabled.",
-    "Arrow opacity",
-    "Arrow placement",
-    "Arrow placement set to %s.",
-    "Arrow scale",
-    "Arrow scale set to %.2f.",
-    "Arrow shows distance",
-    "Arrow shows travel time left",
-    "Adds the time left on the route under the distance. Off by default.",
-    "Arrow shows the next instruction",
-    "Arrow: %s, placement %s, scale %.2f",
-    "Arrow: on|off|scale <n>|<placement>",
     "Assume mount speed",
     "Auction house",
     "Audio cues disabled.",
@@ -235,7 +221,6 @@ local SELF = {
     "Battlegrounds",
     "Bear left",
     "Bear right",
-    "Below minimap",
     "Bind location not found in the navigation data; the hearthstone is not used for routing.",
     "Bind location unknown; the hearthstone is not used for routing.",
     "Board %s",
@@ -251,34 +236,31 @@ local SELF = {
     "Cabbie does not answer /way while \"Answer the /way command\" is off in its settings. /cabbie way still works.",
     "Cabbie layout editor: drag frames, arrow keys nudge (Shift: 10 px).",
     "Cabbie voice guidance is working.",
+    "Cabbie's recorded voice speaks; it needs nothing installed. The game voice settings below stay greyed out until the game reports a voice.",
     "Cancel",
-    "Cancel trip",
-    "Cancel the current trip",
+    "Cancel route",
+    "Cancel the current route",
     "Capital city",
     "Capitals",
     "Cast %s",
     "Cast %s.",
     "Cheap timers behind /cabbie perf.",
-    "Classic",
     "Clear",
     "Clear recent destinations",
     "Clear recents",
     "Client %s (%s), Edit Mode: %s",
     "Client build",
     "Close",
-    "Solid line: known path",
+    "Solid line: road or walkable ground",
     "Settings",
     "Hide the map legend",
     "Turn it back on in Cabbie's settings, or with /cabbie legend on.",
     "Switches off the extra click only. Shift + Left-click still goes to the spot.",
     "Tip: type 42.5 65.1 to go to map coordinates",
-    "Services",
+    "Points of interest",
     "Search",
     "Nothing to pause or resume.",
-    "Step list shown.",
-    "Step list hidden.",
     "Pause or resume guidance",
-    "Toggle step list",
     "Keep planning",
     "Closes this window. Your stops stay set.",
     "Colour-blind friendly",
@@ -286,9 +268,10 @@ local SELF = {
     "Confirm",
     "Consider teleport spells",
     "Consider the Hearthstone",
+    "Routes may start with your Hearthstone when that is quicker. Cabbie learns where it takes you the first time you use it or make an inn your home. The route preview says when it is left out, and why.",
     "Continue %s",
-    "Continue %s across open ground for %s (rough direction)",
-    "Continue %s across open ground for %s. There is no known path here.",
+    "Continue %s across open ground for %s",
+    "Continue %s across open ground for %s.",
     "Coordinates",
     "coordinates must be between 0 and 100",
     "Could not add favorite (%s).",
@@ -298,9 +281,7 @@ local SELF = {
     "Ctrl + Right-click",
     "Cue '%s' is now %s.",
     "Cue volume set to %d.",
-    "Current preset: %s (available: minimal, modern, classic)",
     "Custom",
-    "Custom (Edit Mode)",
     "Danger margin (levels)",
     "Data version",
     "Debug output",
@@ -319,6 +300,7 @@ local SELF = {
     "Docks",
     "Done",
     "Drag to move. Arrow keys nudge the selection (Shift: 10 px).",
+    "Drag: move the button around the minimap",
     "Draw route hints on the minimap",
     "Show the minimap button",
     "A compass button on the minimap opens search without typing /cabbie.",
@@ -334,7 +316,6 @@ local SELF = {
     "Entering %s",
     "Entering %s.",
     "Extra world map click",
-    "Faction-coloured accents",
     "Fastest",
     "Favorite",
     "Favorite %d removed.",
@@ -351,33 +332,31 @@ local SELF = {
     "flight point",
     "Fly to %s",
     "Follow the ramp",
+    "Follow the road toward %s",
     "General",
     "Go",
     "Go through %s",
     "Go through %s.",
-    "GPS",
     "Graveyard",
     "Guidance",
     "Guidance work is switched off for a measurement; type /cabbie perf toggle first.",
     "Head %s",
     "Head %s from %s",
     "Hearthstone",
+    "Hearthstone not used: Cabbie learns where your hearthstone takes you the first time you use it or bind at an inn.",
+    "Hearthstone not used: no hearthstone in your bags.",
+    "Hearthstone not used: on cooldown for %d min.",
     "Hide all guidance",
     "How far from the route you can stray before it is recalculated.",
-    "How many steps the panel lists, counting the current one.",
-    "How solid the arrow is drawn; it is dimmed further in combat when guidance is set to visuals only.",
     "In %s, %s",
     "In combat",
     "Inn",
     "Innkeeper",
     "instance %d",
-    "Instruction panel lines",
-    "Instruction panel scale",
     "interface",
-    "Interface preset",
     "It is available in %s.",
-    "Itinerary",
-    "Itinerary window; stops skip|clear",
+    "Stops",
+    "Stops window; skip|clear",
     "Keep everything (visuals and voice)",
     "Key bindings (set them in the game's Key Bindings interface, under Cabbie):",
     "Land at %s",
@@ -387,16 +366,14 @@ local SELF = {
     "Layout editor opened. Drag the frames, then press Done or Escape.",
     "Leave elevator",
     "Leave the elevator",
-    "Leave the elevator.",
     "Leave the elevator at %s",
     "Leave the tram at %s",
     "Leave the tram at %s.",
     "Leave tram",
     "Levels above yours before an area counts as dangerous.",
     "List the Cabbie key bindings and the keys they are on",
-    "Lists",
-    "Longest straight-line stretch (yards)",
-    "Longest stretch without verified ground data the router may put inside a route. 0 turns these stretches off; the last-resort straight-line guidance is not affected.",
+    "Longest stretch across open ground (yards)",
+    "Longest stretch across open ground a route may include. 0 turns these stretches off. The last-resort line across open ground is not affected.",
     "Mailbox",
     "Make a U-turn",
     "Make this inn your home",
@@ -409,13 +386,11 @@ local SELF = {
     "Metric",
     "Minimal",
     "Minimal: turns only. Normal: advance notices and turns. Detailed: every step and zone change.",
-    "Modern",
     "native integration available",
     "Navigation is not available right now.",
-    "Near character",
     "Nearest",
     "Nearest %s by route distance.",
-    "Nearest %s by route distance; %d of %d could not be routed and show rough direction.",
+    "Nearest %s by route distance; %d of %d could not be routed and show open ground.",
     "Never mounted",
     "New name",
     "Next",
@@ -432,7 +407,6 @@ local SELF = {
     "No extra click",
     "No favorite matches '%s'.",
     "No favorites yet.",
-    "No favourites yet. Select a place and press Favorite (star), or search for a town.",
     "No favorites yet. Star a place in Search, or right-click a town on the map.",
     "no flights",
     "No flights",
@@ -443,14 +417,13 @@ local SELF = {
     "no quest is being tracked",
     "no quest was given",
     "No quests with a known place. Open the quest panel, or accept a quest first.",
-    "No recent places. Search for a town, or open Favourites if you saved one.",
     "no sound available in this client",
     "No text-to-speech voices are installed.",
-    "No text-to-speech voices installed",
+    "None reported by the game",
     "no text-to-speech voices installed",
     "No turn-by-turn steps are available for this route.",
-    "No known path exists between these points; the whole route is rough direction (dashed).",
-    "No known path was found; this is rough direction drawn dashed.",
+    "No road joins these points; the whole route is drawn dashed.",
+    "No road was found; this route is drawn dashed.",
     "Normal",
     "not available (fallback layout editor via /cabbie layout)",
     "not bound",
@@ -475,16 +448,12 @@ local SELF = {
     "Performance report",
     "Pick a category. The list is the nearest places of that kind.",
     "Pick a list.",
-    "Pick a service type; results are the nearest by route distance.",
     "Portal",
     "Portals",
     "Position of '%s' restored to its default.",
     "prefer roads",
     "Prefer roads",
-    "Prefer known paths",
-    "Preset '%s' applied.",
     "Preset colours",
-    "Presets that support it tint their accent colour and verified route line with your faction's colour.",
     "Preview",
     "Show route",
     "Prints diagnostics to chat and forwards errors to the error handler.",
@@ -507,10 +476,8 @@ local SELF = {
     "Repair",
     "Reset",
     "Reset all UI positions",
-    "Reset arrow position",
     "Reset favorites window position",
-    "Reset instruction panel position",
-    "Reset itinerary window position",
+    "Reset stops window position",
     "Reset preview window position",
     "Reset search window position",
     "Reset settings",
@@ -534,22 +501,22 @@ local SELF = {
     "Select a destination first.",
     "Service",
     "Service search failed; type /cabbie log for details.",
-    "Service search is not available right now.",
     "Set a destination from waypoint coordinates or a pasted map pin link",
     "Settings and frame positions restored to defaults; routing preferences, favorites and recents were kept.",
     "Sharp left",
     "Sharp right",
     "Shift + Right-click",
     "Shortest time between recalculations (seconds)",
-    "Show the guidance arrow",
+    "Show your route's steps beside the quest list",
+    "The time and distance left, and the next few steps of your route, in a list beside the game's quest list. Drag it by its first line to move it. The arrow at the top of the screen guides you without it.",
     "Show the in-world waypoint marker",
-    "Show the instruction panel",
     "Show the map legend",
     "Show the route preview for the current destination",
+    "Show the turn call-out",
     "Show version, data version, client build and Edit Mode status",
     "Skip stop",
     "Speak turn instructions out loud.",
-    "Off (the default): Cabbie's own recorded voice, the same on every computer. On: the voice chosen in the game's text-to-speech settings, which also says place names. Without a voice there, the recorded one speaks.",
+    "Off (the default): Cabbie's own recorded voice, the same on every computer. On: the voice chosen in the game's text-to-speech settings, which also says place names. Greyed out while the game reports no text-to-speech voice; the recorded one speaks then.",
     "Use the game's text-to-speech voice",
     "Speech rate",
     "Speech rate set to %d.",
@@ -565,13 +532,10 @@ local SELF = {
     "Stop %d",
     "Stop %d: %s",
     "Stops reordered.",
-    "Straight line (rough direction)",
-    "Straight-line guidance",
-    "Straight-line legs enabled for routing; recalculating.",
+    "Open ground",
+    "Routes may cross open ground; recalculating.",
     "Take elevator",
     "Take portal",
-    "Take the elevator",
-    "Take the elevator.",
     "Take the elevator down to %s",
     "Take the elevator to %s",
     "Take the elevator up to %s",
@@ -580,17 +544,18 @@ local SELF = {
     "Teleport",
     "text-to-speech available",
     "That is not a coordinate pair. Try: /way 42.5 65.1 Elwynn Forest",
-    "that map pin is the one Cabbie placed for the current trip",
+    "that map pin is the one Cabbie placed for the current route",
     "that map position cannot be used as a destination",
     "That map position cannot be used as a destination%s",
     "that place",
     "that quest location is no longer listed",
     "The cursor is not over the world map.",
+    "The game reports no text-to-speech voices on this computer",
     "that part of Cabbie is not ready",
     "the dock",
     "the far side",
-    "The trip in progress was replaced by %s. Use '/way add <coordinates>' to keep the trip and add a stop instead.",
-    "The trip to %s was cancelled: its waypoint was removed.",
+    "The route in progress was replaced by %s. Use '/way add <coordinates>' to keep the route and add a stop instead.",
+    "The route to %s was cancelled: its waypoint was removed.",
     "The layout editor cannot be opened during combat.",
     "the navigator did not accept the waypoint",
     "the objective is inside a dungeon or building; navigate to its entrance instead",
@@ -609,7 +574,6 @@ local SELF = {
     "Time slice per frame for route calculation.",
     "Toggle debug output: on|off",
     "Toggle the layout editor for the HUD frames (fallback when Edit Mode is unavailable)",
-    "Top centre",
     "Town",
     "Towns",
     "Trainer",
@@ -632,19 +596,16 @@ local SELF = {
     "unknown (no data manifest loaded)",
     "unknown (Edit Mode is not ready)",
     "Unknown destination",
-    "Unknown preset '%s'. Available: minimal, modern, classic",
     "unknown reason",
     "unknown service type",
     "Unknown zone",
     "Unnamed location",
-    "Usage: /cabbie arrow on|off|scale <n>|near_character|below_minimap|top_center|custom",
     "Usage: /cabbie legend on|off",
-    "Usage: /cabbie arrow scale <0.5..2>",
     "Usage: /cabbie cues %s on|off",
     "Usage: /cabbie cues on|off|volume <n>|turn on|off|transport on|off|arrival on|off|test|status",
     "Usage: /cabbie cues volume <0..100>",
     "Usage: /cabbie fav remove <number> (see /cabbie fav list)",
-    "Usage: /cabbie reset settings|positions|routing|all|<element> (arrow, panel, search, preview, favorites, itinerary)",
+    "Usage: /cabbie reset settings|positions|routing|all|<element> (search, preview, favorites, stops)",
     "Usage: /cabbie voice on|off|mute|repeat|list|voice <id>|rate <n>|volume <n>|verbosity <level>|test",
     "Usage: /cabbie voice rate <-10..10>",
     "Usage: /cabbie voice verbosity minimal|normal|detailed",
@@ -663,7 +624,6 @@ local SELF = {
     "Vendor",
     "Verbosity",
     "Version",
-    "Visual preset for the arrow, panel and windows.",
     "Visuals only, no voice",
     "Voice",
     "Voice %d is not installed (see /cabbie voice list).",
@@ -683,8 +643,7 @@ local SELF = {
     "Waypoints forgotten.",
     "Waypoints: /way <x> <y> [zone or title] | /way <zone> <x> <y> [title] | /way <pasted map pin link> | /way pin | /way add <...> | /way clear",
     "What guidance keeps doing while you are in combat.",
-    "Where the arrow sits; Custom keeps the position set in Edit Mode.",
-    "Without a known path the guide may draw straight legs; turning this off limits routes to known paths.",
+    "The guide may draw a straight leg across open ground. Turning this off keeps routes on roads.",
     "X",
     "Yards",
     "Yards or metres and kilometres.",
@@ -694,9 +653,13 @@ local SELF = {
     "You land at %s.",
     "Your current zone is unknown; add a zone name after the coordinates.",
     "your destination",
-    "Your itinerary from last time is still set (%d stop(s)). Type /cabbie start to continue or /cabbie cancel to clear it.",
-    "Your trip to %s was replaced by %s. Use '/way add <coordinates>' to keep the trip and add a stop instead.",
+    "Your stops from last time are still set (%d stop(s)). Type /cabbie start to continue or /cabbie cancel to clear them.",
+    "Your route to %s was replaced by %s. Use '/way add <coordinates>' to keep the route and add a stop instead.",
     "your position is not available here",
+    "Use spare frame time for routes",
+    "When the frame rate is high and you are not in combat, in a cutscene, or looking at the flight map, route calculation may use a longer slice of each frame.",
+    "Longest route slice (ms per frame)",
+    "Upper limit on that longer slice. The shorter budget above is used in combat, in a cutscene, below 30 frames a second, or with the flight map open.",
     "Your route continues by flight to %s, but this flight master cannot take you there (undiscovered or not connected).",
     "Your route continues by flight to %s, which this flight master does not offer.",
     "zeppelin",
@@ -706,17 +669,6 @@ local SELF = {
 for i = 1, #SELF do L[SELF[i]] = SELF[i] end
 
 -- Old keys still used by engine callers: map them to glossary wording so player text stays plain.
-L["%s of this route have no verified path (drawn dashed)."] = L["%s of this route is rough direction (drawn dashed)."]
-L["%s, then continue %s across open ground for %s (no verified path)"] = L["%s, then continue %s across open ground for %s (rough direction)"]
-L["(no verified path nearby)"] = L["(no known path nearby)"]
-L["Continue %s across open ground for %s (no verified path)"] = L["Continue %s across open ground for %s (rough direction)"]
-L["Continue %s across open ground for %s. There is no verified path here."] = L["Continue %s across open ground for %s. There is no known path here."]
-L["Nearest %s by route distance; %d of %d could not be routed and show an unverified path."] = L["Nearest %s by route distance; %d of %d could not be routed and show rough direction."]
-L["No verified path exists between these points; the whole route is drawn dashed."] = L["No known path exists between these points; the whole route is rough direction (dashed)."]
-L["Prefer verified paths"] = L["Prefer known paths"]
-L["Straight line (no verified path)"] = L["Straight line (rough direction)"]
-L["Without verified ground data the router may draw straight legs; turning this off limits routes to verified paths."] = L["Without a known path the guide may draw straight legs; turning this off limits routes to known paths."]
-L["Prefer roads and verified paths"] = L["Prefer roads and known paths"]
 
 -- Quest support (Nav/QuestData.lua, UI/QuestPanel.lua, UI/QuestMap.lua).
 -- Kept as its own block because it arrived as one feature and a translator can take it as one
@@ -731,10 +683,9 @@ L["Prefer roads and verified paths"] = L["Prefer roads and known paths"]
 -- the data no longer contains. FGPS.L falls back to the key, so they read as their English selves
 -- either way.
 local QUESTS = {
-    "  %d are complete and plausible, %d carry something the builder found suspect.",
-    "  %d quests exist only in Forever; %d of them are listed here and %d have a known start.",
-    "  Of the %d quests this client lists, %d have a 1.12 record and %d of those are routable end to end.",
-    "  not shipped: %d because %s",
+    "Quests: %d with a full route, %d with an objective whose place is not known, %d with only one known end.",
+    "Forever's own quests: %d, and %d of them have a known start.",
+    "Quest givers may have moved since the records were made. Names are the game's own for %d of %d quests, the 1.12 records' for the rest.",
     " (inside; no entrance is known)",
     " (inside; routes to the entrance)",
     " - ",
@@ -762,19 +713,23 @@ local QUESTS = {
     "%s: the giver hands it to you",
     -- The kind of an objective of the Forever layer, which no source names (QuestData.KindName).
     "objective",
-    "unconfirmed",
-    "▸ ",
-    "▾ ",
+    -- A quest record's mark in the quest window, after the distance (QuestPanel.MarkFlag).
+    "may have moved",
+    "not checked in game",
+    "from the game",
+    -- How far away a place is, in a straight line: "1,742 yd away".
+    "%s away",
+    "+ ",
+    "- ",
+    "[%d] %s",
     "A kill or collect objective is an area, not a point. Cabbie draws the measured area and labels it with its width, rather than putting a pin in the middle of it.",
-    "Cabbie bundles no vanilla quest names. This asks the server for one, from a small budget that is yours to spend.",
-    "Cabbie bundles no vanilla quest names; the client answers for them in Forever's own wording. This allows the button that spends part of a small per-session lookup budget to fill in the names of a search result.",
+    "This asks the server for a quest's name in Forever's own wording, from a small budget that is yours to spend.",
+    "Classic quest names come with Cabbie in English, and the game's own wording replaces them once it is known. This allows the button that spends part of a small per-session lookup budget to fill in the names of a search result.",
     "Cabbie cannot look a name up right now (%s).",
-    "Cabbie does not ship quest names for vanilla quests - the client supplies them, in Forever's own wording. Search by zone or by level, or open a quest once and Cabbie will remember its name. Names known so far: %d of %d.",
+    "No quest name matches that. Search by zone or by level, or open a quest once and Cabbie will remember its name. Names known so far: %d of %d.",
     "Cabbie quests",
-    "Cabbie ships %d fully routable quests: a known giver, a known turn-in and every objective placed.",
     "Confirmed on this client.",
     "Draw objective areas",
-    "Every one of them is a 1.12 record. That the quest exists was checked against this client's own list; that its giver has not moved was not.",
     "Find a quest",
     "Forever quest: start only",
     "From 1.12 records. Not confirmed in Forever - it may have moved or changed.",
@@ -792,11 +747,32 @@ local QUESTS = {
     "Or open Search for a town, inn, or flight master.",
     "Pins for the quests you have accepted and for a quest you searched for and selected. Never for quests you have not taken.",
     "Quest %d",
+    -- The nearby-quest card (Nav/QuestBatch.lua, UI/QuestPanel.lua) and its setting.
+    "Quests to pick up nearby",
+    "Adds the places where these quests start to your route as stops, in this order. The route starts when you press Start.",
+    "Takes the last quest off this list.",
+    "Hides this list until you open the window again.",
+    "Accept",
+    "Drop last stop",
+    "Dismiss",
+    "No quests to take within %d yards.",
+    "Working out the route.",
+    "No route to these stops.",
+    "The route was cancelled.",
+    "The route takes %s.",
+    "No stops left.",
+    "No stops to set.",
+    "No stop to drop.",
+    "Stops set. Press Start for the route.",
+    "Stops set. Your route now goes to them.",
+    "The last stop was dropped.",
+    "The list was dismissed.",
+    "Quests to take, yards",
+    "How far to look for quests you can take. Accept sets the stops. You press Start for the route.",
     "Quest data is not installed in this copy of Cabbie.",
     "Quest data is not installed in this copy of Cabbie; only what the client reports is shown.",
     "Quest help",
     "Quest help: quests [zone|level|name] | quests about",
-    "Quest names are not bundled: the client answers for them in Forever's own wording. Names known so far: %d of %d.",
     "Quest pins on the minimap",
     "Quest pins on the world map",
     "Quests that exist only in Forever. Cabbie knows a name and sometimes where they start, never a turn-in or an objective, and says so.",
@@ -851,15 +827,11 @@ for i = 1, #QUESTS do L[QUESTS[i]] = QUESTS[i] end
 -- L["..."] the code looks up with the lists above; FGPS.L falls back to the key, so they always
 -- read correctly in English, but a translator only sees what is listed here.
 local LATER = {
-    "  %d more ship as partial rows: a known giver and a known turn-in, and an objective whose place is not known.",
-    "  %d more ship with one known end: only where they are handed in, or only where they are given.",
     "  %s (position not available)",
     "  %s: %.1f yards per second over %d samples",
     "  %s: %.1f yards per second over %d samples (not used yet, %d needed)",
     "  %s: nothing measured yet",
     "  flights: %d path(s) timed from %d real ride(s)",
-    "  one known end: %d because %s",
-    "  partial row: %d because %s",
     "  teleports: cast and loading times for %d of them",
     "  transports: departure times known for %d dock(s)",
     "%d more have an objective whose place is not known.",
@@ -868,7 +840,7 @@ local LATER = {
     "%d of them have no known giver or no known hand-in.",
     "%s (%s spot)",
     "%s (graveyard)",
-    "%s away in a straight line",
+    "%s away directly",
     "%s cross open ground from one place where creatures are known to stand to the next; nobody has walked the way between them.",
     "%s cross open ground on a way that keeps off cliffs and deep water; trees, rocks and fences along it are not known.",
     "%s follow ground, floors and halls read from the game's own world.",
@@ -881,7 +853,7 @@ local LATER = {
     "%s is heading to %s. Type /cabbie accept to go there too, or /cabbie decline to ignore it.",
     "%s is in your quest log now, so the route to where it starts has ended.",
     "%s is no longer in your group; following stopped.",
-    "%s of this route is rough direction (drawn dashed on the maps); expect obstacles.",
+    "%s of this route is open ground (drawn dashed on the maps); expect obstacles.",
     "%s spot",
     "%s swim across water read from the game's own world.",
     "%s to %s",
@@ -903,14 +875,13 @@ local LATER = {
     "Cleared. No route and no stops are set. Undo for %d seconds (/cabbie undo).",
     "Continue %s across open ground for %s",
     "Continue %s across open ground for %s.",
-    "Restore the trip cleared in the last 30 seconds",
+    "Restore the route cleared in the last 30 seconds",
     "Nothing to undo (the clear is older than 30 seconds).",
     "Nothing to undo.",
-    "Restored the cleared trip.",
-    "Coloured line: flight, boat, zeppelin or elevator",
+    "Restored the cleared route.",
     "Dotted coloured line: flight, boat or zeppelin",
     "Could not post to %s chat: %s",
-    "Dashed line: rough direction",
+    "Dashed line: open ground or a guess",
     "Auction houses of the zone you are looking at get a small icon on the world map. Left-click one to route there.",
     "Banks of the zone you are looking at get a small icon on the world map. Left-click one to route there.",
     "Boat docks and zeppelin towers of the zone you are looking at get a small icon on the world map. Left-click one to route there.",
@@ -937,24 +908,23 @@ local LATER = {
     "Measured travel times: calibrate [reset ...]",
     "Navigate back to your corpse",
     "No destination set; there is nothing to share.",
-    "No known path nearby leads down here: the way on is about %d yd below the straight line.",
-    "No known path nearby leads down here: the way on may be about %d yd below you.",
-    "No known path nearby leads up here: the way on is about %d yd above the straight line.",
-    "No known path nearby leads up here: the way on may be about %d yd above you.",
+    "No road nearby leads down here: the way on is about %d yd below the direct line.",
+    "No road nearby leads down here: the way on may be about %d yd below you.",
+    "No road nearby leads up here: the way on is about %d yd above the direct line.",
+    "No road nearby leads up here: the way on may be about %d yd above you.",
     "No longer following %s.",
     "Nobody has shared a destination with you recently.",
     "Nobody in your group is called '%s'.",
-    "Off (the default): routes keep to the road wherever one goes, and leave it only to reach a place off the road. On: a route may cut across open ground when that is clearly quicker. Needs \"Prefer roads and known paths\".",
-    "On the minimap a solid dot is a known path and a larger hollow dot is a rough direction.",
+    "Off (the default): routes keep to the road wherever one goes, and leave it only to reach a place off the road. On: a route may cut across open ground when that is clearly quicker. Needs \"Prefer roads\".",
+    "On the minimap a solid dot is a road or walkable ground, and a larger hollow dot is open ground or a guess.",
     "Post your destination to party chat",
-    "Prefer roads and known paths",
+    "Prefer roads",
     "Removes the route, the preview, every stop and their markers. Nothing stays set.",
     "Ride the %s to %s",
     "Ride the elevator",
-    "Right-click: add as a stop",
     "Right-click: clear the route and every stop",
-    "Right-click: clear the trip",
-    "Routes stick to roads and known paths unless the way round is much longer. Open ground, wandering creature paths and guessed stretches cost more. Off: the fastest line, often straight across open ground.",
+    "Right-click: clear the route",
+    "Routes stick to roads unless the way round is much longer. Open ground, wandering creature paths and guessed stretches cost more. Off: the fastest line, often straight across open ground.",
     "Same as clear",
     "Show auction houses on the world map",
     "Show banks on the world map",
@@ -988,10 +958,7 @@ local LATER = {
     "Use /cabbie follow <name> to navigate to a group member, or /cabbie follow off to stop.",
     "You are not dead; there is no corpse to run to.",
     "You are not following anybody.",
-    "42.5  65.1",
-    "Map coordinates from 0 to 100. Add a zone name if you are not standing in it, for example 42.5 65.1 Elwynn Forest.",
     "Map pin",
-    "Nearby",
     "Town, NPC, or 42.5 65.1",
     "Vendors",
     "Where to",
@@ -1060,16 +1027,37 @@ local GUIDANCE = {
     "Take me there",
     "That spot cannot be reached",
     "The new route starts when this ride ends",
+    "The next turn is shown here",
     "Those numbers are not a place on that map.",
     "This quest has failed",
     "This quest's place is inside a dungeon with no known entrance",
     "To %s",
+    "Turn arrow",
     "Type a place after the command, for example: /go Goldshire",
     "Where the open objective is found is not known. An old record has the hand-in: ask again when the quest is ready.",
     "You are there. The route moves on when this part of the quest is done.",
     "Your corpse cannot be found yet",
 }
 for i = 1, #GUIDANCE do L[GUIDANCE[i]] = GUIDANCE[i] end
+
+-- The Turn arrow's panel in Edit Mode (UI/Callout.lua, UI/EditMode.lua): the look of the arrow and
+-- its words, and the tooltip of a colour swatch.
+local ARROW_LOOK = {
+    "Arrow",
+    "Arrow colour",
+    "Arrow opacity",
+    "Arrow size",
+    "Arrow style",
+    "Chevron",
+    "Click to choose a colour",
+    "Needle",
+    "Pointer",
+    "Show the distance",
+    "Show the words",
+    "Text size",
+    "This client has no colour picker.",
+}
+for i = 1, #ARROW_LOOK do L[ARROW_LOOK[i]] = ARROW_LOOK[i] end
 
 -- Rooms and levels of the walkable surface read from the game's geometry (Nav/Instructions.lua,
 -- steps "enter" and "level"): said in the call-out and the Route block like a turn. "Enter %s"
@@ -1106,7 +1094,6 @@ local SEARCH_LINE = {
     "Repair vendor",
     "Right-click a quest in your quest list: Take me there",
     "Shift-click the world map to be guided to that spot",
-    "Show how to use Cabbie",
     "The search line is not available in this session.",
     "Type a place, a quest, or a word like inn or repair",
     "Your steps appear beside your quest list. Click the word Route to stop or pause",
@@ -1133,12 +1120,14 @@ L["Add as stop"] = "Add as stop"
 
 L["Replace the route to %s?"] = "Replace the route to %s?"
 
-L["During a trip, left-click asks before replacing the route"] = "During a trip, left-click asks before replacing the route"
+L["During a route, left-click asks before replacing the route"] = "During a route, left-click asks before replacing the route"
 L["Go to corpse"] = "Go to corpse"
 L["Not now"] = "Not now"
 L["You are dead. Guide me back to my corpse?"] = "You are dead. Guide me back to my corpse?"
 
 L["Resume"] = "Resume"
+
+L["On screen"] = "On screen"
 
 L["Arrow"] = "Arrow"
 
@@ -1179,9 +1168,9 @@ L["Place icons"] = "Place icons"
 
 -- Strings the modules read as L["..."] that were missing here (2026-10-17: Navigator, Cost, QuestData,
 -- MapShot, Preview, QuestMap, Search, WorldMap); tools/check_locale.py now fails such a string.
-L["%s cut across city streets and squares in straight lines checked against the city map; nobody has walked those exact lines."] = "%s cut across city streets and squares in straight lines checked against the city map; nobody has walked those exact lines."
+L["%s cut across city streets and squares on lines checked against the city map; nobody has walked those exact lines."] = "%s cut across city streets and squares on lines checked against the city map; nobody has walked those exact lines."
 L["Continue"] = "Continue"
-L["Your trip from last time is still set (%d stop(s)). Continue or clear?"] = "Your trip from last time is still set (%d stop(s)). Continue or clear?"
+L["Your route from last time is still set (%d stop(s)). Continue or clear?"] = "Your route from last time is still set (%d stop(s)). Continue or clear?"
 L["Search by zone (\"Westfall\"), by level (\"24\" or \"20-30\"), or by a quest name you have already seen. %d routable quests are bundled."] = "Search by zone (\"Westfall\"), by level (\"24\" or \"20-30\"), or by a quest name you have already seen. %d routable quests are bundled."
 L["Maintainer tool: screenshot every zone and city map for road tracing; mapshot stop cancels"] = "Maintainer tool: screenshot every zone and city map for road tracing; mapshot stop cancels"
 L["Map pictures are not available in this client."] = "Map pictures are not available in this client."
@@ -1191,11 +1180,11 @@ L["Map pictures stopped after %d screenshots."] = "Map pictures stopped after %d
 L["Map pictures stopped after %d screenshots: the world map was closed or combat began."] = "Map pictures stopped after %d screenshots: the world map was closed or combat began."
 L["Map pictures: %d maps, about %d seconds. Leave the map open; /cabbie mapshot stop cancels."] = "Map pictures: %d maps, about %d seconds. Leave the map open; /cabbie mapshot stop cancels."
 L["Open the world map first, then type /cabbie mapshot again."] = "Open the world map first, then type /cabbie mapshot again."
-L["%s of this route has no verified path (drawn dashed on the maps); expect obstacles."] = "%s of this route has no verified path (drawn dashed on the maps); expect obstacles."
-L["%s of this route is a guessed way over open ground without verified ground data (drawn dashed on the maps); expect obstacles."] = "%s of this route is a guessed way over open ground without verified ground data (drawn dashed on the maps); expect obstacles."
-L["%s unverified"] = "%s unverified"
-L["(no verified path)"] = "(no verified path)"
-L["No verified path was found; this is unverified guidance drawn dashed."] = "No verified path was found; this is unverified guidance drawn dashed."
+L["%s of this route is open ground (drawn dashed on the maps); expect obstacles."] = "%s of this route is open ground (drawn dashed on the maps); expect obstacles."
+L["%s of this route is a guessed way over open ground (drawn dashed on the maps); expect obstacles."] = "%s of this route is a guessed way over open ground (drawn dashed on the maps); expect obstacles."
+L["%s open ground"] = "%s open ground"
+L["(open ground)"] = "(open ground)"
+L["No road was found; this route is drawn dashed."] = "No road was found; this route is drawn dashed."
 L["Unconfirmed place"] = "Unconfirmed place"
 L["No favorites yet. Select a result and press Favorite."] = "No favorites yet. Select a result and press Favorite."
 L["No quests with a known location."] = "No quests with a known location."

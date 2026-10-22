@@ -107,7 +107,8 @@ function Guide.RowText(step)
     local text = step.shortText
     if type(text) ~= "string" or text == "" then text = step.text end
     if type(text) ~= "string" or text == "" then return nil end
-    if isTurn(step.kind) and type(step.landmark) == "string" and step.landmark ~= "" then
+
+    if isTurn(step.kind) and not step.toward and type(step.landmark) == "string" and step.landmark ~= "" then
         return format(L["%s at %s"], text, step.landmark)
     end
     return text
@@ -542,6 +543,15 @@ function Guide.Build(input)
 
 
         model.callout = { glyph = notice.glyph, text = notice.text, key = "notice", answer = notice.answer }
+
+
+        if notice.depart and journey and state == "active" and input.facing then
+            local aimX, aimY, aimInst = Guide.Aim(route, progress, input.speed)
+            if aimX then
+                local c = model.callout
+                c.glyph, c.live, c.aimX, c.aimY, c.aimInst = "ahead", true, aimX, aimY, aimInst
+            end
+        end
     end
     return model
 end
@@ -700,6 +710,7 @@ function Guide.Refresh()
         Guide.waiting, Guide.atStop = nil, nil
         if waiting and now() < waiting.untilTime then
             setNotice(waiting.text, waiting.glyph, waiting.untilTime)
+            Guide.notice.depart = true
             notice = Guide.notice
         end
     end
@@ -1004,7 +1015,10 @@ function Guide:Init()
             if text and Guide.notice ~= nil and Guide.notice == Guide.atStop then
                 Guide.waiting = { text = text, glyph = GLYPH[step.kind], untilTime = now() + Guide.HOLD_DEPART }
             else
-                say(text, Guide.HOLD_DEPART, GLYPH[step.kind])
+                if say(text, Guide.HOLD_DEPART, GLYPH[step.kind]) then
+                    Guide.notice.depart = true
+                    Guide.Refresh()
+                end
             end
         end
     end, self)

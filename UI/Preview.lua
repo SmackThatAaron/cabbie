@@ -281,6 +281,21 @@ end
 
 
 
+
+local function hearthNote(route)
+    local s = settings()
+    if s and s.transports and s.transports.hearth == false then return nil end
+    for _, leg in ipairs(type(route.legs) == "table" and route.legs or {}) do
+        if leg.kind == "hearth" then return nil end
+    end
+    local Personal = FGPS.Personal
+    if not (Personal and Personal.HearthNote) then return nil end
+    local ok, note = pcall(Personal.HearthNote)
+    return ok and type(note) == "string" and note or nil
+end
+
+
+
 function Preview.Summarize(route)
     local s = settings()
     local units = s and s.units or "yards"
@@ -299,9 +314,9 @@ function Preview.Summarize(route)
 
         local sentence
         if (tonumber(route.meshYards) or 0) > 0 then
-            sentence = L["%s of this route is a guessed way over open ground without verified ground data (drawn dashed on the maps); expect obstacles."]
+            sentence = L["%s of this route is a guessed way over open ground (drawn dashed on the maps); expect obstacles."]
         else
-            sentence = L["%s of this route has no verified path (drawn dashed on the maps); expect obstacles."]
+            sentence = L["%s of this route is open ground (drawn dashed on the maps); expect obstacles."]
         end
         summary.unverifiedText = format(sentence, Util.FormatDistance(summary.unverifiedYards, units))
     end
@@ -311,6 +326,7 @@ function Preview.Summarize(route)
         if ok and type(text) == "string" then summary.explain = text end
     end
     summary.explain = summary.explain or route.explain
+    summary.hearthNote = hearthNote(route)
     return summary
 end
 
@@ -336,7 +352,7 @@ function Preview.DescribeAlternative(alt, reference)
     if alt.variant == "no_flight" then parts[#parts + 1] = L["no flights"] end
     if alt.variant == "no_boat" then parts[#parts + 1] = L["no boats"] end
     if (tonumber(alt.unverifiedYards) or 0) >= leastGuessedYards() then
-        parts[#parts + 1] = format(L["%s unverified"], Util.FormatDistance(alt.unverifiedYards, settings() and settings().units or "yards"))
+        parts[#parts + 1] = format(L["%s open ground"], Util.FormatDistance(alt.unverifiedYards, settings() and settings().units or "yards"))
     end
     return table.concat(parts, ", ")
 end
@@ -397,7 +413,7 @@ local function stepItems(route)
         local text = step.text or step.shortText or step.kind or ""
 
 
-        if unverified then text = text .. "  " .. L["(no verified path)"] end
+        if unverified then text = text .. "  " .. L["(open ground)"] end
         items[#items + 1] = {
             kind = "step",
             left = step.distanceFromStart and Util.FormatDistance(step.distanceFromStart, units) or "",
@@ -502,16 +518,19 @@ function Preview:RenderRoute()
         window.fgpsWarning:SetText(summary.unverifiedText)
         window.fgpsWarning:Show()
 
-        window.fgpsExplain:SetText("")
-        window.fgpsExplain:Hide()
+
+        window.fgpsExplain:SetText(summary.hearthNote or "")
+        if summary.hearthNote then window.fgpsExplain:Show() else window.fgpsExplain:Hide() end
     else
         window.fgpsWarning:SetText("")
         window.fgpsWarning:Hide()
-        window.fgpsExplain:SetText(summary.explain or "")
+        local explain = summary.explain or ""
+        if summary.hearthNote then explain = explain == "" and summary.hearthNote or (explain .. " " .. summary.hearthNote) end
+        window.fgpsExplain:SetText(explain)
         window.fgpsExplain:Show()
     end
     if summary.fallback == "straight" then
-        setStatus(window, L["No verified path was found; this is unverified guidance drawn dashed."], 1, 0.65, 0.2)
+        setStatus(window, L["No road was found; this route is drawn dashed."], 1, 0.65, 0.2)
     elseif self.calculating then
         setStatus(window, L.ROUTE_CALCULATING)
     else
@@ -723,7 +742,7 @@ function Preview:UseFallback()
     local DB = FGPS.DB
     if DB and DB:Get("routing.allowUnverified") == false then
         DB:Set("routing.allowUnverified", true)
-        FGPS:Print(L["Straight-line legs enabled for routing; recalculating."])
+        FGPS:Print(L["Routes may cross open ground; recalculating."])
         self.error = nil
         self.calculating = true
         self:Render()
@@ -794,7 +813,7 @@ local function buildWindow()
     window.fgpsStatus = line("normal", "title")
     window.fgpsListTitle = line("small", "title")
 
-    local fallback = makeButton(content, L["Straight-line guidance"], function() Preview:UseFallback() end, 180, 22)
+    local fallback = makeButton(content, L["Open ground"], function() Preview:UseFallback() end, 180, 22)
     placeBelow(fallback, 0, -4)
     fallback:Hide()
     window.fgpsFallback = fallback

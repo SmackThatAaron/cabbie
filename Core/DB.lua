@@ -30,7 +30,7 @@ local Util = FGPS.Util
 local type, pairs, ipairs, tonumber, tostring = type, pairs, ipairs, tonumber, tostring
 
 local DB = {
-    VERSION = 3,
+    VERSION = 5,
     initialized = false,
 }
 FGPS.DB = DB
@@ -41,15 +41,22 @@ FGPS.DB = DB
 local settingsDefaults = {
     version = 1,
     preset = "minimal",
-
-
-    factionAccent = true,
     units = "yards",
     textSize = "normal",
-    arrow = { enabled = true, placement = "near_character", scale = 1.0, showDistance = true, showEta = false, showNextStep = true, alpha = 0.9 },
-    panel = { enabled = false, scale = 1.0, maxSteps = 3 },
-    routeBlock = { enabled = true },
-    callout = { enabled = true },
+
+
+    routeBlock = { enabled = false },
+
+
+
+    callout = { enabled = true,
+                arrowSize = 1,
+                arrowAlpha = 1,
+                arrowColor = "ffd030",
+                arrowStyle = "arrow",
+                showWords = true,
+                showDistance = true,
+                textSize = 1 },
     worldMapLine = true,
     minimapLine = true,
     inWorldPin = true,
@@ -65,8 +72,12 @@ local settingsDefaults = {
 
 
     quests = { enabled = true, mapPins = true, minimapPins = true, objectiveAreas = true,
-               searchForever = true, serverLookup = true, followProgress = true, pickupMarks = true },
-    perf = { instrument = true, frameBudgetMs = 4 },
+               searchForever = true, serverLookup = true, followProgress = true, pickupMarks = true,
+
+               batchRadius = 600 },
+
+
+    perf = { instrument = true, frameBudgetMs = 4, spareFrame = true, frameBudgetMaxMs = 12 },
     debug = false,
 }
 
@@ -151,6 +162,18 @@ local migrations = {}
 
 
 
+
+
+migrations[3] = function(account)
+    if type(account) ~= "table" then return end
+    account.arrow = nil
+    account.panel = nil
+    if type(account.settings) == "table" then
+        account.settings.arrow = nil
+        account.settings.panel = nil
+    end
+end
+
 migrations[0] = function(account)
     if type(account.settings) ~= "table" then account.settings = {} end
     for key in pairs(settingsDefaults) do
@@ -181,9 +204,11 @@ end
 
 DB.defaultChanges = {
 
-    [1] = { { path = "arrow.showNextStep", from = false } },
-
     [2] = { { path = "routing.preferRoads", from = false } },
+
+
+
+    [4] = { { path = "routeBlock.enabled", from = true } },
 }
 
 
@@ -265,6 +290,9 @@ end
 
 
 
+
+
+
 local RETIRED_QUEST_FIELDS = { "observed", "stats", "_seq", "_export", "_exportTime" }
 
 local function dropRetired(self)
@@ -273,7 +301,13 @@ local function dropRetired(self)
     local settings = self.account.settings
     local quests = type(settings) == "table" and settings.quests or nil
     if type(quests) == "table" then quests.harvest = nil end
-    if type(settings) == "table" then settings.learnPaths = nil end
+    if type(settings) == "table" then
+        settings.learnPaths = nil
+        settings.factionAccent = nil
+        if settings.preset ~= nil and settings.preset ~= settingsDefaults.preset then
+            settings.preset = settingsDefaults.preset
+        end
+    end
 end
 
 

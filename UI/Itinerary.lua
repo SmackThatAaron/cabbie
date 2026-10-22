@@ -282,11 +282,11 @@ end
 local function buildWindow()
     local F = Frames()
     if not F or not F.CreateWindow then
-        FGPS.Log:Error("UI.Frames.CreateWindow is unavailable; the itinerary window cannot be built")
+        FGPS.Log:Error("UI.Frames.CreateWindow is unavailable; the stops window cannot be built")
         return nil
     end
     local ok, window = pcall(F.CreateWindow, WINDOW_KEY, {
-        title = L["Itinerary"], width = 360, height = 340,
+        title = L["Stops"], width = 360, height = 340,
         onClose = function() Itinerary:OnWindowHidden() end,
     })
     if not ok or type(window) ~= "table" then
@@ -310,7 +310,7 @@ local function buildWindow()
     local specs = {
         { key = "optimize", label = "Optimize", fn = function() Itinerary:Optimize() end },
         { key = "skip", label = "Skip stop", fn = function() Itinerary:SkipStop() end },
-        { key = "cancel", label = "Cancel trip", fn = function() Itinerary:CancelJourney() end },
+        { key = "cancel", label = "Cancel route", fn = function() Itinerary:CancelJourney() end },
     }
     window.fgpsButtons = {}
     local previous
@@ -413,5 +413,5 @@ function Itinerary:Init()
             local Navigator = FGPS.Navigator
             if Navigator and Navigator.ClearStops then Navigator:ClearStops() end
         else Itinerary:Toggle() end
-    end, L["Itinerary window; stops skip|clear"])
+    end, L["Stops window; skip|clear"])
 end

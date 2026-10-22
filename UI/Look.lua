@@ -6,8 +6,8 @@
 
 local ADDON_NAME, FGPS = ...
 
-local type, floor, format, max, pcall, huge = type, math.floor, string.format, math.max, pcall, math.huge
-local ipairs, unpack = ipairs, unpack
+local type, floor, format, max, pcall, huge, tonumber = type, math.floor, string.format, math.max, pcall, math.huge, tonumber
+local ipairs, pairs, unpack, tostring = ipairs, pairs, unpack, tostring
 
 local Look = {}
 FGPS.UI.Look = Look
@@ -31,6 +31,10 @@ local FONTS = {
     input = { "ChatFontNormal", "GameFontHighlight", "GameFontNormal" },
 
     hint = { "GameFontDisableSmall", "GameFontDisable", "GameFontHighlightSmall" },
+
+
+    panelTitle = { "GameFontHighlightLarge", "GameFontHighlight" },
+    setting = { "GameFontHighlightMedium", "GameFontHighlight" },
 }
 
 function Look.Font(role)
@@ -78,6 +82,55 @@ end
 function Look.Tint(text, role)
     local r, g, b = Look.Color(role)
     return format("|cff%02x%02x%02x%s|r", floor(r * 255 + 0.5), floor(g * 255 + 0.5), floor(b * 255 + 0.5), text)
+end
+
+
+
+
+
+
+Look.DIFFICULTY = {
+    impossible = { 1, 0.1, 0.1 }, verydifficult = { 1, 0.5, 0.25 }, difficult = { 1, 1, 0 },
+    standard = { 0.25, 0.75, 0.25 }, trivial = { 0.5, 0.5, 0.5 },
+}
+
+
+Look.GREEN_RANGE = 8
+
+local function playerLevel()
+    if type(UnitLevel) ~= "function" then return nil end
+    local ok, level = pcall(UnitLevel, "player")
+    return ok and tonumber(level) or nil
+end
+
+local function greenRange()
+    if type(UnitQuestTrivialLevelRange) == "function" then
+        local ok, range = pcall(UnitQuestTrivialLevelRange, "player")
+        if ok and type(range) == "number" and not (issecretvalue and issecretvalue(range)) then return range end
+    end
+    return Look.GREEN_RANGE
+end
+
+function Look.QuestColor(level)
+    level = tonumber(level)
+    if not level or level <= 0 then return Look.Color("title") end
+    if type(GetQuestDifficultyColor) == "function" then
+        local ok, color = pcall(GetQuestDifficultyColor, level)
+        if ok then
+            local r, g, b = rgb(color)
+            if r then return r, g, b end
+        end
+    end
+    local own = playerLevel()
+    if not own then return unpack(Look.DIFFICULTY.difficult) end
+    local above = level - own
+    local step
+    if above >= 5 then step = "impossible"
+    elseif above >= 3 then step = "verydifficult"
+    elseif above >= -2 then step = "difficult"
+    elseif -above <= greenRange() then step = "standard"
+    else step = "trivial" end
+    return unpack(Look.DIFFICULTY[step])
 end
 
 
@@ -496,14 +549,105 @@ end
 
 
 
+
+
+
+Look.SEARCH_TEMPLATES = { "SearchBoxTemplate", "InputBoxTemplate" }
+function Look.SearchBox(parent, opts)
+    opts = opts or {}
+    local box = Look.EditBox(parent, Look.SEARCH_TEMPLATES)
+    box:SetSize(opts.width or 160, opts.height or 22)
+    if box.SetMaxLetters then box:SetMaxLetters(opts.maxLetters or 80) end
+    box.Placeholder = box.Instructions
+    if not box.Placeholder then
+        box.Placeholder = box:CreateFontString(nil, "OVERLAY", Look.Font("hint"))
+        box.Placeholder:SetPoint("LEFT", box, "LEFT", 8, 0)
+    end
+    box.Placeholder:SetText(opts.placeholder or "")
+    local function call(fn, ...)
+        local ok, err = pcall(fn, ...)
+        if not ok and FGPS.Log then FGPS.Log:Error("Search box handler failed: %s", tostring(err)) end
+    end
+    box:SetScript("OnEnterPressed", function(self)
+        if opts.onEnter then call(opts.onEnter, self, self:GetText()) end
+    end)
+    box:SetScript("OnEscapePressed", function(self)
+        self:ClearFocus()
+        if opts.onEscape then call(opts.onEscape, self) end
+    end)
+    box:HookScript("OnTextChanged", function(self, userInput)
+        local text = self:GetText() or ""
+        self.Placeholder:SetShown(text == "")
+        if opts.onChanged then call(opts.onChanged, self, text, userInput) end
+    end)
+
+
+    if box.ClearButton and box.ClearButton.HookScript and opts.onChanged then
+        box.ClearButton:HookScript("OnClick", function() call(opts.onChanged, box, "", true) end)
+    end
+    return box
+end
+
+
+
+
+Look.TAB_DIM = 0.45
+function Look.Tab(parent, text, width, height)
+    local button, how = Look.Button(parent, text, width, height)
+    local mark = button:CreateTexture(nil, "OVERLAY")
+    mark:SetPoint("TOPLEFT", button, "TOPLEFT", 4, -3)
+    mark:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -4, 3)
+    Look.Highlight(mark)
+    mark:Hide()
+    button.fgpsMark = mark
+    return button, how
+end
+
+
+
+function Look.SelectTab(tabs, chosen)
+    if type(tabs) ~= "table" then return end
+    for key, button in pairs(tabs) do
+        local on = key == chosen
+        if button.SetAlpha then button:SetAlpha(on and 1 or Look.TAB_DIM) end
+        if button.fgpsMark then button.fgpsMark:SetShown(on) end
+    end
+end
+
+
+
+
 Look.WINDOW_EDGE = 32
 Look.WINDOW_BORDER = 14
 Look.WINDOW_TITLE_TOP = 8
 Look.WINDOW_TITLE_HEIGHT = 24
 
+
+
+
+
+
+
+Look.UNDERLAY = { 0, 0, 0, 1 }
+local function underlay(window)
+    local under = window.fgpsUnderlay
+    if not under then
+        if not window.CreateTexture then return end
+        under = window:CreateTexture(nil, "BACKGROUND", nil, -8)
+        under:SetColorTexture(unpack(Look.UNDERLAY))
+        window.fgpsUnderlay = under
+    end
+    local inset = window.fgpsGround == "game" and Look.Backdrop(Look.WINDOW_EDGE).insets.left or 0
+    under:ClearAllPoints()
+    under:SetPoint("TOPLEFT", window, "TOPLEFT", inset, -inset)
+    under:SetPoint("BOTTOMRIGHT", window, "BOTTOMRIGHT", -inset, inset)
+    under:Show()
+end
+
 local function dressWindowNow(window)
     local look = Look
     window.fgpsGround = look.Ground(window, Look.WINDOW_EDGE)
+    underlay(window)
     if window.SetAlpha then window:SetAlpha(1) end
     local bar = window.TitleBar
     if bar then
@@ -562,6 +706,40 @@ end
 
 
 
+local function dressListNow(list)
+    local bar = list.Bar
+    if bar then
+        if bar.Track then bar.Track:SetColorTexture(0, 0, 0, 0.35) end
+        if bar.fgpsThumb then Look.ScrollKnob(bar.fgpsThumb) end
+    end
+    if list.Empty then
+        list.Empty:SetFontObject(Look.Font("hint"))
+        list.Empty:SetTextColor(Look.Color("grey"))
+    end
+end
+
+
+
+
+
+
+function Look.DressList(list)
+    if type(list) ~= "table" then return end
+    dressListNow(list)
+    local F = FGPS.UI.Frames
+    if F and F.Register and not list.fgpsDressed then
+        list.fgpsDressed = true
+        local skinPass = list.fgpsApplySkin
+        F.Register(list, function(l, skin)
+            if skinPass then skinPass(l, skin) end
+            dressListNow(l)
+            if l.Refresh then l:Refresh() end
+        end)
+    end
+end
+
+
+
 
 Look.CHECK_TEMPLATE = "UICheckButtonTemplate"
 Look.CHECK_FILES = {
@@ -587,4 +765,180 @@ function Look.CheckButton(parent, text)
     button.Label = label
     button.fgpsLook = how
     return button, how
+end
+
+
+
+
+
+
+
+
+
+Look.PANEL_BORDER_TEMPLATE = "DialogBorderTranslucentTemplate"
+Look.SLIDER_TEMPLATE = "MinimalSliderWithSteppersTemplate"
+
+
+
+
+function Look.EditPanel(parent)
+    if Look.HasTemplate(Look.PANEL_BORDER_TEMPLATE) then
+        local panel = CreateFrame("Frame", nil, parent)
+        local border = fromTemplate("Frame", panel, Look.PANEL_BORDER_TEMPLATE)
+        if border then
+            border:SetAllPoints(panel)
+            panel.Border = border
+            return panel, "template"
+        end
+        panel:Hide()
+    end
+    return Look.CreateGround("Frame", parent, Look.WINDOW_EDGE)
+end
+
+
+
+
+
+function Look.StepperSlider(parent, width)
+    local slider = fromTemplate("Frame", parent, Look.SLIDER_TEMPLATE)
+    if not slider then return false end
+    if not (type(slider.Init) == "function" and type(slider.SetValue) == "function"
+            and type(slider.RegisterCallback) == "function" and type(slider.Slider) == "table") then
+        slider:Hide()
+        return false
+    end
+    slider:SetWidth(type(width) == "number" and width > 0 and width or 200)
+    slider.fgpsLook = "template"
+    return slider, "template"
+end
+
+
+
+
+
+
+function Look.HexColor(hex)
+    if type(hex) ~= "string" then return nil end
+    local r, g, b = hex:match("^(%x%x)(%x%x)(%x%x)$")
+    if not r then return nil end
+    return tonumber(r, 16) / 255, tonumber(g, 16) / 255, tonumber(b, 16) / 255
+end
+
+
+
+function Look.ColorHex(r, g, b)
+    if type(r) ~= "number" or type(g) ~= "number" or type(b) ~= "number" then return nil end
+    local function byte(v)
+        if v ~= v or v < 0 then return 0 end
+        if v > 1 then return 255 end
+        return floor(v * 255 + 0.5)
+    end
+    return format("%02x%02x%02x", byte(r), byte(g), byte(b))
+end
+
+
+
+
+
+Look.SWATCH_TEMPLATE = "ColorSwatchTemplate"
+local function setSwatchColor(self, r, g, b) self.Swatch:SetColorRGB(r, g, b) end
+local function plainSwatchColor(self, r, g, b) self.Color:SetVertexColor(r, g, b) end
+function Look.ColorSwatch(parent)
+    local button = CreateFrame("Button", nil, parent)
+    button:SetSize(24, 24)
+    local swatch, how = fromTemplate("Frame", button, Look.SWATCH_TEMPLATE), "template"
+    if swatch and not (type(swatch.SetColorRGB) == "function" and type(swatch.Color) == "table") then
+        swatch:Hide()
+        swatch = nil
+    end
+    if not swatch then
+        how = "plain"
+        swatch = CreateFrame("Frame", nil, button)
+        swatch:SetSize(16, 16)
+        for _, part in ipairs({ { "SwatchBg", 14, 1 }, { "InnerBorder", 12, 0 }, { "Color", 10, 1 } }) do
+            local texture = swatch:CreateTexture(nil, "BACKGROUND")
+            texture:SetSize(part[2], part[2])
+            texture:SetPoint("CENTER", swatch, "CENTER", 0, 0)
+            texture:SetColorTexture(part[3], part[3], part[3], 1)
+            swatch[part[1]] = texture
+        end
+        swatch.SetColorRGB = plainSwatchColor
+    end
+    swatch:SetPoint("CENTER", button, "CENTER", 0, 0)
+    if swatch.SetScale then swatch:SetScale(1.5) end
+    button.Swatch = swatch
+    button.SetColorRGB = setSwatchColor
+    if button.RegisterForClicks then button:RegisterForClicks("LeftButtonUp") end
+    button.fgpsLook = how
+    return button, how
+end
+
+
+
+
+
+Look.PICTURE_FILES = { highlight = "Interface\\Buttons\\ButtonHilight-Square", chosen = "Interface\\Buttons\\CheckButtonHilight" }
+local function setChosen(self, on)
+    if on then self.Chosen:Show() else self.Chosen:Hide() end
+end
+function Look.PictureButton(parent, size)
+    size = type(size) == "number" and size > 0 and size or 32
+    local button = CreateFrame("Button", nil, parent)
+    button:SetSize(size, size)
+    local ground = button:CreateTexture(nil, "BACKGROUND")
+    ground:SetAllPoints(button)
+    ground:SetColorTexture(0, 0, 0, 0.35)
+    button.Icon = button:CreateTexture(nil, "ARTWORK")
+    button.Icon:SetSize(size - 6, size - 6)
+    button.Icon:SetPoint("CENTER", button, "CENTER", 0, 0)
+    button.Glow = button:CreateTexture(nil, "HIGHLIGHT")
+    button.Glow:SetAllPoints(button)
+    button.Chosen = button:CreateTexture(nil, "OVERLAY")
+    button.Chosen:SetAllPoints(button)
+    local how = "plain"
+    if Look.HasFile(Look.PICTURE_FILES.highlight) and Look.HasFile(Look.PICTURE_FILES.chosen) then
+        how = "file"
+        button.Glow:SetTexture(Look.PICTURE_FILES.highlight)
+        button.Chosen:SetTexture(Look.PICTURE_FILES.chosen)
+        for _, texture in ipairs({ button.Glow, button.Chosen }) do
+            if texture.SetBlendMode then texture:SetBlendMode("ADD") end
+        end
+    else
+        button.Glow:SetColorTexture(1, 1, 1, 0.15)
+        local r, g, b = Look.Color("match")
+        button.Chosen:SetColorTexture(r, g, b, 0.35)
+    end
+    button.Chosen:Hide()
+    button.SetChosen = setChosen
+    if button.RegisterForClicks then button:RegisterForClicks("LeftButtonUp") end
+    button.fgpsLook = how
+    return button, how
+end
+
+
+function Look.CanPickColor()
+    local picker = ColorPickerFrame
+    return type(picker) == "table" and type(picker.SetupColorPickerAndShow) == "function"
+        and type(picker.GetColorRGB) == "function"
+end
+
+
+
+
+
+
+function Look.PickColor(r, g, b, onPick, onCancel)
+    if not Look.CanPickColor() then return false end
+    local picker = ColorPickerFrame
+    local ok = pcall(picker.SetupColorPickerAndShow, picker, {
+        r = r, g = g, b = b, hasOpacity = false,
+        swatchFunc = function()
+            local nr, ng, nb = picker:GetColorRGB()
+            if onPick and type(nr) == "number" then onPick(nr, ng, nb) end
+        end,
+        cancelFunc = function()
+            if onCancel then onCancel(r, g, b) end
+        end,
+    })
+    return ok
 end

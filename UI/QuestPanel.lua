@@ -28,6 +28,10 @@
 
 
 
+
+
+
+
 local ADDON_NAME, FGPS = ...
 
 local L = FGPS.L
@@ -50,11 +54,20 @@ local QuestPanel = {
 FGPS.UI.QuestPanel = QuestPanel
 
 local WINDOW_KEY = "quests"
-local ROW_HEIGHT = 20
+local ROW_HEIGHT = 22
 local DEBOUNCE_SECONDS = 0.15
 
 local TABS = { "log", "search" }
 local TAB_LABELS = { log = "My quests", search = "Find a quest" }
+
+
+
+QuestPanel.WIDTH, QuestPanel.HEIGHT = 480, 600
+QuestPanel.GAP = 8
+local TAB_HEIGHT, EDIT_HEIGHT, BUTTON_HEIGHT = 24, 24, 24
+local CARD_HEADER, CARD_LINE = 16, 13
+local STATUS_HEIGHT = 26
+local LIST_BOTTOM = BUTTON_HEIGHT + 6 + STATUS_HEIGHT + 4
 
 
 
@@ -63,38 +76,29 @@ local function Frames()
     return FGPS.UI.Frames
 end
 
+local function Look()
+    return FGPS.UI.Look
+end
+
 local function settings()
     return FGPS.DB and FGPS.DB.settings or nil
 end
 
-local FALLBACK_FONTS = { small = "GameFontHighlightSmall", normal = "GameFontHighlight",
-                         large = "GameFontNormalLarge", title = "GameFontNormalLarge" }
 
-local function makeLabel(parent, kind, text, color)
-    local F = Frames()
-    if F and F.CreateLabel then
-        local ok, fs = pcall(F.CreateLabel, parent, text, { kind = kind, color = color })
-        if ok and fs then return fs end
-    end
-    local fs = parent:CreateFontString(nil, "OVERLAY", FALLBACK_FONTS[kind] or "GameFontHighlightSmall")
+
+local function makeLabel(parent, role, text, color)
+    local look = Look()
+    local fs = parent:CreateFontString(nil, "OVERLAY", look.Font(role))
     fs:SetText(text or "")
-    fs:SetJustifyH("LEFT")
+    if fs.SetJustifyH then fs:SetJustifyH("LEFT") end
+    if color then fs:SetTextColor(look.Color(color)) end
     return fs
 end
 
+
 local function makeButton(parent, text, onClick, width, height)
-    local F = Frames()
-    local button
-    if F and F.CreateButton then
-        local ok, result = pcall(F.CreateButton, parent, text, onClick, { width = width or 90, height = height or 22 })
-        if ok and type(result) == "table" then button = result end
-    end
-    if not button then
-        button = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
-        button:SetText(text)
-        button:SetScript("OnClick", onClick)
-        button:SetSize(width or 90, height or 22)
-    end
+    local button = Look().Button(parent, text, width or 90, height or 22)
+    if onClick then button:SetScript("OnClick", onClick) end
     return button
 end
 
@@ -110,27 +114,6 @@ local function setButtonEnabled(button, enabled)
     if button.SetEnabledState then button:SetEnabledState(enabled) elseif enabled then button:Enable() else button:Disable() end
 end
 
-local function makeEditBox(parent, opts)
-    local F = Frames()
-    if F and F.CreateEditBox then
-        local ok, box = pcall(F.CreateEditBox, parent, opts)
-        if ok and type(box) == "table" then return box end
-    end
-    local box = CreateFrame("EditBox", nil, parent, "InputBoxTemplate")
-    box:SetSize(opts.width or 160, opts.height or 22)
-    box:SetAutoFocus(false)
-    box:SetScript("OnEnterPressed", function(self) if opts.onEnter then opts.onEnter(self, self:GetText()) end end)
-    box:SetScript("OnTextChanged", function(self, userInput)
-        if opts.onChanged then opts.onChanged(self, self:GetText() or "", userInput) end
-    end)
-    return box
-end
-
-local function contentFrame(window)
-    local content = window.Content or window.content or window
-    local top = (content == window) and 30 or 0
-    return content, top
-end
 
 
 
@@ -144,18 +127,14 @@ end
 
 
 
-function QuestPanel.MarkFlag(mark)
-    local QuestData = FGPS.QuestData
-    local text = QuestData and QuestData.MarkLabel and QuestData.MarkLabel(mark) or L["unconfirmed"]
 
-    if text == "1.12 record" then text = L["unconfirmed"] end
-    local Skins = FGPS.UI.Skins
-    local name = (mark or 0) >= 2 and "routeVerified" or "routeUnverified"
-    local ok, skin = pcall(function() return Skins and Skins.Current and Skins.Current() end)
-    local c = ok and type(skin) == "table" and type(skin.colors) == "table" and skin.colors[name] or nil
-    if type(c) ~= "table" then return text end
-    local function byte(v) return math.floor(Util.Clamp(v or 1, 0, 1) * 255 + 0.5) end
-    return format("|cff%02x%02x%02x%s|r", byte(c[1]), byte(c[2]), byte(c[3]), text)
+
+
+
+
+local MARK_WORDS = { [0] = "may have moved", [1] = "not checked in game", [2] = "from the game" }
+function QuestPanel.MarkFlag(mark)
+    return Look().Tint(L[MARK_WORDS[mark] or MARK_WORDS[0]], "grey")
 end
 
 
@@ -165,9 +144,21 @@ local function distanceText(yards)
     local s = settings()
     local text = Util.FormatDistance(yards, s and s.units or "yards")
     if text == "" then return "" end
-    return text .. " " .. L["direct"]
+    return format(L["%s away"], text)
 end
 QuestPanel.DistanceText = distanceText
+
+
+local function withMark(right, mark)
+    local flag = QuestPanel.MarkFlag(mark)
+    if not right or right == "" then return flag end
+    return right .. " \194\183 " .. flag
+end
+
+
+local function sentence(text)
+    return (text:gsub("^%l", string.upper))
+end
 
 
 
@@ -195,8 +186,16 @@ QuestPanel.TitleFor = titleFor
 
 
 
+
+local function withDetails(title, details)
+    if not details or details == "" then return title end
+    return title .. L[" - "] .. Look().Tint(details, "later")
+end
+
+
+
 local function searchLabel(row)
-    local parts = { (titleFor(row.questID)) }
+    local parts = {}
     local level = QuestPanel.LevelText(row.level, row.minLevel)
     if level then parts[#parts + 1] = level end
     if row.startInterior then
@@ -209,7 +208,7 @@ local function searchLabel(row)
 
 
     if row.partial then parts[#parts + 1] = L["objective place not known"] end
-    return table.concat(parts, L[" - "])
+    return withDetails((titleFor(row.questID)), table.concat(parts, L[" - "]))
 end
 QuestPanel.SearchLabel = searchLabel
 
@@ -248,17 +247,17 @@ function QuestPanel.StagesFor(questID)
     local unplacedListed = false
     for _, objective in ipairs(QuestData.Objectives(questID)) do
         if objective.provided then
-            out[#out + 1] = { target = "none", label = format(L["%s: the giver hands it to you"], objective.kindName) }
+            out[#out + 1] = { target = "none", label = sentence(format(L["%s: the giver hands it to you"], objective.kindName)) }
         elseif #objective.areas == 0 then
             unplacedListed = true
-            out[#out + 1] = { target = "none", unplaced = true, label = format(L["%s: objective place not known"], objective.kindName) }
+            out[#out + 1] = { target = "none", unplaced = true, label = sentence(format(L["%s: objective place not known"], objective.kindName)) }
         end
     end
 
 
 
     if not unplacedListed and QuestData.IsPartial and QuestData.IsPartial(questID) then
-        out[#out + 1] = { target = "none", unplaced = true, label = L["objective place not known"] }
+        out[#out + 1] = { target = "none", unplaced = true, label = sentence(L["objective place not known"]) }
     end
 
 
@@ -266,7 +265,7 @@ function QuestPanel.StagesFor(questID)
         local at = QuestData.ReachedAt(area)
         out[#out + 1] = {
             target = "objective", index = index, area = area, interior = area.interior,
-            label = QuestData.AreaLabel(area),
+            label = sentence(QuestData.AreaLabel(area)),
             yards = yardsTo(QuestData, pos, at), routable = at ~= nil,
         }
     end
@@ -301,16 +300,17 @@ local function goTo(questID, target, index)
         FGPS:Print(L["%s: %s"], (titleFor(questID)), text)
         return false
     end
+
     local Search = FGPS.UI.Search
     if Search and Search.GoTo then
-        Search.GoTo(dest)
+        Search.GoTo(dest, "start")
     else
         local Navigator = FGPS.Navigator
         if not (Navigator and Navigator.SetDestination) then
             FGPS:Print(L["Navigation is not available right now."])
             return false
         end
-        Navigator:SetDestination(dest, { start = false })
+        Navigator:SetDestination(dest, { start = true })
     end
     return true
 end
@@ -329,9 +329,12 @@ local function isAccepted(questID)
 end
 QuestPanel.IsAccepted = isAccepted
 
+
+
+
+
 local function stageItems(questID)
     local items = {}
-    local accepted = isAccepted(questID)
     for _, stage in ipairs(QuestPanel.StagesFor(questID)) do
         local label = "    " .. stage.label
         if stage.interior then
@@ -339,7 +342,7 @@ local function stageItems(questID)
         end
         local item = { kind = "stage", questID = questID, target = stage.target, index = stage.index,
                        label = label, right = stage.target ~= "none" and distanceText(stage.yards) or "" }
-        if stage.target ~= "none" and stage.routable and not (accepted and stage.target == "giver") then
+        if stage.target ~= "none" and stage.routable then
             item.actionLabel = L["Go"]
             item.action = function() goTo(questID, stage.target, stage.index) end
         end
@@ -367,20 +370,19 @@ local function logItems()
 
 
     local pos = FGPS.QuestData and FGPS.QuestData.PlayerPos and FGPS.QuestData.PlayerPos() or nil
-    local items = {}
-    for _, q in ipairs(list or {}) do
+    local quests = {}
+    for logIndex, q in ipairs(list or {}) do
+
+
         local title = q.title or (titleFor(q.questID))
-        local parts = { title }
         local bundled = q.bundled
-        local level = QuestPanel.LevelText(bundled and bundled.level or q.level, bundled and bundled.minLevel)
-        if level then parts[#parts + 1] = level end
-        if bundled and bundled.giverZone then
-            parts[#parts + 1] = format(L["starts in %s"], bundled.giverZone)
-        end
+        local level = tonumber(bundled and bundled.level or q.level)
+        local head = (level and level > 0) and format(L["[%d] %s"], level, title) or title
+        local left
         if q.complete then
-            parts[#parts + 1] = L["Ready to turn in"]
+            left = L["Ready to turn in"]
         elseif type(q.objectiveText) == "string" and q.objectiveText ~= "" then
-            parts[#parts + 1] = q.objectiveText
+            left = q.objectiveText
         end
 
 
@@ -402,20 +404,37 @@ local function logItems()
 
             right = L["place not known"]
         end
-        if bundled then right = right .. " " .. QuestPanel.MarkFlag(bundled.mark) end
+        if bundled then right = withMark(right, bundled.mark) end
         local open = QuestPanel.expanded == q.questID
         local item = {
-            kind = "quest", questID = q.questID,
-            label = (open and L["▾ "] or L["▸ "]) .. table.concat(parts, L[" - "]), right = right,
-            quest = q, bundled = bundled, yards = yards, step = step,
+            kind = "quest", questID = q.questID, level = level,
+            label = (open and L["- "] or L["+ "]) .. withDetails(head, left), right = right,
+            quest = q, bundled = bundled, yards = yards, step = step, logIndex = logIndex,
         }
         if step then
             item.actionLabel = L["Go"]
             item.action = function() goTo(q.questID, "next") end
         end
+        quests[#quests + 1] = item
+    end
+
+
+    local function rank(item)
+        if item.yards then return 0 end
+        if item.step then return 1 end
+        return 2
+    end
+    table.sort(quests, function(a, b)
+        local ra, rb = rank(a), rank(b)
+        if ra ~= rb then return ra < rb end
+        if a.yards and b.yards and a.yards ~= b.yards then return a.yards < b.yards end
+        return a.logIndex < b.logIndex
+    end)
+    local items = {}
+    for _, item in ipairs(quests) do
         items[#items + 1] = item
-        if QuestPanel.expanded == q.questID then
-            for _, stage in ipairs(stageItems(q.questID)) do items[#items + 1] = stage end
+        if QuestPanel.expanded == item.questID then
+            for _, stage in ipairs(stageItems(item.questID)) do items[#items + 1] = stage end
         end
     end
     local status
@@ -440,9 +459,9 @@ local function searchItems()
     for _, row in ipairs(rows) do
         local open = QuestPanel.expanded == row.questID
         items[#items + 1] = {
-            kind = "quest", questID = row.questID, row = row,
-            label = (open and L["▾ "] or L["▸ "]) .. searchLabel(row),
-            right = distanceText(row.yards) .. " " .. QuestPanel.MarkFlag(row.mark),
+            kind = "quest", questID = row.questID, row = row, level = row.level,
+            label = (open and L["- "] or L["+ "]) .. searchLabel(row),
+            right = withMark(distanceText(row.yards), row.mark),
         }
         if QuestPanel.expanded == row.questID then
             for _, stage in ipairs(stageItems(row.questID)) do items[#items + 1] = stage end
@@ -476,7 +495,9 @@ end
 
 function QuestPanel:Relabel()
     for _, item in ipairs(self.items) do
-        if item.kind == "quest" and item.row then item.label = searchLabel(item.row) end
+        if item.kind == "quest" and item.row then
+            item.label = (self.expanded == item.questID and L["- "] or L["+ "]) .. searchLabel(item.row)
+        end
     end
     if self.list and self.list.Refresh then self.list:Refresh() end
 end
@@ -531,40 +552,64 @@ end
 
 
 
+
+
+local function paintGlow(row)
+    row.fgpsGlow:SetShown(row.fgpsSelected == true or row.fgpsHover == true)
+end
+
 local function ensureRowWidgets(row)
     if row.fgpsReady then return end
     row.fgpsReady = true
-    row.text = row.Text or makeLabel(row, "small", "", "text")
+    if row.Bg and row.Bg.SetAlpha then row.Bg:SetAlpha(0) end
+    row.fgpsGlow = row:CreateTexture(nil, "BACKGROUND")
+    row.fgpsGlow:SetAllPoints(row)
+    Look().Highlight(row.fgpsGlow)
+    row.fgpsGlow:Hide()
+    if row.HookScript then
+        row:HookScript("OnEnter", paintGlow)
+        row:HookScript("OnLeave", paintGlow)
+    end
+    row.text = row.Text or makeLabel(row, "line", "")
     row.text:ClearAllPoints()
     row.text:SetPoint("LEFT", row, "LEFT", 6, 0)
-    row.right = makeLabel(row, "small", "", "textDim")
+
+
+    if row.text.SetWordWrap then row.text:SetWordWrap(false) end
+    if row.text.SetMaxLines then row.text:SetMaxLines(1) end
+    row.right = makeLabel(row, "rowSmall", "")
     row.right:SetPoint("RIGHT", row, "RIGHT", -6, 0)
     if row.right.SetJustifyH then row.right:SetJustifyH("RIGHT") end
     row.text:SetPoint("RIGHT", row.right, "LEFT", -6, 0)
-    row.action = makeButton(row, "", nil, 48, 18)
+    row.action = makeButton(row, "", nil, 48, 20)
     row.action:SetPoint("RIGHT", row, "RIGHT", -4, 0)
     row.action:Hide()
 end
 
-local function applyRowColor(fs, key)
-    local skin = FGPS.UI and FGPS.UI.Skins and FGPS.UI.Skins.Current and FGPS.UI.Skins.Current()
-    local c = skin and skin.colors and skin.colors[key]
-    if c then
-        fs:SetTextColor(c[1], c[2], c[3], c[4] or 1)
-    end
+
+
+
+local function rowLook(item)
+    local look = Look()
+    if item.kind == "header" then return "listTitle", look.Color("header") end
+    if item.kind == "quest" then return "title", look.QuestColor(item.level) end
+    if item.kind == "stage" and item.target ~= "none" then return "line", look.Color("later") end
+    return "line", look.Color("grey")
 end
 
 function QuestPanel.RenderRow(row, item, index)
     ensureRowWidgets(row)
+    local look = Look()
     row.item, row.index = item, index
+    local role, r, g, b = rowLook(item)
+    row.text:SetFontObject(look.Font(role))
     row.text:SetText(item.label or "")
-    if item.kind == "header" then
-        applyRowColor(row.text, "title")
-    elseif item.kind == "note" or item.kind == "stage" then
-        applyRowColor(row.text, "textDim")
-    else
-        applyRowColor(row.text, "text")
-    end
+    row.text:SetTextColor(r, g, b)
+    row.right:SetFontObject(look.Font("rowSmall"))
+    row.right:SetTextColor(look.Color("later"))
+
+    if row.Bg and row.Bg.SetAlpha then row.Bg:SetAlpha(0) end
+    paintGlow(row)
 
 
     row.right:ClearAllPoints()
@@ -578,7 +623,6 @@ function QuestPanel.RenderRow(row, item, index)
         row.right:SetPoint("RIGHT", row, "RIGHT", -6, 0)
     end
     row.right:SetText(item.right or "")
-    applyRowColor(row.right, "textDim")
 end
 
 local function onRowClick(item, index)
@@ -698,6 +742,66 @@ local function sameRow(a, b)
     return a.kind == b.kind and a.questID == b.questID and a.target == b.target and a.index == b.index
 end
 
+
+
+
+local function layout(window)
+    if not (window and window.fgpsTabs) then return end
+    local content, gap = window.fgpsContent, QuestPanel.GAP
+    local y = window.fgpsCard:IsShown() and (window.fgpsCard:GetHeight() + gap) or 0
+    local first = window.fgpsTabs[TABS[1]]
+    first:ClearAllPoints()
+    first:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -y)
+    window.fgpsLookup:ClearAllPoints()
+    window.fgpsLookup:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, -y)
+    y = y + TAB_HEIGHT + gap
+    local edit = window.fgpsEdit
+    edit:ClearAllPoints()
+    edit:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -y)
+    edit:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, -y)
+    if edit:IsShown() then y = y + EDIT_HEIGHT + gap end
+    local anchor = window.fgpsListAnchor
+    anchor:ClearAllPoints()
+    anchor:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -y)
+    anchor:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, LIST_BOTTOM)
+end
+
+local function paintBatch()
+    local text = QuestPanel.batchText
+    if not text then return end
+    local batch = FGPS.QuestBatch
+    local cur = batch and batch.Current and batch.Current()
+    local buttons = QuestPanel.batchButtons
+    local shown = cur ~= nil and cur.status ~= "dismissed"
+    local window = QuestPanel.window
+    if window and window.fgpsCard and window.fgpsCardShown ~= shown then
+        window.fgpsCardShown = shown
+        window.fgpsCard:SetShown(shown)
+        layout(window)
+    end
+    if not shown then
+        text:SetText("")
+        if buttons then
+            setButtonEnabled(buttons.accept, false)
+            setButtonEnabled(buttons.drop, false)
+            setButtonEnabled(buttons.dismiss, false)
+        end
+        return
+    end
+    text:SetText(table.concat(cur.lines or {}, "\n"))
+    if buttons then
+        local on = cur.stops and #cur.stops > 0
+        setButtonEnabled(buttons.accept, on)
+        setButtonEnabled(buttons.drop, on)
+        setButtonEnabled(buttons.dismiss, true)
+    end
+end
+
+function QuestPanel.BatchCardText()
+    local text = QuestPanel.batchText
+    return text and text:GetText() or ""
+end
+
 function QuestPanel:Refresh()
     if not self.window then return end
 
@@ -726,6 +830,7 @@ function QuestPanel:Refresh()
         end
     end
     self:SetItems(items, status)
+    paintBatch()
     if self.tab == "search" then
         self:SweepTitles()
     elseif self.window.fgpsLookup then
@@ -762,13 +867,9 @@ function QuestPanel:SetTab(tab)
     self.expanded = nil
     local w = self.window
     if w then
-        for key, button in pairs(w.fgpsTabs) do
-            if button.SetAlpha then button:SetAlpha(key == tab and 1 or 0.6) end
-            if button.fgpsMark then
-                if key == tab then button.fgpsMark:Show() else button.fgpsMark:Hide() end
-            end
-        end
+        Look().SelectTab(w.fgpsTabs, tab)
         w.fgpsEdit:SetShown(tab == "search")
+        layout(w)
     end
     if tab ~= "search" then self:SetFocus(nil) end
     self:Refresh()
@@ -792,7 +893,7 @@ local function buildWindow()
         return nil
     end
     local ok, window = pcall(F.CreateWindow, WINDOW_KEY, {
-        title = L["Cabbie quests"], width = 480, height = 460,
+        title = L["Cabbie quests"], width = QuestPanel.WIDTH, height = QuestPanel.HEIGHT,
         onClose = function() QuestPanel:OnWindowHidden() end,
         onKey = function(_, key) return QuestPanel:HandleKey(key) end,
     })
@@ -800,40 +901,74 @@ local function buildWindow()
         FGPS.Log:Error("Frames.CreateWindow failed: %s", tostring(window))
         return nil
     end
-    local content, top = contentFrame(window)
+    Look().DressWindow(window)
+    local content = window.Content or window
     window.fgpsContent = content
 
-    local function markButton(button)
-        local bar = button:CreateTexture(nil, "OVERLAY")
-        bar:SetPoint("BOTTOMLEFT", button, "BOTTOMLEFT", 6, 1)
-        bar:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -6, 1)
-        bar:SetHeight(2)
-        if bar.SetColorTexture then bar:SetColorTexture(0.31, 0.76, 0.97, 1) end
-        bar:Hide()
-        button.fgpsMark = bar
-        return button
+
+
+    local lines = ((FGPS.QuestBatch and FGPS.QuestBatch.MAX_STOPS) or 6) + 1
+    local card = CreateFrame("Frame", nil, content)
+    card:SetPoint("TOPLEFT", content, "TOPLEFT", 0, 0)
+    card:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, 0)
+    card:SetHeight(CARD_HEADER + 4 + lines * CARD_LINE + 4 + BUTTON_HEIGHT)
+    card:Hide()
+    window.fgpsCard, window.fgpsCardShown = card, false
+    local header = makeLabel(card, "listTitle", L["Quests to pick up nearby"], "header")
+    header:SetPoint("TOPLEFT", card, "TOPLEFT", 2, 0)
+    header:SetPoint("TOPRIGHT", card, "TOPRIGHT", 0, 0)
+    header:SetHeight(CARD_HEADER)
+    window.fgpsCardHeader = header
+    local batchText = makeLabel(card, "rowSmall", "")
+    batchText:SetPoint("TOPLEFT", card, "TOPLEFT", 2, -(CARD_HEADER + 4))
+    batchText:SetPoint("TOPRIGHT", card, "TOPRIGHT", 0, -(CARD_HEADER + 4))
+    batchText:SetHeight(lines * CARD_LINE)
+    if batchText.SetJustifyV then batchText:SetJustifyV("TOP") end
+    window.fgpsBatchText = batchText
+    local function press(method)
+        return function()
+            local batch = FGPS.QuestBatch
+            if batch and batch[method] then batch[method]() end
+        end
     end
+    local accept = makeButton(card, L["Accept"], press("Accept"), 80, BUTTON_HEIGHT)
+    local drop = makeButton(card, L["Drop last stop"], press("DropLast"), 130, BUTTON_HEIGHT)
+    local dismiss = makeButton(card, L["Dismiss"], press("Dismiss"), 80, BUTTON_HEIGHT)
+    accept:SetPoint("BOTTOMLEFT", card, "BOTTOMLEFT", 0, 0)
+    drop:SetPoint("LEFT", accept, "RIGHT", 6, 0)
+    dismiss:SetPoint("LEFT", drop, "RIGHT", 6, 0)
+
+    window.fgpsBatch = { accept = accept, drop = drop, dismiss = dismiss }
+    QuestPanel.batchText = batchText
+    QuestPanel.batchButtons = window.fgpsBatch
+
+
+    if F.Tooltip then
+        pcall(F.Tooltip, accept, L["Adds the places where these quests start to your route as stops, in this order. The route starts when you press Start."])
+        pcall(F.Tooltip, drop, L["Takes the last quest off this list."])
+        pcall(F.Tooltip, dismiss, L["Hides this list until you open the window again."])
+    end
+
+
     window.fgpsTabs = {}
     local previous
     for _, key in ipairs(TABS) do
-        local button = markButton(makeButton(content, L[TAB_LABELS[key]], function() QuestPanel:SetTab(key) end, 110, 20))
-        if previous then button:SetPoint("LEFT", previous, "RIGHT", 2, 0)
-        else button:SetPoint("TOPLEFT", content, "TOPLEFT", 2, -top) end
+        local button = Look().Tab(content, L[TAB_LABELS[key]], 110, TAB_HEIGHT)
+        button:SetScript("OnClick", function() QuestPanel:SetTab(key) end)
+        if previous then button:SetPoint("LEFT", previous, "RIGHT", 2, 0) end
         window.fgpsTabs[key] = button
         previous = button
     end
 
-    local lookup = makeButton(content, "", function() QuestPanel:LookupNextName() end, 140, 20)
-    lookup:SetPoint("TOPRIGHT", content, "TOPRIGHT", -2, -top)
+    local lookup = makeButton(content, "", function() QuestPanel:LookupNextName() end, 190, TAB_HEIGHT)
     lookup:Hide()
     window.fgpsLookup = lookup
-    local F2 = Frames()
-    if F2 and F2.Tooltip then
-        pcall(F2.Tooltip, lookup, L["Cabbie bundles no vanilla quest names. This asks the server for one, from a small budget that is yours to spend."])
+    if F.Tooltip then
+        pcall(F.Tooltip, lookup, L["This asks the server for a quest's name in Forever's own wording, from a small budget that is yours to spend."])
     end
 
-    local edit = makeEditBox(content, {
-        width = 450, height = 22, maxLetters = 60,
+    local edit = Look().SearchBox(content, {
+        width = QuestPanel.WIDTH - 2 * Look().WINDOW_BORDER, height = EDIT_HEIGHT, maxLetters = 60,
         placeholder = L["Zone, level, level band, or a quest name you have seen"],
         onChanged = function(_, text, userInput)
             if userInput == false then return end
@@ -841,14 +976,10 @@ local function buildWindow()
         end,
         onEnter = function(_, text) QuestPanel:RunSearch(text or "") end,
         onEscape = function() QuestPanel:Hide() end,
-        keepFocusOnEnter = true,
     })
-    edit:SetPoint("TOPLEFT", content, "TOPLEFT", 2, -(top + 26))
     window.fgpsEdit = edit
 
     local listAnchor = CreateFrame("Frame", nil, content)
-    listAnchor:SetPoint("TOPLEFT", content, "TOPLEFT", 2, -(top + 52))
-    listAnchor:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", -2, 56)
     window.fgpsListAnchor = listAnchor
     local list
     if F.CreateScrollList then
@@ -856,12 +987,15 @@ local function buildWindow()
         if okList and type(made) == "table" then list = made else FGPS.Log:Error("Frames.CreateScrollList failed: %s", tostring(made)) end
     end
     if list and list.SetAllPoints then list:SetAllPoints(listAnchor) end
+    Look().DressList(list)
     QuestPanel.list = list
 
-    local status = makeLabel(content, "small", "", "textDim")
-    status:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", 6, 34)
-    status:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", -6, 34)
+    local status = makeLabel(content, "hint", "")
+    status:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", 2, BUTTON_HEIGHT + 6)
+    status:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", -2, BUTTON_HEIGHT + 6)
+    status:SetHeight(STATUS_HEIGHT)
     if status.SetWordWrap then status:SetWordWrap(true) end
+    if status.SetJustifyV then status:SetJustifyV("BOTTOM") end
     window.fgpsStatus = status
 
     local specs = {
@@ -872,9 +1006,9 @@ local function buildWindow()
     window.fgpsButtons = {}
     previous = nil
     for _, spec in ipairs(specs) do
-        local button = makeButton(content, L[spec.label], function() QuestPanel:Act(spec.target) end, 150, 22)
+        local button = makeButton(content, L[spec.label], function() QuestPanel:Act(spec.target) end, 146, BUTTON_HEIGHT)
         if previous then button:SetPoint("LEFT", previous, "RIGHT", 4, 0)
-        else button:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", 2, 4) end
+        else button:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", 0, 0) end
         window.fgpsButtons[spec.key] = button
         previous = button
     end
@@ -945,6 +1079,7 @@ function QuestPanel:Show(opts)
     end
     opts = opts or {}
     window:Show()
+    if FGPS.QuestBatch and FGPS.QuestBatch.Suggest then FGPS.QuestBatch.Suggest() end
     if opts.query and opts.query ~= "" then
         self.query = opts.query
         if window.fgpsEdit.SetText then window.fgpsEdit:SetText(opts.query) end
@@ -958,6 +1093,45 @@ function QuestPanel:Show(opts)
     return true
 end
 
+
+
+local function reveal(questID)
+    QuestPanel.expanded = questID
+    if QuestPanel.tab == "search" then QuestPanel:SetFocus(questID) end
+    QuestPanel.selectedIndex = 0
+    QuestPanel:Refresh()
+    for i, item in ipairs(QuestPanel.items) do
+        if item.kind == "quest" and item.questID == questID then
+            QuestPanel:Select(i)
+            return true
+        end
+    end
+    QuestPanel.expanded = nil
+    if QuestPanel.tab == "search" then QuestPanel:SetFocus(nil) end
+    QuestPanel:Refresh()
+    return false
+end
+
+
+
+
+
+function QuestPanel:ShowQuest(questID)
+    questID = tonumber(questID)
+    if not self:Show({ tab = "log" }) then return false end
+    if not questID or questID <= 0 then return false end
+    if reveal(questID) then return true end
+    local title, known = titleFor(questID)
+    if not known then return false end
+    local window = self.window
+    if window.fgpsEdit and window.fgpsEdit.SetText then window.fgpsEdit:SetText(title) end
+    self:SetTab("search")
+    self:RunSearch(title)
+    if reveal(questID) then return true end
+    self:SetTab("log")
+    return false
+end
+
 function QuestPanel:Hide()
     if self.window and self.window:IsShown() then self.window:Hide() end
 end
@@ -965,6 +1139,8 @@ end
 function QuestPanel:OnWindowHidden()
 
 
+
+    if FGPS.QuestBatch and FGPS.QuestBatch.Cancel then FGPS.QuestBatch.Cancel() end
     self:SetFocus(nil)
     self.expanded = nil
     if self.window and self.window.fgpsEdit and self.window.fgpsEdit.ClearFocus then self.window.fgpsEdit:ClearFocus() end
@@ -992,36 +1168,73 @@ function QuestPanel.About()
     end
 
 
-
-    FGPS:Print(L["Cabbie ships %d fully routable quests: a known giver, a known turn-in and every objective placed."], stats.full or stats.shipped)
-    if (stats.partial or 0) > 0 then
-        FGPS:Print(L["  %d more ship as partial rows: a known giver and a known turn-in, and an objective whose place is not known."], stats.partial)
-    end
-    if (stats.oneEnded or 0) > 0 then
-        FGPS:Print(L["  %d more ship with one known end: only where they are handed in, or only where they are given."], stats.oneEnded)
-    end
+    FGPS:Print(L["Quests: %d with a full route, %d with an objective whose place is not known, %d with only one known end."],
+        stats.full or stats.shipped, stats.partial or 0, stats.oneEnded or 0)
     local d = stats.dataset
     if d then
-        FGPS:Print(L["  Of the %d quests this client lists, %d have a 1.12 record and %d of those are routable end to end."],
-            d.rosterQuests or 0, d.vanillaRecords or 0, d.full or d.shipped or 0)
-        FGPS:Print(L["  %d are complete and plausible, %d carry something the builder found suspect."],
-            d.plausible or 0, d.suspect or 0)
-        FGPS:Print(L["  %d quests exist only in Forever; %d of them are listed here and %d have a known start."],
-            (d.foreverListed or 0) + (d.foreverUnknown or 0), d.foreverListed or 0, d.foreverPositioned or 0)
+        FGPS:Print(L["Forever's own quests: %d, and %d of them have a known start."],
+            (d.foreverListed or 0) + (d.foreverUnknown or 0), d.foreverPositioned or 0)
     end
-    for _, entry in ipairs(stats.dropped or {}) do
-        FGPS:Print(L["  not shipped: %d because %s"], entry.n or 0, L[tostring(entry.why)])
-    end
-    for _, entry in ipairs(stats.partialReasons or {}) do
-        FGPS:Print(L["  partial row: %d because %s"], entry.n or 0, L[tostring(entry.why)])
-    end
-    for _, entry in ipairs(stats.oneEndedReasons or {}) do
-        FGPS:Print(L["  one known end: %d because %s"], entry.n or 0, L[tostring(entry.why)])
-    end
-    FGPS:Print(L["Every one of them is a 1.12 record. That the quest exists was checked against this client's own list; that its giver has not moved was not."])
-    FGPS:Print(L["Quest names are not bundled: the client answers for them in Forever's own wording. Names known so far: %d of %d."],
+    FGPS:Print(L["Quest givers may have moved since the records were made. Names are the game's own for %d of %d quests, the 1.12 records' for the rest."],
         stats.titlesKnown or 0, stats.shipped)
     return true
+end
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+QuestPanel.trackerHooks = {}
+
+local function fromTracker(questID)
+    local s = settings()
+    if s and type(s.quests) == "table" and s.quests.enabled == false then return end
+    questID = tonumber(questID)
+    if not questID or questID <= 0 then return end
+    local ok, err = pcall(QuestPanel.ShowQuest, QuestPanel, questID)
+    if not ok then FGPS.Log:Error("Opening the quest window from the tracker failed: %s", tostring(err)) end
+end
+
+local function modified()
+    return (IsShiftKeyDown and IsShiftKeyDown()) or (IsControlKeyDown and IsControlKeyDown())
+        or (IsAltKeyDown and IsAltKeyDown()) or false
+end
+
+
+
+function QuestPanel.HookTrackers()
+    local hooks = QuestPanel.trackerHooks
+    if type(hooksecurefunc) ~= "function" then return hooks end
+    if not hooks.questie then
+        local loader = rawget(_G, "QuestieLoader")
+        local modules = type(loader) == "table" and rawget(loader, "_modules") or nil
+        local utils = type(modules) == "table" and rawget(modules, "TrackerUtils") or nil
+        if type(utils) == "table" and type(utils.ShowQuestLog) == "function" then
+            hooks.questie = pcall(hooksecurefunc, utils, "ShowQuestLog", function(_, quest)
+                if type(quest) == "table" then fromTracker(quest.Id) end
+            end) or nil
+        end
+    end
+    if not hooks.native then
+        local tracker = rawget(_G, "QuestObjectiveTracker")
+        if type(tracker) == "table" and type(tracker.OnBlockHeaderClick) == "function" then
+            hooks.native = pcall(hooksecurefunc, tracker, "OnBlockHeaderClick", function(_, block, mouseButton)
+                if mouseButton == "RightButton" or type(block) ~= "table" or modified() then return end
+                fromTracker(block.id)
+            end) or nil
+        end
+    end
+    return hooks
 end
 
 
@@ -1045,11 +1258,26 @@ function QuestPanel:Init()
         if QuestPanel:IsShown() and QuestPanel.tab == "log" then QuestPanel:Refresh() end
     end, self)
     Events:Register("SETTINGS_CHANGED", function(_, key)
+        if key == "quests.batchRadius" and FGPS.QuestBatch and FGPS.QuestBatch.Suggest
+            and QuestPanel:IsShown() then
+            FGPS.QuestBatch.Suggest()
+        end
         if key == "units" or key == "preset" or key == "accessibility.colorScheme" or key == "*"
             or (type(key) == "string" and key:sub(1, 7) == "quests.") then
             if QuestPanel:IsShown() then QuestPanel:Refresh() end
         end
     end, self)
+    Events:Register("QUEST_BATCH", function()
+        if QuestPanel.batchText then paintBatch() end
+    end, self)
+
+    QuestPanel.HookTrackers()
+    if Events.RegisterWoW then
+        Events:RegisterWoW("ADDON_LOADED", function()
+            local hooks = QuestPanel.HookTrackers()
+            if hooks.questie and hooks.native and Events.UnregisterWoW then Events:UnregisterWoW("ADDON_LOADED", self) end
+        end, self)
+    end
     FGPS.Slash.Register("quests", slash,
         L["Quest help: quests [zone|level|name] | quests about"])
 end

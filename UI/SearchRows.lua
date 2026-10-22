@@ -18,7 +18,8 @@ FGPS.UI.SearchRows = Rows
 
 Rows.MAX = 8                    -- rows in the list
 Rows.MIN_LETTERS = 2            -- one letter matches nearly every place and is not searched
-Rows.COST_CEILING = 2000000     -- Lua VM instructions one search may cost (tests/test_searchrows.lua)
+Rows.COST_CEILING = 2100000     -- Lua VM instructions one search may cost (tests/test_searchrows.lua); 2,000,000 until
+                                -- 2026-10-20, when the 1.12 quest names grew the title index from some 700 names to 4,200
 Rows.NO_PLACE_HOLD = 4          -- seconds the call-out says that a quest has no known place
 
 -- The words that ask for a kind of service instead of a name, and the type Nav/Services.lua
@@ -180,16 +181,21 @@ local function onQuest(questID)
 end
 
 -- The quests that can be picked up and whose title matches: the title is known, the record names
--- a giver's place, the quest is not in the log (nor held under a collapsed header) and is not done.
+-- a giver's place, the quest is not in the log (nor held under a collapsed header), is not done and
+-- is not ruled out (QuestData.CanTake "no": an earlier quest not done, too low a level, ...). A name
+-- several quests share (the steps of a chain carry one name) is one row, the earliest step.
 local function pickups(typed, inLog)
     local out = {}
     local QuestData = FGPS.QuestData
     if not (QuestData and QuestData.SearchTitles) then return out end
-    local ok, found = pcall(QuestData.SearchTitles, typed, { limit = Rows.MAX * 2 })
+    local function keep(questID)
+        return not inLog[questID] and not onQuest(questID) and not flaggedDone(questID)
+            and not (QuestData.CanTake and QuestData.CanTake(questID) == "no")
+    end
+    local ok, found = pcall(QuestData.SearchTitles, typed, { limit = Rows.MAX * 2, distinct = true, keep = keep })
     if not ok or type(found) ~= "table" then return out end
     for _, quest in ipairs(found) do
-        if type(quest.title) == "string" and quest.hasStart and not inLog[quest.questID] and not onQuest(quest.questID)
-                and not flaggedDone(quest.questID) then
+        if type(quest.title) == "string" and quest.hasStart then
             out[#out + 1] = { kind = "pickup", icon = "pickup", name = quest.title, zone = quest.startName, yards = quest.yards,
                               score = quest.score or Rows.Score(quest.title, typed), group = 4, lead = false, questID = quest.questID }
         end

@@ -37,11 +37,6 @@ Route.UNVERIFIED_KINDS = { [3] = true, [14] = true, [15] = true }
 
 
 
-
-Route.APPROXIMATE_KINDS = { [4] = true }
-
-
-
 Route.OPEN_GROUND_KINDS = { [19] = true }
 
 
@@ -63,15 +58,29 @@ function Route.Kind4PaintExcessYards(sample)
     return sample.shapeYards - sample.chordYards
 end
 
+
 local drawDashed
 function Route.DashedKinds()
     if not drawDashed then
         drawDashed = {}
         for k in pairs(Route.UNVERIFIED_KINDS) do drawDashed[k] = true end
-        for k in pairs(Route.APPROXIMATE_KINDS) do drawDashed[k] = true end
         for k in pairs(Route.OPEN_GROUND_KINDS) do drawDashed[k] = true end
     end
     return drawDashed
+end
+
+
+
+
+
+local strokeCache = {}
+for k in pairs(Route.DashedKinds()) do strokeCache[k] = "dashed" end
+local function strokeTable()
+    return strokeCache
+end
+
+function Route.Stroke(kind)
+    return strokeTable()[kind] or "solid"
 end
 
 local TRANSPORT_LABELS = {
@@ -113,8 +122,6 @@ end
 
 
 
-
-
 function Route.MustKeep(points, i)
     local p = points[i]
     if Route.IsPreserved(p) then return true end
@@ -129,8 +136,8 @@ function Route.MustKeep(points, i)
     elseif q.stacked or (o and o.stacked) then
         return true
     end
-    local dashed = Route.DashedKinds()
-    return (dashed[p.k] or false) ~= (dashed[q.k] or false)
+    local stroke = strokeTable()
+    return (stroke[p.k] or "solid") ~= (stroke[q.k] or "solid")
 end
 
 function Route.LegLabel(kind)

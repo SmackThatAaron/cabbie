@@ -21,7 +21,7 @@ local L = FGPS.L
 local debugprofilestop = debugprofilestop
 local pairs, ipairs, type, tostring, format = pairs, ipairs, type, tostring, string.format
 
-local MAX_SAMPLES, MAX_TRIPS = 60, 20
+local MAX_SAMPLES, MAX_TRIPS, MAX_ROUTES = 60, 20, 20
 local PROFILER_METRICS = { "SessionAverageTime", "RecentAverageTime", "LastTime", "PeakTime",
                            "CountTimeOver1Ms", "CountTimeOver5Ms", "CountTimeOver10Ms" }
 
@@ -271,7 +271,57 @@ function Perf:Print()
     end
     if #r.trips > 0 then FGPS:Print(L.PERF_TRIPS_ALLOCATED, #r.trips, r.tripAllocatedAvgKB, r.tripAllocatedMaxKB) end
     if r.scheduler then FGPS:Print(L.PERF_SCHEDULER, r.scheduler.queued, r.scheduler.completed, r.scheduler.sliceMs) end
+    local routes = self:Routes()
+    local n = #routes
+    if n == 0 then
+        FGPS:Print(L.PERF_ROUTES_NONE)
+    else
+        local first = n > 5 and (n - 4) or 1
+        for i = first, n do
+            local e = routes[i]
+            FGPS:Print(L.PERF_ROUTE_LINE, e.reason or "?", tostring(e.continent or "?"),
+                e.cpuMs or 0, e.wallMs or 0, e.frames or 0, e.expansions or 0, e.budgetMs or 0, e.fps or 0)
+        end
+    end
     return r
+end
+
+-- Last 20 route requests, kept on CabbieDB.lastSession.routes. No positions and no names:
+-- continent is the instance id. cpuMs is the sum of the search's slices.
+function Perf:NoteRoute(row)
+    if type(row) ~= "table" then return nil end
+    local account = FGPS.DB and FGPS.DB.account
+    if type(account) ~= "table" then return nil end
+    local session = account.lastSession
+    if type(session) ~= "table" then
+        session = {}
+        account.lastSession = session
+    end
+    local routes = session.routes
+    if type(routes) ~= "table" then
+        routes = {}
+        session.routes = routes
+    end
+    local entry = {
+        cpuMs = tonumber(row.cpuMs) or 0,
+        wallMs = tonumber(row.wallMs) or 0,
+        frames = tonumber(row.frames) or 0,
+        expansions = tonumber(row.expansions) or 0,
+        budgetMs = tonumber(row.budgetMs) or 0,
+        fps = tonumber(row.fps),
+        reason = type(row.reason) == "string" and row.reason or "start",
+        continent = tonumber(row.continent),
+    }
+    routes[#routes + 1] = entry
+    while #routes > MAX_ROUTES do table.remove(routes, 1) end
+    return entry
+end
+
+function Perf:Routes()
+    local account = FGPS.DB and FGPS.DB.account
+    local routes = account and account.lastSession and account.lastSession.routes
+    if type(routes) ~= "table" then return {} end
+    return routes
 end
 
 -------------------------------------------------------------------------------

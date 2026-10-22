@@ -562,13 +562,13 @@ function Cost.Explain(route)
         if text == "" then text = sentence else text = text .. " " .. sentence end
     end
     if route and route.fallback == "straight" then
-        add(L["No verified path exists between these points; the whole route is drawn dashed."])
+        add(L["No road joins these points; the whole route is drawn dashed."])
     elseif unverified > 0 then
 
 
         local mesh = route.meshYards or 0
         if unverified - mesh >= 0.5 then
-            add(string.format(L["%s of this route have no verified path (drawn dashed)."],
+            add(string.format(L["%s of this route is open ground (drawn dashed)."],
                 FGPS.Util.FormatDistance(unverified - mesh, units)))
         end
         if mesh >= 0.5 then
@@ -591,7 +591,7 @@ function Cost.Explain(route)
     local street = route and route.streetYards or 0
     if street > 0 then
         add(string.format(
-            L["%s cut across city streets and squares in straight lines checked against the city map; nobody has walked those exact lines."],
+            L["%s cut across city streets and squares on lines checked against the city map; nobody has walked those exact lines."],
             FGPS.Util.FormatDistance(street, units)))
     end
 

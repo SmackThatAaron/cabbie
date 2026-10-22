@@ -303,7 +303,7 @@ local function checkCoords()
         return "fail", format("map %d could not be converted back to world coordinates", uiMapID)
     end
     if inst ~= pos.inst then
-        return "fail", format("the round trip changed instance %s -> %s", tostring(pos.inst), tostring(inst))
+        return "fail", format("there and back changed instance %s -> %s", tostring(pos.inst), tostring(inst))
     end
     local drift = Coords.Distance(x, y, pos.x, pos.y) or 0
     local zone = Coords.MapName and Coords.MapName(uiMapID) or tostring(uiMapID)
@@ -311,7 +311,7 @@ local function checkCoords()
         return "fail", format("world -> map -> world moved the player %.1f yd in %s (map %d), tolerance %.0f yd",
             drift, tostring(zone), uiMapID, SelfTest.COORD_TOLERANCE)
     end
-    return "pass", format("%s (map %d) at %.1f, %.1f; round trip off by %.2f yd", tostring(zone), uiMapID,
+    return "pass", format("%s (map %d) at %.1f, %.1f; there and back off by %.2f yd", tostring(zone), uiMapID,
         mx * 100, my * 100, drift)
 end
 
@@ -528,7 +528,7 @@ local function checkRoute(finish)
                     answer("note", format("Sample route: %d yd with no road on file here, so the line points the direction only",
                         Util.Round(route.totalYards or 0)))
                 else
-                    answer("pass", format("%d yd over %d leg(s) [%s] in %.2f s, %d yd verified",
+                    answer("pass", format("%d yd over %d leg(s) [%s] in %.2f s, %d yd on roads",
                         Util.Round(route.totalYards or 0), #kinds, concat(kinds, ", "), elapsed,
                         Util.Round(route.verifiedYards or 0)))
                 end
@@ -1007,6 +1007,9 @@ local function onLogout()
     local account = FGPS.DB and FGPS.DB.account
     if type(account) ~= "table" then return end
     local boot = FGPS.Boot and FGPS.Boot.report
+
+
+    local keptRoutes = type(account.lastSession) == "table" and account.lastSession.routes or nil
     account.lastSession = {
         began = SelfTest.sessionStart,
         ended = stamp(),
@@ -1016,6 +1019,7 @@ local function onLogout()
         log = lastLogLines(SelfTest.SESSION_LOG_LINES),
         trips = savedTrips(),
         places = Util.DeepCopy(SelfTest.places) or {},
+        routes = keptRoutes,
     }
 end
 

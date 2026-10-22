@@ -480,9 +480,12 @@ local function personalOptions()
         if ok and type(options) == "table" then
             for _, opt in ipairs(options) do
                 if type(opt) == "table" and opt.inst and opt.x and opt.y and opt.known ~= false then
+
+
                     local entry = {
                         kind = opt.kind, id = opt.id, itemID = opt.kind == "hearth" and opt.id or nil,
-                        spellID = opt.kind == "spell" and opt.id or nil, name = opt.name, bindName = opt.kind == "hearth" and opt.name or nil,
+                        spellID = opt.kind == "spell" and opt.id or nil, name = opt.name,
+                        bindName = opt.kind == "hearth" and (opt.placeName or opt.bindName) or nil,
                         inst = opt.inst, x = opt.x, y = opt.y, map = opt.map, ready = opt.ready ~= false,
                         cdRemaining = tonumber(opt.cdRemaining) or 0, castSeconds = tonumber(opt.castSeconds) or Const.HEARTH_CAST_SECONDS,
                     }
@@ -690,7 +693,7 @@ end
 
 
 local INVALIDATE_EVENTS = {
-    "SKILL_LINES_CHANGED", "NEW_MOUNT_ADDED", "MOUNT_JOURNAL_USABILITY_CHANGED", "BAG_UPDATE_COOLDOWN",
+    "SKILL_LINES_CHANGED", "NEW_MOUNT_ADDED", "MOUNT_JOURNAL_USABILITY_CHANGED", "BAG_UPDATE_COOLDOWN", "BAG_UPDATE_DELAYED",
     "SPELL_UPDATE_COOLDOWN", "PLAYER_LEVEL_UP", "ZONE_CHANGED_NEW_AREA", "ZONE_CHANGED_INDOORS",
     "HEARTHSTONE_BOUND", "PLAYER_ENTERING_WORLD", "UNIT_FACTION",
     "PLAYER_DEAD", "PLAYER_ALIVE", "PLAYER_UNGHOST",

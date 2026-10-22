@@ -1455,6 +1455,26 @@ QuestData.TitleStore = titleStore
 
 
 
+local function englishClient()
+    local locale = GetLocale and GetLocale()
+    return locale == nil or locale == "enUS" or locale == "enGB"
+end
+
+
+
+function QuestData.BundledTitle(questID)
+    if not englishClient() then return nil end
+    local quests = dataset()
+    local row = QuestData.RowFor(questID)
+    local names = quests and type(quests.title) == "table" and quests.title or nil
+    local title = row and names and names[row]
+    if type(title) == "string" and title ~= "" then return title end
+    return nil
+end
+
+
+
+
 
 
 function QuestData.Title(questID)
@@ -1476,7 +1496,7 @@ function QuestData.Title(questID)
             return title
         end
     end
-    return nil
+    return QuestData.BundledTitle(questID)
 end
 
 
@@ -1513,6 +1533,7 @@ end
 
 
 
+
 local function titleIndex()
     if QuestData.titleIndexBuilt then return QuestData.titleIndexBuilt end
     local index = {}
@@ -1520,11 +1541,26 @@ local function titleIndex()
     if forever and type(forever.title) == "table" then
         for i, title in pairs(forever.title) do
             local id = forever.id[i]
-            if id and type(title) == "string" then index[#index + 1] = { id = id, title = title, folded = Util.Lower(title) } end
+            if id and type(title) == "string" then
+                index[#index + 1] = { id = id, title = title, folded = Util.Lower(title), vanilla = QuestData.RowFor(id) ~= nil }
+            end
         end
     end
-    for id, title in pairs(titleStore()) do
-        if type(title) == "string" then index[#index + 1] = { id = id, title = title, folded = Util.Lower(title) } end
+    local store = titleStore()
+    for id, title in pairs(store) do
+        if type(title) == "string" then
+            index[#index + 1] = { id = id, title = title, folded = Util.Lower(title), vanilla = QuestData.RowFor(id) ~= nil }
+        end
+    end
+
+    local quests = dataset()
+    if englishClient() and quests and type(quests.title) == "table" and type(quests.id) == "table" then
+        for i, title in ipairs(quests.title) do
+            local id = quests.id[i]
+            if id and store[id] == nil and type(title) == "string" and title ~= "" then
+                index[#index + 1] = { id = id, title = title, folded = Util.Lower(title), vanilla = true }
+            end
+        end
     end
     QuestData.titleIndexBuilt = index
     return index
@@ -1792,8 +1828,7 @@ function QuestData.Search(text, opts)
         local needle = Util.Lower(query.text)
         for _, entry in ipairs(titleIndex()) do
             if entry.folded:find(needle, 1, true) then
-                local layer = "forever"
-                if QuestData.RowFor(entry.id) then layer = "vanilla" end
+                local layer = entry.vanilla and "vanilla" or "forever"
                 if layer == "vanilla" or includeForever then consider(entry.id, layer) end
             end
         end
@@ -1831,7 +1866,7 @@ function QuestData.Search(text, opts)
             status = status .. " " .. format(L["%d more start with another race or class."], refused)
         end
     elseif query.text ~= "" then
-        status = format(L["Cabbie does not ship quest names for vanilla quests - the client supplies them, in Forever's own wording. Search by zone or by level, or open a quest once and Cabbie will remember its name. Names known so far: %d of %d."],
+        status = format(L["No quest name matches that. Search by zone or by level, or open a quest once and Cabbie will remember its name. Names known so far: %d of %d."],
             QuestData.KnownTitleCount(), quests.n)
     elseif query.zone or query.minLevel then
         status = L["No routable quest matches that."]
@@ -1864,7 +1899,7 @@ function QuestData.SearchTitles(text, opts)
     local hits = {}
     for _, entry in ipairs(titleIndex()) do
         if entry.folded:find(needle, 1, true) then
-            local layer = QuestData.RowFor(entry.id) and "vanilla" or "forever"
+            local layer = entry.vanilla and "vanilla" or "forever"
             if layer == "vanilla" or includeForever then
                 hits[#hits + 1] = { id = entry.id, layer = layer, folded = entry.folded, score = score and score(entry.folded, needle) or 40 }
             end
@@ -1877,15 +1912,20 @@ function QuestData.SearchTitles(text, opts)
     end)
     local limit = opts.limit or QuestData.SEARCH_LIMIT
     local pos = playerPos()
-    local rows, seen = {}, {}
+    local rows, seen, seenTitle = {}, {}, {}
     for _, hit in ipairs(hits) do
         if #rows >= limit then break end
         local allowed = (hit.layer == "vanilla" and QuestData.AllowedForPlayer(hit.id))
             or (hit.layer == "forever" and foreverMasksAllow(hit.id))
-        if not seen[hit.id] and allowed then
+
+
+
+        if not seen[hit.id] and allowed and not (opts.distinct and seenTitle[hit.folded])
+                and not (opts.keep and not opts.keep(hit.id)) then
             local row = searchRow(hit.id, pos, hit.layer)
             if row then
                 seen[hit.id] = true
+                seenTitle[hit.folded] = true
                 row.score = hit.score
                 rows[#rows + 1] = row
             end

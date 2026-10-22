@@ -31,6 +31,8 @@
 
 
 
+
+
 local ADDON_NAME, FGPS = ...
 
 local L = FGPS.L
@@ -62,9 +64,12 @@ local ROW_HEIGHT = 20
 local RESULT_LIMIT = 25
 local MIN_QUERY = 2
 
-local TABS = { "search", "favorites", "recent", "quests", "services", "lists" }
-local TAB_LABELS = { search = "Search", favorites = "Favorites", recent = "Recent", quests = "Quest", services = "Services", lists = "Lists" }
-local TAB_WIDTH = { search = 60, favorites = 78, recent = 62, quests = 54, services = 72, lists = 52 }
+
+
+
+local TABS = { "search", "favorites", "recent", "quests", "poi" }
+local TAB_LABELS = { search = "Search", favorites = "Favorites", recent = "Recent", quests = "Quest", poi = "Points of interest" }
+local TAB_WIDTH = { search = 60, favorites = 78, recent = 62, quests = 54, poi = 144 }
 
 
 
@@ -84,7 +89,8 @@ local SERVICE_LABELS = {
     vendor = "Vendor", repair = "Repair", flightmaster = "Flight master", inn = "Inn", mailbox = "Mailbox",
     bank = "Bank", auction = "Auction house", trainer = "Trainer", stable = "Stable master",
 }
-local SERVICE_ORDER = { "vendor", "repair", "flightmaster", "inn", "mailbox", "bank", "auction", "trainer", "stable" }
+
+
 
 
 local LIST_LIMIT = 40
@@ -102,18 +108,20 @@ local LIST_CATEGORIES = {
         { key = "battlegrounds", label = "Battlegrounds", types = { 19 } },
     } },
     { key = "travel", label = "Travel", subs = {
-        { key = "flight", label = "Flight masters", types = { 6 } },
+        { key = "flight", label = "Flight masters", types = { 6 }, nearest = "flightmaster" },
         { key = "docks", label = "Docks", types = { 14 } },
         { key = "tram", label = "Tram", types = { 15 } },
         { key = "portals", label = "Portals", types = { 17 } },
     } },
-    { key = "vendor", label = "Vendors", types = { 8 } },
-    { key = "repair", label = "Repair", types = { 9 } },
-
-    { key = "auction", label = "Auction house", types = { 12 } },
+    { key = "vendor", label = "Vendors", types = { 8 }, nearest = "vendor" },
+    { key = "repair", label = "Repair", types = { 9 }, nearest = "repair" },
+    { key = "inn", label = "Inn", types = { 7 }, nearest = "inn" },
+    { key = "mailbox", label = "Mailbox", types = { 10 }, nearest = "mailbox" },
+    { key = "bank", label = "Bank", types = { 11 }, nearest = "bank" },
+    { key = "auction", label = "Auction house", types = { 12 }, nearest = "auction" },
     { key = "trainer", label = "Trainer", trainerMenu = true },
-    { key = "weapons", label = "Weapon master", service = "trainer:weapons" },
-    { key = "stable", label = "Stable master", types = { 20 } },
+    { key = "weapons", label = "Weapon master", service = "trainer:weapons", nearest = "trainer:weapons" },
+    { key = "stable", label = "Stable master", types = { 20 }, nearest = "stable" },
     { key = "graveyard", label = "Graveyard", types = { 16 } },
 }
 
@@ -145,7 +153,7 @@ end
 
 
 
-Search.STRAIGHT_FLAG_TEXT = "(straight line)"
+Search.STRAIGHT_FLAG_TEXT = "(open ground)"
 Search.STRAIGHT_FLAG = "|cffffa633" .. Search.STRAIGHT_FLAG_TEXT .. "|r"
 
 function Search.RefreshStraightFlag()
@@ -157,8 +165,8 @@ function Search.RefreshStraightFlag()
     Search.STRAIGHT_FLAG = format("|cff%02x%02x%02x%s|r", byte(c[1]), byte(c[2]), byte(c[3]), L[Search.STRAIGHT_FLAG_TEXT])
     return Search.STRAIGHT_FLAG
 end
-Search.SERVICES_HINT = "Nearest by route distance: the closest candidates by straight-line distance are routed and sorted by "
-    .. "route length. A result marked (straight line) could not be routed; its distance is a straight-line estimate."
+Search.SERVICES_HINT = "Nearest by route distance: the closest candidates by direct distance are routed and sorted by "
+    .. "route length. A result marked (open ground) could not be routed; its distance is a direct estimate."
 
 
 
@@ -460,9 +468,9 @@ function Search:Act(mode)
         Search.GoTo(dest, "addStop")
         return true
     end
-    local ok = Search.GoTo(dest, mode)
-    if ok then self:Hide() end
-    return ok
+
+
+    return Search.GoTo(dest, mode)
 end
 
 function Search:ToggleFavorite()
@@ -628,6 +636,11 @@ local function onRowClick(item, index, button)
 
     Search.listKeysArmed = true
     Search.selectedIndex = index
+
+    if type(item.open) == "function" and button ~= "RightButton" then
+        item.open(item)
+        return
+    end
     if button == "RightButton" then Search:Act() end
 end
 
@@ -692,11 +705,17 @@ end
 
 
 
+
 function Search:Activate()
     local item = self.items[self.selectedIndex]
     if type(item) == "table" then
         if item.kind == "back" then
             self:ServiceBack()
+            return true
+        end
+        local shift = IsShiftKeyDown and IsShiftKeyDown()
+        if type(item.open) == "function" and not (shift and type(item.action) == "function") then
+            item.open(item)
             return true
         end
         if type(item.action) == "function" then
@@ -892,6 +911,13 @@ function Search:ScheduleSearch(text)
     end
 end
 
+
+local function filterList()
+    Search:CancelServiceSearch()
+    Search.serviceResults = nil
+    Search:Refresh()
+end
+
 function Search:ScheduleListFilter(text)
     self.searchGeneration = self.searchGeneration + 1
     local generation = self.searchGeneration
@@ -899,11 +925,11 @@ function Search:ScheduleListFilter(text)
     if C_Timer and C_Timer.After then
         C_Timer.After(DEBOUNCE_SECONDS, function()
             if generation ~= Search.searchGeneration then return end
-            if Search.tab ~= "lists" then return end
-            Search:Refresh()
+            if Search.tab ~= "poi" then return end
+            filterList()
         end)
     else
-        self:Refresh()
+        filterList()
     end
 end
 
@@ -949,8 +975,8 @@ local function questItem(Quests, q, title, label, locationHandle)
         action = function()
             local dest, why = destination()
             if dest then
-                Search.GoTo(dest, Search.addStopMode and "addStop" or nil)
-                if not Search.addStopMode then Search:Hide() end
+
+                Search.GoTo(dest, Search.addStopMode and "addStop" or "start")
             else
                 FGPS:Print(L["%s: %s"], title, why)
             end
@@ -1040,54 +1066,6 @@ local function questItems()
     return items, #items == 0 and L["No quests with a known location."] or nil
 end
 
-local function serviceItems()
-    local ServiceSearch = FGPS.ServiceSearch
-    local items = {}
-    if not ServiceSearch or not ServiceSearch.Nearest then
-        return items, L["Service search is not available right now."]
-    end
-
-
-    if Search.serviceMenu == "trainer" and ServiceSearch.TrainerKinds then
-        items[#items + 1] = { kind = "back", label = L["< Back to service types"] }
-        local mine = ServiceSearch.PlayerClass and ServiceSearch.PlayerClass() or nil
-        for _, entry in ipairs(ServiceSearch.TrainerKinds() or {}) do
-            local query = "trainer:" .. entry.kind
-            local label = serviceLabel(query)
-            if entry.kind == mine then label = format(L["%s (your class)"], label) end
-            items[#items + 1] = {
-                kind = "service", service = query, label = format("%s  |cff999999%d|r", label, entry.count),
-                actionLabel = L["Nearest"], action = function() Search:FindNearest(query) end,
-            }
-        end
-        items[#items + 1] = {
-            kind = "service", service = "trainer", label = L["Any trainer"], actionLabel = L["Nearest"],
-            action = function() Search:FindNearest("trainer") end,
-        }
-        if #items == 2 then return items, L["No trainers are known on this continent for your faction."] end
-        return items, L["Pick a kind of trainer; the number is how many are known within range."]
-    end
-    local order = type(ServiceSearch.Types) == "table" and #ServiceSearch.Types > 0 and ServiceSearch.Types or SERVICE_ORDER
-    for _, kind in ipairs(order) do
-        if kind == "trainer" and ServiceSearch.TrainerKinds then
-            items[#items + 1] = {
-                kind = "service", service = kind, label = L[SERVICE_LABELS[kind] or kind], actionLabel = L["Choose"],
-                action = function() Search.serviceMenu = "trainer" Search:Refresh() end,
-            }
-            items[#items + 1] = {
-                kind = "service", service = "trainer:weapons", label = L["Weapon master"], actionLabel = L["Nearest"],
-                action = function() Search:FindNearest("trainer:weapons") end,
-            }
-        else
-            items[#items + 1] = {
-                kind = "service", service = kind, label = L[SERVICE_LABELS[kind] or kind], actionLabel = L["Nearest"],
-                action = function() Search:FindNearest(kind) end,
-            }
-        end
-    end
-    return items, L["Pick a service type; results are the nearest by route distance."]
-end
-
 local function listCategoryAt(key)
     for i, cat in ipairs(LIST_CATEGORIES) do
         if cat.key == key then return i, cat end
@@ -1125,13 +1103,16 @@ local function subsOf(cat)
     if not ServiceSearch or not ServiceSearch.TrainerKinds then return {} end
     local ok, kinds = pcall(ServiceSearch.TrainerKinds, playerPos(), 1e9)
     if not ok or type(kinds) ~= "table" then return {} end
+    local mine = ServiceSearch.PlayerClass and ServiceSearch.PlayerClass() or nil
     local rows = {}
     for _, entry in ipairs(kinds) do
-        rows[#rows + 1] = {
-            key = entry.kind, label = trainerKindLabel(entry.kind),
-            service = "trainer:" .. entry.kind, count = entry.count, named = true,
-        }
+        local label = trainerKindLabel(entry.kind)
+        if entry.kind == mine then label = format(L["%s (your class)"], label) end
+        local query = "trainer:" .. entry.kind
+        rows[#rows + 1] = { key = entry.kind, label = label, service = query, nearest = query, count = entry.count, named = true }
     end
+
+    rows[#rows + 1] = { key = "any", label = L["Any trainer"], service = "trainer", nearest = "trainer", named = true }
     return rows
 end
 
@@ -1215,6 +1196,19 @@ local function matchingPlaces(cat)
     return matched
 end
 
+
+
+local function openRow(entry, label, open)
+    local row = { kind = "service", service = entry.key, label = label, open = open }
+    if entry.nearest then
+        local query = entry.nearest
+        row.actionLabel, row.action = L["Nearest"], function() Search:FindNearest(query) end
+    else
+        row.actionLabel, row.action = entry.trainerMenu and L["Choose"] or L["Open"], open
+    end
+    return row
+end
+
 local function listItems()
     local index = listCategoryAt(Search.listCategory)
     if not index then
@@ -1222,14 +1216,11 @@ local function listItems()
         for _, cat in ipairs(LIST_CATEGORIES) do
             local label = L[cat.label]
             if listHit(label) then
-                items[#items + 1] = {
-                    kind = "service", service = cat.key, label = label, actionLabel = L["Open"],
-                    action = function()
-                        Search.listCategory = cat.key
-                        Search.listSub = nil
-                        Search:Refresh()
-                    end,
-                }
+                items[#items + 1] = openRow(cat, label, function()
+                    Search.listCategory = cat.key
+                    Search.listSub = nil
+                    Search:Refresh()
+                end)
             end
         end
         local status = L["Pick a category. The list is the nearest places of that kind."]
@@ -1249,13 +1240,10 @@ local function listItems()
         for _, sub in ipairs(subs) do
             local label = subLabel(sub)
             if listHit(label) then
-                items[#items + 1] = {
-                    kind = "service", service = sub.key, label = label, actionLabel = L["Open"],
-                    action = function()
-                        Search.listSub = sub.key
-                        Search:Refresh()
-                    end,
-                }
+                items[#items + 1] = openRow(sub, label, function()
+                    Search.listSub = sub.key
+                    Search:Refresh()
+                end)
             end
         end
         local n = #items - 2
@@ -1264,6 +1252,9 @@ local function listItems()
             status = n == 0 and L["No matching destinations."] or format(L["%d result(s)"], n)
         elseif n == 0 then
             status = L["No matching destinations."]
+        elseif cat.trainerMenu and #subs == 1 then
+
+            status = L["No trainers are known on this continent for your faction."]
         end
         return items, status
     end
@@ -1292,15 +1283,12 @@ end
 
 
 function Search:ServiceBack()
-    if self.tab == "lists" then
-        if self.listSub then self.listSub = nil else self.listCategory = nil end
-        self:Refresh()
-        return
-    end
     if self.serviceResults then
         self.serviceResults = nil
+    elseif self.listSub then
+        self.listSub = nil
     else
-        self.serviceMenu = nil
+        self.listCategory = nil
     end
     self:Refresh()
 end
@@ -1320,7 +1308,7 @@ function Search:CancelServiceSearch(redraw)
         local ok, result = pcall(ServiceSearch.Cancel)
         cancelled = ok and result == true
     end
-    if redraw and self.tab == "services" and self:IsShown() then self:Refresh() end
+    if redraw and self.tab == "poi" and self:IsShown() then self:Refresh() end
     return cancelled
 end
 
@@ -1371,9 +1359,15 @@ function Search.ServiceResultText(entry, pos, units)
     return text
 end
 
+
+local function resultsBackLabel()
+    if not Search.listCategory then return L["< Back to categories"] end
+    if Search.listCategory == "trainer" then return L["< Back to trainer kinds"] end
+    return L["< Back to lists"]
+end
+
 local function serviceResultItems(results)
-    local fromTrainerMenu = type(results.kind) == "string" and results.kind:find("^trainer") and Search.serviceMenu == "trainer"
-    local items = { { kind = "back", label = fromTrainerMenu and L["< Back to trainer kinds"] or L["< Back to service types"] } }
+    local items = { { kind = "back", label = resultsBackLabel() } }
     local pos = playerPos()
     local s = settings()
     local units = s and s.units or "yards"
@@ -1392,7 +1386,7 @@ local function serviceResultItems(results)
         status = format(L["No %s found: %s."], label, why)
         status = status .. " " .. L["Try Favorites, or Search for a town."]
     elseif straightCount > 0 then
-        status = format(L["Nearest %s by route distance; %d of %d could not be routed and show an unverified path."], label, straightCount, #results.list)
+        status = format(L["Nearest %s by route distance; %d of %d could not be routed and show open ground."], label, straightCount, #results.list)
     else
         status = format(L["Nearest %s by route distance."], label)
     end
@@ -1418,14 +1412,12 @@ function Search:Refresh()
         status = #items == 0 and L["No recent destinations."] or nil
     elseif tab == "quests" then
         items, status = questItems()
-    elseif tab == "services" then
+    elseif tab == "poi" then
         if self.serviceResults then
             items, status = serviceResultItems(self.serviceResults)
         else
-            items, status = serviceItems()
+            items, status = listItems()
         end
-    elseif tab == "lists" then
-        items, status = listItems()
     end
     self.selectedIndex = 0
     for i, item in ipairs(items or {}) do
@@ -1480,7 +1472,6 @@ function Search:SetTab(tab)
     self.listQuery = ""
     self.tab = tab
     self.serviceResults = nil
-    self.serviceMenu = nil
     local w = self.window
     if w then
         for key, button in pairs(w.fgpsTabs) do
@@ -1489,14 +1480,14 @@ function Search:SetTab(tab)
             if button.fgpsMark and button.fgpsMark.SetShown then button.fgpsMark:SetShown(on) end
         end
         local isSearch = tab == "search"
-        local isLists = tab == "lists"
-        w.fgpsEdit:SetShown(isSearch or isLists)
+        local isPoi = tab == "poi"
+        w.fgpsEdit:SetShown(isSearch or isPoi)
         if w.fgpsEdit.Placeholder and w.fgpsEdit.Placeholder.SetText then
-            w.fgpsEdit.Placeholder:SetText(L[isLists and "Filter this list" or "Town, NPC, or 42.5 65.1"])
+            w.fgpsEdit.Placeholder:SetText(L[isPoi and "Filter this list" or "Town, NPC, or 42.5 65.1"])
         end
-        w.fgpsEdit:SetText(isLists and (self.listQuery or "") or (self.query or ""))
+        w.fgpsEdit:SetText(isPoi and (self.listQuery or "") or (self.query or ""))
         if w.fgpsCoordTip then w.fgpsCoordTip:SetShown(isSearch) end
-        if w.fgpsHint then w.fgpsHint:SetShown(tab == "services") end
+        if w.fgpsHint then w.fgpsHint:SetShown(isPoi) end
         if w.fgpsQuestPanel then w.fgpsQuestPanel:SetShown(tab == "quests") end
     end
     if tab == "search" then self.filter = "towns" end
@@ -1573,9 +1564,7 @@ function Search:GoToCoordinates(text)
         FGPS:Print(L["Could not resolve those coordinates%s"], err and (": " .. tostring(err)) or ".")
         return false
     end
-    local done = Search.GoTo(dest, self.addStopMode and "addStop" or nil)
-    if done and not self.addStopMode then self:Hide() end
-    return done
+    return Search.GoTo(dest, self.addStopMode and "addStop" or nil)
 end
 
 
@@ -1667,14 +1656,14 @@ local function buildWindow()
         placeholder = L["Town, NPC, or 42.5 65.1"],
         onChanged = function(_, text, userInput)
             if userInput == false then return end
-            if Search.tab == "lists" then
+            if Search.tab == "poi" then
                 Search:ScheduleListFilter(text or "")
                 return
             end
             Search:ScheduleSearch(text or "")
         end,
         onEnter = function(_, text)
-            if Search.tab ~= "lists" and Search.ParseCoordinates(text) then Search:GoToCoordinates(text) return end
+            if Search.tab ~= "poi" and Search.ParseCoordinates(text) then Search:GoToCoordinates(text) return end
             Search:Activate()
         end,
         onEscape = function() Search:Hide() end,
@@ -1734,8 +1723,16 @@ local function buildWindow()
             FGPS:Print(L["The quest panel is not available right now."])
             return
         end
+
+        local item = Search.items[Search.selectedIndex]
+        local questID = type(item) == "table" and item.kind == "quest" and type(item.quest) == "table"
+            and item.quest.questID or nil
         Search:Hide()
-        QuestPanel:Show()
+        if questID and QuestPanel.ShowQuest then
+            QuestPanel:ShowQuest(questID)
+        else
+            QuestPanel:Show()
+        end
     end, 200, 22)
     questPanel:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", 2, 34)
     questPanel:Hide()
@@ -1867,7 +1864,6 @@ function Search:OnWindowHidden()
     self:CancelServiceSearch()
     self.addStopMode = false
     self.serviceResults = nil
-    self.serviceMenu = nil
     local window = self.window
     local wasDocked = self.docked
     self.docked = false

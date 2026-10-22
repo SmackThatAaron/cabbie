@@ -1,28 +1,40 @@
--- Cabbie/Nav/Personal.lua
--- Personal travel options: the Hearthstone (bind location from GetBindLocation, resolved to a
--- position through the compiled POI table), Astral Recall (shaman, same target as the hearth),
--- the mage teleports and Teleport: Moonglade (druid). Arrival positions of spells come from POI
--- entries of type 17 (portal/teleport arrival) whose source names the spell. Options carry
--- readiness and cooldown so the Router can decide whether to use them; nothing is ever cast by
--- the addon, legs of kind hearth/spell only produce an instruction.
+
+
+
+
+
+
+
 local ADDON_NAME, FGPS = ...
 
 local L = FGPS.L
 local Util = FGPS.Util
 local Events = FGPS.Events
 local Const = FGPS.Const
-local sqrt, type, pairs, ipairs, tostring, tonumber = math.sqrt, type, pairs, ipairs, tostring, tonumber
+local sqrt, type, pairs, ipairs, tostring, tonumber, format = math.sqrt, type, pairs, ipairs, tostring, tonumber, string.format
 
 local Personal = {
     HEARTH_ITEM = 6948,
+    HEARTH_SPELL = 8690,
+    LAST_BAG = 5,
     ASTRAL_RECALL = 556,
-    GCD_SECONDS = 1.5,            -- cooldowns at or below this are the global cooldown, not the spell's
-    TOWN_INN_RADIUS = 300,        -- an inn this close to a matching town POI is preferred as the arrival point
-    CAPITAL_INN_RADIUS = 700,     -- capitals are large; their inn can be several hundred yards from the city marker
-    bindCache = {},               -- bind name -> resolved position (false when unresolved)
-    spellIndex = nil,             -- spellID -> poiIndex
+    GCD_SECONDS = 1.5,
+    TOWN_INN_RADIUS = 300,
+    CAPITAL_INN_RADIUS = 700,
+    bindCache = {},
+    spellIndex = nil,
+    hearthItems = {},
+    hearthState = nil,
 }
 FGPS.Personal = Personal
+
+
+
+
+Personal.HEARTH_TOYS = {
+    54452, 64488, 93672, 142542, 162973, 163045, 165669, 165670, 165802, 166746, 166747,
+    168907, 172179, 188952, 190237, 193588, 200630, 206195, 208704, 209035, 212337,
+}
 
 Personal.CLASS_SPELLS = {
     MAGE = { 3561, 3562, 3565, 3563, 3566, 3567 },
@@ -37,10 +49,10 @@ Personal.CAST_SECONDS = { [556] = 10, [3561] = 10, [3562] = 10, [3565] = 10, [35
 
 local POI_INN, POI_TOWN, POI_CAPITAL, POI_GRAVEYARD, POI_PORTAL = 7, 1, 5, 16, 17
 
--- GetBindLocation returns the area the inn stands in; for the capitals that is a district name
--- rather than the city, so those districts are mapped to their city before the lookup. Four inns
--- with an innkeeper are areas of their own in AreaTable, so a bind there names the inn, which no
--- POI is called; they are mapped to their town.
+
+
+
+
 Personal.BIND_ALIASES = {
     ["trade district"] = "Stormwind", ["the commons"] = "Ironforge", ["valley of strength"] = "Orgrimmar",
     ["trade quarter"] = "The Undercity", ["craftsmen's terrace"] = "Darnassus", ["lower rise"] = "Thunder Bluff",
@@ -57,10 +69,17 @@ end
 
 local function lower(s) return Util.Lower(s) end
 
--------------------------------------------------------------------------------
--- Cooldowns and spell knowledge
--------------------------------------------------------------------------------
--- Normalises (start, duration) into ready/remaining; durations up to the GCD count as ready.
+
+local function plain(v)
+    if v == nil then return nil end
+    if issecretvalue and issecretvalue(v) then return nil end
+    return v
+end
+
+
+
+
+
 local function readiness(start, duration)
     start, duration = tonumber(start) or 0, tonumber(duration) or 0
     if duration <= Personal.GCD_SECONDS then return true, 0 end
@@ -70,9 +89,9 @@ local function readiness(start, duration)
 end
 Personal.Readiness = readiness
 
--- Both item cooldown APIs are marked secret:AllowedWhenUntainted in the Forever signatures, so a
--- tainted call can hand back values that must never reach arithmetic (readiness() adds them up).
--- A secret value means "unknown", which here is the same answer as "no cooldown".
+
+
+
 local function itemCooldown(itemID)
     if C_Container and C_Container.GetItemCooldown then
         local ok, start, duration = pcall(C_Container.GetItemCooldown, itemID)
@@ -141,9 +160,9 @@ local function playerClass()
     return nil
 end
 
--------------------------------------------------------------------------------
--- POI lookups
--------------------------------------------------------------------------------
+
+
+
 local function poi() return FGPS.Data and FGPS.Data.poi or nil end
 
 local function positionFromPOI(i)
@@ -158,11 +177,11 @@ local function positionFromPOI(i)
     return pos
 end
 
--- Spell -> arrival POI (type 17). Uses the generated spell table when present, else the src text.
+
 local function spellArrival(spellID)
     local P = poi()
     if not P then return nil end
-    -- Built once per POI table (the compiled data never changes in the client; tests swap it).
+
     if not Personal.spellIndex or Personal.spellIndexSource ~= P then
         Personal.spellIndexSource = P
         local index = {}
@@ -194,12 +213,12 @@ local function zoneIndexByName(name)
     return nil
 end
 
--- Resolves GetBindLocation() text to a world position using inns, towns, capitals and graveyards.
+
 function Personal.ResolveBind(bindName)
     if type(bindName) ~= "string" or Util.Trim(bindName) == "" then return nil end
     local P = poi()
     if Personal.bindCacheSource ~= P then
-        -- Another POI table (a test fixture, a data reload): cached positions belong to the old one.
+
         wipe(Personal.bindCache)
         Personal.bindCacheSource = P
     end
@@ -227,7 +246,7 @@ function Personal.ResolveBind(bindName)
     if innExact then
         result = positionFromPOI(innExact)
     elseif townExact then
-        -- Prefer the inn next to the town: that is where the hearth actually lands.
+
         local best, bestD
         local radius = types[townExact] == POI_CAPITAL and Personal.CAPITAL_INN_RADIUS or Personal.TOWN_INN_RADIUS
         for i = 1, P.n do
@@ -238,7 +257,7 @@ function Personal.ResolveBind(bindName)
         end
         result = positionFromPOI(best or townExact)
     else
-        -- Zone name (e.g. "Stormwind City"): the inn of that zone, nearest to its capital/town POI.
+
         local zoneIdx = zoneIndexByName(q)
         if zoneIdx then
             local anchor
@@ -258,10 +277,10 @@ function Personal.ResolveBind(bindName)
         if not result and innContains then result = positionFromPOI(innContains) end
     end
     Personal.bindCache[bindName] = result or false
-    -- Once per text (the answer is cached): what the client called the bind, exactly as given, and
-    -- where it led. The last lines of the log are written to the saved variables at every logout
-    -- (CabbieDB.lastSession), so a bind that resolves to nothing on Forever can be read back there
-    -- or with /cabbie log and given an alias.
+
+
+
+
     if FGPS.Log then
         if result then
             FGPS.Log:Info('Hearth bind location "%s" resolved to %s', bindName, tostring(result.poiName))
@@ -272,26 +291,209 @@ function Personal.ResolveBind(bindName)
     return result
 end
 
--------------------------------------------------------------------------------
--- Options
--------------------------------------------------------------------------------
--- GetBindLocation() as a plain string, or nil when the API is missing, fails, returns something
--- else than text or returns a secret value (docs/ARCHITECTURE.md section 6: a secret value means
--- "unknown"; it is never trimmed, lower-cased or used as a table key). The one reader: the
--- hearthstone fallback of Nav/Access.lua reads it through here too.
-local function bindLocation()
-    if not GetBindLocation then return nil end
+
+
+
+
+
+
+
+
+local function readBind()
+    if not GetBindLocation then return nil, "missing" end
     local ok, name = pcall(GetBindLocation)
-    if not ok or name == nil then return nil end
-    if issecretvalue and issecretvalue(name) then return nil end
-    if type(name) ~= "string" then return nil end
-    return name
+    if not ok then return nil, "an error" end
+    if name == nil then return nil, "nil" end
+    if issecretvalue and issecretvalue(name) then return nil, "secret" end
+    if type(name) ~= "string" then return nil, "not text" end
+    return name, "text"
 end
+local function bindLocation() return (readBind()) end
 Personal.BindLocation = bindLocation
 
--- Cast time for one teleport: what Nav/Calibrate.lua timed on this character when it has seen the
--- cast, the table constant otherwise. The loading screen is not in here; the cost model adds that
--- separately and Calibrate corrects it on the finished route.
+
+
+
+
+
+
+
+
+
+
+Personal.LANDING_SPELLS = { [8690] = true, [556] = true }
+Personal.LANDING_JUMP_YARDS = 40
+Personal.LANDING_TICK_SECONDS = 0.5
+Personal.LANDING_SECONDS = 30
+Personal.CONFIRM_SECONDS = 120
+Personal.CONFIRM_YARDS = 30
+
+local function charStore()
+    local DB = FGPS.DB
+    if DB and type(DB.char) == "table" then return DB.char end
+    Personal.volatileChar = Personal.volatileChar or {}
+    return Personal.volatileChar
+end
+
+local function playerGUID()
+    if not UnitGUID then return nil end
+    local ok, guid = pcall(UnitGUID, "player")
+    guid = ok and plain(guid) or nil
+    return type(guid) == "string" and guid ~= "" and guid or nil
+end
+
+local function textOf(fn)
+    if not fn then return nil end
+    local ok, s = pcall(fn)
+    s = ok and plain(s) or nil
+    return type(s) == "string" and s ~= "" and s or nil
+end
+
+local function serverNow()
+    if not GetServerTime then return nil end
+    local ok, v = pcall(GetServerTime)
+    return ok and tonumber(plain(v)) or nil
+end
+
+local function playerPosition()
+    local Coords = FGPS.Coords
+    if not (Coords and Coords.PlayerPos) then return nil end
+    local ok, pos = pcall(Coords.PlayerPos)
+    if ok and type(pos) == "table" and type(pos.inst) == "number" and type(pos.x) == "number" and type(pos.y) == "number" then return pos end
+    return nil
+end
+
+
+
+function Personal.LearnedBind()
+    local rec = charStore().hearthBind
+    if type(rec) ~= "table" or type(rec.inst) ~= "number" or type(rec.x) ~= "number" or type(rec.y) ~= "number" then return nil end
+    local me = playerGUID()
+    if rec.owner and me and rec.owner ~= me then return nil end
+    return rec
+end
+
+local HOW_WORDS = { bound = "a bind at an inn", landed = "a hearth landing" }
+
+
+
+function Personal.LearnBind(how, name)
+    local pos = playerPosition()
+    if not pos then
+        if FGPS.Log then FGPS.Log:Info("Hearthstone: %s seen, but the client gave no position to learn it from", HOW_WORDS[how] or tostring(how)) end
+        return nil
+    end
+    local zone = textOf(GetRealZoneText) or textOf(GetZoneText)
+    local subZone = textOf(GetSubZoneText)
+    local text = bindLocation()
+    local label = name or text or subZone or zone
+    if label and Personal.BIND_ALIASES[lower(label)] then label = Personal.BIND_ALIASES[lower(label)] end
+    local rec = { inst = pos.inst, x = Util.Round(pos.x, 1), y = Util.Round(pos.y, 1), map = pos.map, zone = zone, subZone = subZone,
+                  name = label, bindText = text, how = how, at = serverNow(), owner = playerGUID() }
+    charStore().hearthBind = rec
+    Personal.InvalidateBind()
+    local Access = FGPS.Access
+    if Access and Access.Invalidate then Access:Invalidate() end
+    if FGPS.Log then
+        FGPS.Log:Info("Hearthstone landing learned from %s: %s (%s / %s) at %d %.0f %.0f", HOW_WORDS[how] or tostring(how), tostring(label),
+            tostring(zone), tostring(subZone), rec.inst, rec.x, rec.y)
+    end
+    return rec
+end
+
+
+function Personal.StopLandingWatch()
+    local watch = Personal.landingWatch
+    Personal.landingWatch = nil
+    if watch and watch.ticker then watch.ticker:Cancel() end
+end
+
+
+
+
+
+function Personal.OnBound()
+    local confirm = Personal.confirm
+    Personal.confirm = nil
+    Personal.InvalidateBind()
+    local pos = playerPosition()
+    local asked = confirm and now() - confirm.at <= Personal.CONFIRM_SECONDS
+    if asked and confirm.pos and pos then
+        asked = pos.inst == confirm.pos.inst and dist(pos.x, pos.y, confirm.pos.x, confirm.pos.y) <= Personal.CONFIRM_YARDS
+    end
+    if asked then return Personal.LearnBind("bound", confirm.name) end
+    if FGPS.Log and not Personal.unaskedLogged then
+        Personal.unaskedLogged = true
+        FGPS.Log:Info("Hearthstone: HEARTHSTONE_BOUND came without the innkeeper's question just before, here; nothing learned from it")
+    end
+    return nil
+end
+
+
+
+
+
+function Personal.CheckLanding()
+    local watch = Personal.landingWatch
+    if not watch then return nil end
+    local pos = playerPosition()
+    local from = watch.from
+    if pos and (watch.loaded or (from and (pos.inst ~= from.inst or dist(pos.x, pos.y, from.x, from.y) > Personal.LANDING_JUMP_YARDS))) then
+        Personal.StopLandingWatch()
+        return Personal.LearnBind("landed")
+    end
+    if now() - watch.since > Personal.LANDING_SECONDS then
+        Personal.StopLandingWatch()
+        if FGPS.Log then FGPS.Log:Info("Hearthstone: no landing seen within %d s of the cast", Personal.LANDING_SECONDS) end
+        return nil
+    end
+    if pos then watch.from = pos end
+    return nil
+end
+
+function Personal.WatchLanding()
+    Personal.StopLandingWatch()
+    local watch = { since = now(), from = playerPosition() }
+    Personal.landingWatch = watch
+    if C_Timer and C_Timer.NewTicker then
+        watch.ticker = C_Timer.NewTicker(Personal.LANDING_TICK_SECONDS, function() Personal.CheckLanding() end)
+    end
+end
+
+
+
+local function worldEntered()
+    local watch = Personal.landingWatch
+    if not watch then return end
+    watch.loaded, watch.since = true, now()
+    Personal.CheckLanding()
+end
+
+local function learnedPosition(rec)
+    local pos = { inst = rec.inst, x = rec.x, y = rec.y, map = rec.map, zoneName = rec.zone, poiName = rec.name }
+    local D = FGPS.Destinations
+    if D and D.WorldToMap then
+        local map, mx, my = D.WorldToMap(pos.inst, pos.x, pos.y, pos.map)
+        if map then pos.map, pos.mx, pos.my = map, mx, my end
+    end
+    return pos
+end
+
+
+
+
+local function landing(bindName)
+    local pos = Personal.ResolveBind(bindName)
+    if pos then return pos, "resolved" end
+    local rec = Personal.LearnedBind()
+    if not rec then return nil, "unknown" end
+    if bindName and rec.bindText and rec.bindText ~= bindName then return nil, "stale" end
+    return learnedPosition(rec), "learned", rec
+end
+
+
+
+
 local function measuredCast(id, fallback)
     local Calibrate = FGPS.Calibrate
     if Calibrate and Calibrate.TeleportSeconds then
@@ -301,19 +503,117 @@ local function measuredCast(id, fallback)
     return fallback
 end
 
+
+
+local function castsHearth(itemID)
+    if itemID == Personal.HEARTH_ITEM then return true end
+    local known = Personal.hearthItems[itemID]
+    if known ~= nil then return known end
+    if not (C_Item and C_Item.GetItemSpell) then return false end
+    local ok, _, spellID = pcall(C_Item.GetItemSpell, itemID)
+    spellID = ok and tonumber(plain(spellID)) or nil
+    if not spellID then return false end
+    Personal.hearthItems[itemID] = spellID == Personal.HEARTH_SPELL
+    return Personal.hearthItems[itemID]
+end
+
+local function hearthInBags()
+    if not (C_Container and C_Container.GetContainerNumSlots and C_Container.GetContainerItemID) then return nil end
+    for bag = 0, Personal.LAST_BAG do
+        local ok, slots = pcall(C_Container.GetContainerNumSlots, bag)
+        slots = ok and tonumber(plain(slots)) or 0
+        for slot = 1, slots do
+            local okItem, itemID = pcall(C_Container.GetContainerItemID, bag, slot)
+            itemID = okItem and tonumber(plain(itemID)) or nil
+            if itemID and castsHearth(itemID) then return itemID end
+        end
+    end
+    return nil
+end
+
+local function hearthToy()
+    if not PlayerHasToy then return nil end
+    for _, toyID in ipairs(Personal.HEARTH_TOYS) do
+        local ok, has = pcall(PlayerHasToy, toyID)
+        if ok and plain(has) then
+            local usable = true
+            if C_ToyBox and C_ToyBox.IsToyUsable then
+                local okUse, can = pcall(C_ToyBox.IsToyUsable, toyID)
+                if okUse and plain(can) == false then usable = false end
+            end
+            if usable then return toyID end
+        end
+    end
+    return nil
+end
+
+
+
+
+
+
+local function findHearthstone()
+    local said = "missing"
+    if C_Container and C_Container.PlayerHasHearthstone then
+        local ok, id = pcall(C_Container.PlayerHasHearthstone)
+        if not ok then said = "an error"
+        elseif id == nil then said = "nil"
+        elseif issecretvalue and issecretvalue(id) then said = "a secret value"
+        else
+            said = tostring(id)
+            if id then return tonumber(id) or Personal.HEARTH_ITEM, "client", said end
+        end
+    end
+    local id = hearthInBags()
+    if id then return id, "bags", said end
+    id = hearthToy()
+    if id then return id, "toy", said end
+    return nil, nil, said
+end
+
+
+
+
+local LANDING_WORDS = {
+    resolved = "found by its name in the navigation data", stale = "unknown (learned under another bind text)",
+    unknown = "unknown (not learned yet)",
+}
+local function logCheck(s)
+    if not FGPS.Log then return end
+    local item
+    if s.found == "client" then item = format("item %d named by the client", s.item)
+    elseif s.found == "bags" then item = format("item %d found in the bags", s.item)
+    elseif s.found == "toy" then item = format("toy %d found in the toy box", s.item)
+    else item = "no hearthstone in the bags or the toy box" end
+    local bind = s.bind == "text" and format('"%s"', s.bindName) or s.bind
+    local land = s.landing == "learned" and ("learned from " .. (HOW_WORDS[s.learned] or "?")) or LANDING_WORDS[s.landing] or tostring(s.landing)
+    local line = format("Hearthstone check: PlayerHasHearthstone gave %s, %s; GetBindLocation gave %s; landing %s", s.said, item, bind, land)
+    if line == Personal.hearthLogged then return end
+    Personal.hearthLogged = line
+    FGPS.Log:Info("%s", line)
+end
+
+
+
+
 function Personal.Hearth()
-    if not (C_Container and C_Container.PlayerHasHearthstone) then return nil end
-    local ok, itemID = pcall(C_Container.PlayerHasHearthstone)
-    if not ok or not itemID then return nil end
+    local itemID, found, said = findHearthstone()
+    local bindName, bindWord = readBind()
+    local pos, how, rec = landing(bindName)
+    Personal.hearthState = { item = itemID, found = found, said = said, bind = bindWord, bindName = bindName, landing = how,
+                             learned = rec and rec.how or nil }
+    logCheck(Personal.hearthState)
+    if not itemID then return nil end
     local start, duration = itemCooldown(itemID)
     local ready, remaining = readiness(start, duration)
-    local bindName = bindLocation()
     local opt = { kind = "hearth", id = itemID, name = L["Hearthstone"], bindName = bindName, ready = ready, cdRemaining = remaining,
-                  castSeconds = measuredCast("hearth", Const.HEARTH_CAST_SECONDS or 10), known = true }
-    local pos = Personal.ResolveBind(bindName)
+                  castSeconds = measuredCast("hearth", Const.HEARTH_CAST_SECONDS or 10), known = true, landing = how }
     if pos then
         opt.inst, opt.x, opt.y, opt.map, opt.mx, opt.my = pos.inst, pos.x, pos.y, pos.map, pos.mx, pos.my
         opt.zoneName, opt.poiIndex, opt.targetName = pos.zoneName, pos.poiIndex, pos.poiName
+
+
+        opt.placeName = how == "resolved" and bindName or pos.poiName or pos.zoneName
         opt.routable = true
     else
         opt.routable = false
@@ -323,7 +623,7 @@ function Personal.Hearth()
     return opt
 end
 
--- Options(access?) -> { {kind = "hearth"|"spell", id, name, inst, x, y, map, ready, cdRemaining, castSeconds, known, routable} }
+
 function Personal.Options()
     local out = {}
     local hearth = Personal.Hearth()
@@ -342,7 +642,7 @@ function Personal.Options()
                     pos = { inst = hearth.inst, x = hearth.x, y = hearth.y, map = hearth.map, mx = hearth.mx, my = hearth.my,
                             zoneName = hearth.zoneName, poiIndex = hearth.poiIndex, poiName = hearth.targetName }
                 else
-                    pos = Personal.ResolveBind(hearth and hearth.bindName or bindLocation())
+                    pos = landing(hearth and hearth.bindName or bindLocation())
                 end
                 opt.bindName = hearth and hearth.bindName or nil
             else
@@ -363,18 +663,45 @@ function Personal.Options()
     return out
 end
 
+
+
+function Personal.HearthNote()
+    local opt = Personal.Hearth()
+    if not opt then return L["Hearthstone not used: no hearthstone in your bags."] end
+    if not opt.routable then
+        return L["Hearthstone not used: Cabbie learns where your hearthstone takes you the first time you use it or bind at an inn."]
+    end
+    local remaining = tonumber(opt.cdRemaining) or 0
+    if not opt.ready and remaining >= (Const.TELEPORT_MAX_WAIT or 120) then
+        return format(L["Hearthstone not used: on cooldown for %d min."], math.ceil(remaining / 60))
+    end
+    return nil
+end
+
 function Personal.InvalidateBind()
     wipe(Personal.bindCache)
 end
 
--------------------------------------------------------------------------------
--- Init
--------------------------------------------------------------------------------
+
+
+
 function Personal:Init()
     if self.initialised then return end
     self.initialised = true
-    Events:RegisterWoW("HEARTHSTONE_BOUND", function() Personal.InvalidateBind() end, self)
-    -- DATA_LOADED is not listened to: it fires whenever an instance graph is indexed (several times
-    -- per session) while the spell index and the bind cache depend on the POI table only; both
-    -- notice a replaced POI table by themselves (spellIndexSource / bindCacheSource).
+
+
+
+    Events:RegisterWoW("CONFIRM_BINDER", function(_, areaName)
+        areaName = plain(areaName)
+        Personal.confirm = { name = type(areaName) == "string" and areaName ~= "" and areaName or nil, at = now(),
+                             pos = playerPosition() }
+    end, self)
+    Events:RegisterWoW("HEARTHSTONE_BOUND", function() Personal.OnBound() end, self)
+    Events:RegisterUnitWoW("UNIT_SPELLCAST_SUCCEEDED", "player", function(_, unit, _, spellID)
+        if unit == "player" and Personal.LANDING_SPELLS[tonumber(plain(spellID)) or 0] then Personal.WatchLanding() end
+    end, self)
+    Events:Register("WORLD_ENTERED", worldEntered, self)
+
+
+
 end

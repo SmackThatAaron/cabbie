@@ -129,6 +129,7 @@ local function setDotInset(icon, inset)
 end
 
 
+
 local function styleDot(icon, unverified, vr, vg, vb, ur, ug, ub)
     icon.unverified = unverified and true or false
     if unverified then
@@ -179,8 +180,7 @@ end
 
 
 
-
-local UNVERIFIED_KINDS = { [3] = true, [4] = true, [14] = true, [15] = true, [19] = true }
+local UNVERIFIED_KINDS = { [3] = true, [14] = true, [15] = true, [19] = true }
 
 local function unverifiedKinds()
     local Route = FGPS.Route
@@ -359,6 +359,7 @@ function Minimap.SampleDots(route, progress, pos, radius, maxDots, out)
                                 end
                                 entry.inst, entry.x, entry.y = inst, sx, sy
                                 entry.unverified = segUnverified
+                                entry.k = p.k
                                 if count >= maxDots then return dots, count end
                             end
                             t = t + spacing

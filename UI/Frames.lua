@@ -52,8 +52,6 @@ local FALLBACK_SKIN = {
                titleBar = { 0.1, 0.1, 0.1, 1 } },
     backdrop = { bgFile = WHITE, edgeFile = WHITE, edgeSize = 1, insets = { left = 1, right = 1, top = 1, bottom = 1 } },
     buttonBackdrop = { bgFile = WHITE, edgeFile = WHITE, edgeSize = 1, insets = { left = 1, right = 1, top = 1, bottom = 1 } },
-    arrowTexture = "Interface\\AddOns\\Cabbie\\Media\\arrow_minimal", arrowSize = 40,
-    ringTexture = "Interface\\AddOns\\Cabbie\\Media\\ring",
     panelAlpha = 0.9, titleHeight = 20, inset = 8, titleBarStyle = "flat", sliderStyle = "flat",
 }
 
@@ -263,7 +261,7 @@ local function applyButtonSkin(b, skin)
     if b.Text then
         Frames.SetFont(b.Text, skin, b.fgpsKind or "normal")
         if b:IsEnabled() then
-            setTextColor(b.Text, skin, b.fgpsPrimary and "accent" or (skin.name == "classic" and "title" or "text"))
+            setTextColor(b.Text, skin, b.fgpsPrimary and "accent" or "text")
         else
             setTextColor(b.Text, skin, "textDim")
         end
@@ -474,7 +472,7 @@ local function applyDropdownSkin(dd, skin)
     applyBackdrop(dd, skin.buttonBackdrop or skin.backdrop,
         dd.fgpsHover and color(skin, "buttonHover") or color(skin, "button"), color(skin, "buttonBorder"))
     Frames.SetFont(dd.Text, skin, "normal")
-    setTextColor(dd.Text, skin, skin.name == "classic" and "title" or "text")
+    setTextColor(dd.Text, skin, "text")
     if dd.Menu then
         applyBackdrop(dd.Menu, skin.backdrop, color(skin, "bg"), color(skin, "border"))
         for _, row in ipairs(dd.Menu.rows) do
