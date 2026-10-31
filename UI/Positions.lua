@@ -15,7 +15,7 @@
 -- shows the derivation).
 local ADDON_NAME, FGPS = ...
 
-local type, pairs, tostring, tonumber = type, pairs, tostring, tonumber
+local type, pairs, tostring = type, pairs, tostring
 local floor, abs = math.floor, math.abs
 
 local Positions = {
@@ -65,10 +65,6 @@ function Positions.Get(key, layoutName)
     local record = s and s[key]
     if type(record) == "table" then return record end
     return nil
-end
-
-function Positions.Has(key, layoutName)
-    return Positions.Get(key, layoutName) ~= nil
 end
 
 -------------------------------------------------------------------------------
@@ -279,22 +275,28 @@ function Positions.IsRegistered(key)
     return Positions.registry[key] ~= nil
 end
 
--- Forgets the stored position of one key in every layout and the windows table, then restores the
--- default on the live frame. Fires POSITIONS_RESET(key) through the DB when available.
-function Positions.Reset(key)
+-- Forgets the stored position of one key. layoutName forgets only that Edit Mode layout;
+-- omitted, every layout and the windows table. Then the live frame goes back to its default.
+-- Fires POSITIONS_RESET(key) through the DB when available.
+function Positions.Reset(key, layoutName)
     assert(type(key) == "string" and key ~= "", "Positions.Reset: key must be a non-empty string")
     local db = FGPS.DB
     if db and db.account and db.ResetElementPosition then
-        db:ResetElementPosition(key)        -- fires POSITIONS_RESET(key); our handler re-applies defaults
+        db:ResetElementPosition(key, layoutName) -- fires POSITIONS_RESET(key); our handler re-applies defaults
     else
         local acc = account()
         if acc then
-            if type(acc.positions) == "table" then
+            if layoutName ~= nil then
+                local layout = type(acc.positions) == "table" and acc.positions[layoutName]
+                if type(layout) == "table" then layout[key] = nil end
+            elseif type(acc.positions) == "table" then
                 for _, layout in pairs(acc.positions) do
                     if type(layout) == "table" then layout[key] = nil end
                 end
+                if type(acc.windows) == "table" then acc.windows[key] = nil end
+            elseif type(acc.windows) == "table" then
+                acc.windows[key] = nil
             end
-            if type(acc.windows) == "table" then acc.windows[key] = nil end
         end
         if FGPS.Events then FGPS.Events:Fire("POSITIONS_RESET", key) end
     end

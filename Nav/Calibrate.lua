@@ -63,6 +63,7 @@ local Calibrate = {
     TAKEOFF_YARDS = 60,
     CAST_MAX_SECONDS = 60,
     LOAD_MAX_SECONDS = 180,
+    TELEPORT_LEAVE_SECONDS = 5,
     PHASE_MAX_AGE = 2 * 3600,
     TELEPORT_SPELLS = {
         [8690] = "hearth",
@@ -435,6 +436,36 @@ end
 
 
 
+
+
+
+function Calibrate.NoteRide(transportID, fromStop, toStop, seconds, boardedAt)
+    if not FGPS:IsOwnerInstall() then return nil end
+    seconds = tonumber(seconds)
+    if transportID == nil or fromStop == nil or toStop == nil or fromStop == toStop or not seconds or seconds <= 0 then
+        return nil
+    end
+    local records = FGPS.Data and FGPS.Data.transports
+    local rec = type(records) == "table" and records[transportID] or nil
+    local stops = type(rec) == "table" and rec.stops or nil
+    if type(stops) ~= "table" or stops[fromStop] == nil or stops[toStop] == nil then return nil end
+    local account = accountStore()
+    if type(account.rides) ~= "table" then account.rides = {} end
+    local byPair = account.rides[transportID]
+    if type(byPair) ~= "table" then byPair = {} account.rides[transportID] = byPair end
+    local est = record(byPair, fromStop .. ">" .. toStop, Util.Round(seconds, 1))
+    if est and type(boardedAt) == "table" and boardedAt.x and boardedAt.y then
+        est.boarded = { inst = boardedAt.inst, x = Util.Round(boardedAt.x, 1), y = Util.Round(boardedAt.y, 1) }
+    end
+    return est
+end
+
+
+
+
+
+
+
 function Calibrate.SeedTransportPhases()
     local Transport = FGPS.Transport
     if not Transport or type(Transport.phases) ~= "table" then return 0 end
@@ -510,20 +541,38 @@ function Calibrate.OnSpellcastSucceeded(unit, _, spellID)
 end
 
 
+local function fileTeleport(pending, load)
+    local cast = pending.done - pending.start
+    local castOk = cast >= 0 and cast <= Calibrate.CAST_MAX_SECONDS
+    if not castOk and not load then return cast end
+    local entry, store = teleportEntry(pending.id)
+    if castOk then record(entry, "cast", cast) end
+    if load then record(entry, "load", load) end
+    capEntries(store, Calibrate.MAX_TELEPORTS)
+    invalidateRoutes()
+    return cast
+end
+
+
+
+
+
+function Calibrate.OnLeavingWorld()
+    local pending = Calibrate.cast
+    if not pending or not pending.done or now() - pending.done <= Calibrate.TELEPORT_LEAVE_SECONDS then return nil end
+    Calibrate.cast = nil
+    return fileTeleport(pending, nil)
+end
+
+
 
 function Calibrate.OnWorldEntered()
     local pending = Calibrate.cast
     Calibrate.cast = nil
     if not pending or not pending.done then return nil end
     local load = now() - pending.done
-    local cast = pending.done - pending.start
     if load < 0 or load > Calibrate.LOAD_MAX_SECONDS then return nil end
-    local entry, store = teleportEntry(pending.id)
-    if cast >= 0 and cast <= Calibrate.CAST_MAX_SECONDS then record(entry, "cast", cast) end
-    record(entry, "load", load)
-    capEntries(store, Calibrate.MAX_TELEPORTS)
-    invalidateRoutes()
-    return load, cast
+    return load, fileTeleport(pending, load)
 end
 
 
@@ -552,8 +601,12 @@ function Calibrate.ApplyToRoute(route)
     local used = { flights = 0, transports = 0, teleports = 0, ground = false }
 
 
+
+
     local a = type(route.assumptions) == "table" and route.assumptions or nil
-    local conditions = a and { hasMount = a.hasMount, mountSpeed = a.mountSpeed, canMount = true } or nil
+    local costed = a and tonumber(a.groundSpeed)
+    local conditions = a and { hasMount = a.hasMount, mountSpeed = a.mountSpeed,
+                               canMount = costed == nil or costed > (Const.RUN_SPEED or 7) } or nil
     local groundSpeed, groundSamples, groundState = Calibrate.GroundSpeed(conditions)
     local groundFactor
     if groundSpeed then
@@ -583,7 +636,10 @@ function Calibrate.ApplyToRoute(route)
                 leg.penaltySeconds = 0
                 used.flights = used.flights + 1
             end
-        elseif leg.kind == "boat" or leg.kind == "zeppelin" or leg.kind == "ferry" then
+        elseif (leg.kind == "boat" or leg.kind == "zeppelin" or leg.kind == "ferry") and not leg.aboard then
+
+
+
             local rec = transportRecord(leg.transportID)
             local period = rec and tonumber(rec.period)
             local stopIndex = Transport and Transport.LegStopIndex and Transport.LegStopIndex(leg, "stopFrom") or nil
@@ -702,6 +758,7 @@ function Calibrate.Reset(what)
     end
     if what == "all" or what == "transports" then
         wipe(account.transports)
+        if type(account.rides) == "table" then wipe(account.rides) end
         local Transport = FGPS.Transport
         if Transport and type(Transport.phases) == "table" then wipe(Transport.phases) end
         done[#done + 1] = "transports"
@@ -737,7 +794,7 @@ local function printReport()
     local teleports = 0
     for _ in pairs(r.teleports) do teleports = teleports + 1 end
     FGPS:Print(L["  teleports: cast and loading times for %d of them"], teleports)
-    FGPS:Print(L["Use /cabbie calibrate reset [ground|flights|transports|teleports] to forget measurements."])
+    FGPS:Print(FGPS.Util.EscapeBars(L["Use /cabbie calibrate reset [ground|flights|transports|teleports] to forget measurements."]))
 end
 
 local function slash(args)
@@ -774,6 +831,7 @@ function Calibrate:Init()
     Events:RegisterUnitWoW("UNIT_SPELLCAST_SUCCEEDED", "player", function(_, unit, castGUID, spellID)
         Calibrate.OnSpellcastSucceeded(unit, castGUID, spellID)
     end, self)
+    Events:RegisterWoW("PLAYER_LEAVING_WORLD", function() Calibrate.OnLeavingWorld() end, self)
     Events:Register("WORLD_ENTERED", function() Calibrate.OnWorldEntered() end, self)
 
 

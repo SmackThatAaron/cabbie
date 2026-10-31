@@ -132,17 +132,26 @@ local function navigatorStops()
 end
 
 
+
+
+
+
+
 local function currentStopIndex(stops)
     local Navigator = FGPS.Navigator
     if not Navigator or not Navigator.GetRoute or not Navigator.GetProgress then return nil end
     local okR, route = pcall(Navigator.GetRoute, Navigator)
     local okP, progress = pcall(Navigator.GetProgress, Navigator)
     if not (okR and okP and type(route) == "table" and type(progress) == "table" and type(route.stops) == "table") then return nil end
+    local Destinations = FGPS.Destinations
+    local equal = Destinations and Destinations.Equal
     local legIndex = progress.legIndex or 1
-    for i, stop in ipairs(route.stops) do
-        if stop.legTo and legIndex <= stop.legTo then
-            if i <= #stops then return i end
-            return nil
+    for _, stop in ipairs(route.stops) do
+        local dest = stop.dest
+        if stop.legTo and legIndex <= stop.legTo and type(dest) == "table" then
+            for i = 1, #stops do
+                if stops[i] == dest or (equal and equal(stops[i], dest)) then return i end
+            end
         end
     end
     return nil
@@ -189,6 +198,19 @@ function Itinerary.RenderRow(row, item, index)
     setButtonEnabled(row.down, not item.last)
 end
 
+
+
+
+local function emptyText()
+    local UI = FGPS.UI or {}
+    local UISettings, WorldMap = UI.Settings, UI.WorldMap
+    local settings = FGPS.DB and FGPS.DB.settings
+    local click = WorldMap and WorldMap.clickHandler and UISettings and UISettings.MapClickLabel
+        and UISettings.MapClickLabel(settings and settings.mapClickModifier or "CTRL_RIGHT")
+    if not click then return L["No stops yet. Open Search and press Add stop."] end
+    return format(L["No stops yet. Open Search and press Add stop, or %s a place on the world map."], click)
+end
+
 function Itinerary:Refresh()
     if not self.window then return end
     self.stops = navigatorStops()
@@ -201,7 +223,7 @@ function Itinerary:Refresh()
     setButtonEnabled(w.fgpsButtons.cancel, #self.stops >= 1)
     self:UpdateOptimizeState()
     if #self.stops == 0 and w.fgpsStatus and not self.optimizeArmedAt then
-        w.fgpsStatus:SetText(L["No stops yet. Open Search and press Add stop, or right-click a place on the map."])
+        w.fgpsStatus:SetText(emptyText())
     end
 end
 
@@ -247,6 +269,16 @@ function Itinerary:Optimize()
     if not self.optimizeArmedAt or now() - self.optimizeArmedAt > OPTIMIZE_CONFIRM_SECONDS then
         self.optimizeArmedAt = now()
         self:UpdateOptimizeState()
+
+
+
+        local armedAt = self.optimizeArmedAt
+        if C_Timer and C_Timer.After then
+            C_Timer.After(OPTIMIZE_CONFIRM_SECONDS + 0.05, function()
+                if Itinerary.optimizeArmedAt ~= armedAt then return end
+                Itinerary:UpdateOptimizeState()
+            end)
+        end
         return false
     end
     self.optimizeArmedAt = nil
@@ -406,12 +438,23 @@ function Itinerary:Init()
     Events:Register("NAV_ARRIVED", function(_, _, isFinal)
         if isFinal ~= false then onJourneyEnded() elseif Itinerary:IsShown() then Itinerary:Refresh() end
     end, self)
+
+
+    local function onRoute() if Itinerary:IsShown() then Itinerary:Refresh() end end
+    Events:Register("ROUTE_STARTED", onRoute, self)
+    Events:Register("ROUTE_UPDATED", onRoute, self)
+
+    Events:Register("SETTINGS_CHANGED", function(_, key)
+        if (key == "mapClickModifier" or key == "*") and Itinerary:IsShown() then Itinerary:Refresh() end
+    end, self)
     FGPS.Slash.Register("stops", function(args)
         local word = Util.Lower(Util.Trim(args))
         if word == "skip" then Itinerary:SkipStop()
         elseif word == "clear" then
+
+
             local Navigator = FGPS.Navigator
-            if Navigator and Navigator.ClearStops then Navigator:ClearStops() end
+            if Navigator and Navigator.Clear then Navigator:Clear("user") end
         else Itinerary:Toggle() end
     end, L["Stops window; skip|clear"])
 end

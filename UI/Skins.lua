@@ -5,10 +5,9 @@
 -- UI/Frames.lua and the HUD modules:
 --
 --   { name, label, font, titleFont, fontSize, smallFontSize, largeFontSize, titleFontSize,
---     colors = { bg, border, text, textDim, title, accent, routeVerified, routeUnverified, arrow,
---                button, buttonHover, buttonBorder, selection, highlight, editBox, titleBar },
---     backdrop, buttonBackdrop, dotTexture, pinTexture,
---     buttonTemplate, panelAlpha, titleHeight, inset, closeButtonTemplate }
+--     colors = { bg, border, text, textDim, title, accent, routeVerified, routeUnverified,
+--                routeTransport, button, buttonHover, buttonBorder, selection, highlight, editBox, titleBar },
+--     backdrop, buttonBackdrop, panelAlpha, titleHeight, inset, closeButtonTemplate }
 --
 -- Skins.Apply(name) re-skins every frame registered with UI/Frames.lua and never touches the
 -- destination, routing preferences or custom positions; only Skins.Apply(name, { resetLayout = true })
@@ -47,11 +46,19 @@ local Skins = {
 }
 FGPS.UI.Skins = Skins
 
-Skins.MEDIA = "Interface\\AddOns\\Cabbie\\Media\\"
 Skins.DEFAULT = "minimal"
 Skins.WHITE = "Interface\\Buttons\\WHITE8x8"
 
 local FONT_NORMAL = "Fonts\\FRIZQT__.TTF"
+
+-- FRIZQT__ has no Cyrillic, Hangul or Han glyphs. The client names the text font of its own locale
+-- in STANDARD_TEXT_FONT (FRIZQT__ again on the Latin clients), so a preset that asks for FRIZQT__
+-- gets that one instead, read when the skin is resolved.
+local function localeFont(path)
+    if path ~= FONT_NORMAL then return path end
+    if type(STANDARD_TEXT_FONT) == "string" and STANDARD_TEXT_FONT ~= "" then return STANDARD_TEXT_FONT end
+    return path
+end
 
 -------------------------------------------------------------------------------
 -- Preset definitions
@@ -75,8 +82,6 @@ Skins.presets.minimal = {
         routeVerified = { 0.31, 0.76, 0.97, 1 },
         routeUnverified = { 1.0, 0.64, 0.22, 1 },
         routeTransport = { 0.80, 0.65, 1.00, 0.9 },
-        arrow = { 1, 1, 1, 1 },
-        arrowOutline = { 0, 0, 0, 0.85 },
         button = { 0.13, 0.13, 0.15, 1 },
         buttonHover = { 0.20, 0.20, 0.23, 1 },
         buttonBorder = { 0.32, 0.32, 0.35, 1 },
@@ -89,9 +94,6 @@ Skins.presets.minimal = {
                  insets = { left = 1, right = 1, top = 1, bottom = 1 } },
     buttonBackdrop = { bgFile = Skins.WHITE, edgeFile = Skins.WHITE, edgeSize = 1,
                        insets = { left = 1, right = 1, top = 1, bottom = 1 } },
-    dotTexture = Skins.MEDIA .. "dot",
-    pinTexture = Skins.MEDIA .. "pin",
-    buttonTemplate = nil,
     closeButtonTemplate = nil,
     panelAlpha = 0.9,
     titleHeight = 20,
@@ -188,6 +190,7 @@ end
 function Skins.Get(name)
     if not Skins.IsValid(name) then name = Skins.DEFAULT end
     local skin = Util.DeepCopy(Skins.presets[name])
+    skin.font, skin.titleFont = localeFont(skin.font), localeFont(skin.titleFont)
     skin.colorScheme = Skins.DEFAULT_COLOR_SCHEME
     return applyColorScheme(skin)
 end
@@ -289,7 +292,14 @@ local function onSettingsChanged(_, key, value)
     elseif key == "*" then
         Skins.currentName = nil
         local name = Skins.CurrentName()
-        if name ~= (Skins.current and Skins.current.name) then Skins.Apply(name) else Skins.Refresh() end
+        if name ~= (Skins.current and Skins.current.name) then
+            Skins.Apply(name)
+        else
+            -- Apply remembers the name it shows; Refresh does not, so keep it here, or the same
+            -- preset chosen again would be taken for a change.
+            Skins.currentName = name
+            Skins.Refresh()
+        end
     elseif key == "accessibility.colorScheme" or key == "textSize" then
         Skins.Refresh()
     end

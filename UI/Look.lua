@@ -942,3 +942,82 @@ function Look.PickColor(r, g, b, onPick, onCancel)
     })
     return ok
 end
+
+
+
+
+
+
+
+
+
+
+
+Look.noted = {}
+Look.answers = {}
+Look.ANSWERS_MAX = 40
+
+local function keepAnswer(text)
+    FGPS.Log:Info("%s", text)
+    local answers = Look.answers
+    if #answers < Look.ANSWERS_MAX then answers[#answers + 1] = text end
+end
+
+function Look.NoteOnce(key, fmt, ...)
+    if Look.noted[key] or not FGPS:IsOwnerInstall() or not FGPS.Log then return false end
+    Look.noted[key] = true
+    keepAnswer(FGPS.Util.SafeFormat(fmt, ...))
+    return true
+end
+
+
+local function fileAnswer(path)
+    if type(GetFileIDFromPath) ~= "function" then return "no call" end
+    local ok, id = pcall(GetFileIDFromPath, path)
+    if not ok then return "error" end
+    return tostring(id)
+end
+
+local function firstAtlas(candidates)
+    if not (C_Texture and C_Texture.GetAtlasInfo) then return "no call" end
+    for _, name in ipairs(candidates) do
+        local ok, info = pcall(C_Texture.GetAtlasInfo, name)
+        if ok and type(info) == "table" and (info.width or 0) > 0 and (info.height or 0) > 0 then return name end
+    end
+    return "none"
+end
+
+
+Look.MISSING_PROBES = { "Interface\\AddOns\\Cabbie\\Media\\no-such-file.tga", "Interface\\Icons\\INV_Cabbie_No_Such_Icon" }
+
+
+
+function Look.NoteClientAnswers()
+    if Look.noted.look or not FGPS:IsOwnerInstall() or not FGPS.Log then return false end
+    Look.noted.look = true
+    local templates = {}
+    for _, name in ipairs({ Look.GROUND_TEMPLATE, "SearchBoxTemplate", "InputBoxTemplate", Look.BUTTON_TEMPLATE,
+                            Look.CLOSE_TEMPLATE, Look.CHECK_TEMPLATE }) do
+        templates[#templates + 1] = name .. "=" .. (Look.HasTemplate(name) and "yes" or "no")
+    end
+    local kinds = {}
+    for kind in pairs(ICONS) do kinds[#kinds + 1] = kind end
+    table.sort(kinds)
+    local paths = { Look.DIALOG_FILL, Look.DIALOG_EDGE, Look.HIGHLIGHT_FILE, Look.KNOB_FILE, Look.CLOSE_FILES.up }
+    for _, path in ipairs(Look.GEAR_FILES) do paths[#paths + 1] = path end
+    for _, kind in ipairs(kinds) do
+        if ICONS[kind].file then paths[#paths + 1] = ICONS[kind].file end
+    end
+    local files = {}
+    for _, path in ipairs(paths) do files[#files + 1] = (path:match("([^\\]+)$") or path) .. "=" .. fileAnswer(path) end
+    local probes = {}
+    for _, path in ipairs(Look.MISSING_PROBES) do probes[#probes + 1] = fileAnswer(path) end
+    local atlases = {}
+    for _, kind in ipairs(kinds) do atlases[#atlases + 1] = kind .. "=" .. firstAtlas(ICONS[kind].atlas) end
+    keepAnswer("Look check: templates " .. table.concat(templates, " "))
+    keepAnswer("Look check: files " .. table.concat(files, " ") .. "; missing-file probe " .. table.concat(probes, ", "))
+    keepAnswer("Look check: atlases " .. table.concat(atlases, " "))
+    return true
+end
+
+if FGPS.Events then FGPS.Events:Register("ADDON_READY", function() Look.NoteClientAnswers() end, Look) end

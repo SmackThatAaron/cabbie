@@ -85,6 +85,7 @@
 
 
 
+
 local ADDON_NAME, FGPS = ...
 
 local Router = {
@@ -242,6 +243,7 @@ local Router = {
     queue = {},
     running = nil,
     SHRINK_KEYS = 4000,
+    RELEASE_IDLE_SECONDS = 60,
     nextRouteID = 0,
     nextHandleID = 0,
 }
@@ -257,19 +259,6 @@ local BOARD_BASE = -2 ^ 40
 local KIND_ATTACH = 14
 local KIND_CONNECTOR = 3
 
-
-
-
-
-local function skulkBend(inst, x1, y1, x2, y2)
-    if inst ~= 0 or not x1 or not x2 then return nil end
-    local dx, dy = x2 - x1, y2 - y1
-    local d = sqrt(dx * dx + dy * dy)
-    if d < 80 or d > 120 then return nil end
-    local mx, my = (x1 + x2) * 0.5, (y1 + y2) * 0.5
-    if abs(mx + 3826) > 80 or abs(my - 350) > 40 then return nil end
-    return mx + (-dy / d) * 110, my + (dx / d) * 110
-end
 local KIND_ROAD = 4
 local KIND_MESH = 15
 
@@ -338,6 +327,31 @@ end
 
 
 
+function Router._chasm(G, inst, x1, y1, dx, dy, z1, z2)
+    local cliffZ = Router.CLIFF_Z_YARDS
+    local below, other = 0, 0
+    for i = 1, 3 do
+        local t = i / 4
+        local base = z1 + (z2 - z1) * t
+        local near = G:Nearest(inst, x1 + dx * t, y1 + dy * t, Router.WALL_GAP_YARDS + 5, 8)
+        for n = 1, #near do
+            local zh = near[n].key and G:NodeHeightGuess(near[n].key)
+            if zh then
+                if zh < base - cliffZ then below = below + 1 else other = other + 1 end
+            end
+        end
+    end
+    return below > 0 and other == 0
+end
+
+
+
+
+
+
+
+
+
 
 
 
@@ -354,11 +368,13 @@ local function cutsMountain(inst, x1, y1, x2, y2, z1, z2, dock)
         and rise > Router.CLIMB_WALKABLE_SLOPE * d
     local gap = Router.MOUNTAIN_GAP_YARDS
     local sparse = d >= Router.MOUNTAIN_MIN_YARDS and d * 0.5 > gap
-    if not cliff and not sparse then return false, false end
+    local profile = z1 and z2 and not cliff and not sparse and d > (pier and Router.DOCK_WALL_EXEMPT_YARDS or 2 * gap)
+    if not cliff and not sparse and not profile then return false, false end
     local G = FGPS.Graph
     local g = G:Ensure(inst)
     if not g or (g.n or 0) < 1000 then return false, false end
     if cliff then return true, false end
+    if profile then return Router._chasm(G, inst, x1, y1, dx, dy, z1, z2), false end
 
 
     if pier and not (z1 and z2) then return false, false end
@@ -445,8 +461,10 @@ local function judgeStraight(inst, x1, y1, x2, y2, cityTrip, z1, z2, dock, linke
 
 
 
+
     if not (dock and sqrt((x2 - x1) ^ 2 + (y2 - y1) ^ 2) <= Router.DOCK_WALL_EXEMPT_YARDS)
-        and FGPS.Cost and FGPS.Cost.OverSwim and FGPS.Cost.OverSwim(inst, x1, y1, x2, y2) then
+        and FGPS.Cost and FGPS.Cost.OverSwim
+        and (FGPS.Cost.OverSwim(inst, x1, y1, x2, y2) or FGPS.Cost.OverBlocked(inst, x1, y1, x2, y2)) then
         local world = FGPS.Graph and FGPS.Graph:Ensure(inst)
         if world and (world.n or 0) >= 1000 then return true, false, climb end
     end
@@ -548,6 +566,7 @@ end
 
 
 
+
 function Router._swimRefused(inst, x1, y1, x2, y2, dock)
     if x1 == nil or x2 == nil then return false end
     if dock then
@@ -556,7 +575,9 @@ function Router._swimRefused(inst, x1, y1, x2, y2, dock)
         if dx * dx + dy * dy <= exempt * exempt then return false end
     end
     local C = FGPS.Cost
-    if not (C and C.OverSwim and C.OverSwim(inst, x1, y1, x2, y2)) then return false end
+    if not (C and C.OverSwim and (C.OverSwim(inst, x1, y1, x2, y2) or C.OverBlocked(inst, x1, y1, x2, y2))) then
+        return false
+    end
     local world = Graph():Ensure(inst)
     return world and (world.n or 0) >= 1000
 end
@@ -665,27 +686,64 @@ local touchedKeys = 0
 
 
 
+
+
+
+
+
+
+
+
+function Router._dropSearchTables()
+    slotOf, gArr, fromArr, yardsArr, secArr, penArr, packArr, tidArr, boardArr, honestArr, closed =
+        {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}
+    Router._hMemo, Router._hMemoHonest = {}, {}
+    Router._modeExtra, Router._viaExtra = nil, nil
+    Router._lines = { n = 0, from = {}, g = {}, f = {}, x = {}, y = {}, z = {}, zt = {}, d = {} }
+    heapRelease()
+    Router._bigTables = nil
+end
+
 local function resetSearch()
-    if touchedKeys > Router.SHRINK_KEYS then
-        slotOf, gArr, fromArr, yardsArr, secArr, penArr, packArr, tidArr, boardArr, honestArr, closed =
-            {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}
-        Router._hMemo, Router._hMemoHonest = {}, {}
-        Router._modeExtra, Router._viaExtra = nil, nil
-        Router._lines = { n = 0, from = {}, g = {}, f = {}, x = {}, y = {}, z = {}, zt = {}, d = {} }
-        heapRelease()
-    else
-        clearTable(slotOf)
-        clearTable(closed)
-        clearTable(tidArr)
-        clearTable(boardArr)
-        clearTable(Router._hMemo)
-        clearTable(Router._hMemoHonest)
-        if Router._modeExtra then clearTable(Router._modeExtra) end
-        if Router._viaExtra then clearTable(Router._viaExtra) end
-        Router._lines.n = 0
-        heapClear()
-    end
+    if touchedKeys > Router.SHRINK_KEYS then Router._bigTables = true end
+    clearTable(slotOf)
+    clearTable(closed)
+    clearTable(tidArr)
+    clearTable(boardArr)
+    clearTable(Router._hMemo)
+    clearTable(Router._hMemoHonest)
+    if Router._modeExtra then clearTable(Router._modeExtra) end
+    if Router._viaExtra then clearTable(Router._viaExtra) end
+    Router._lines.n = 0
+    heapClear()
     touchedKeys, underCount = 0, 0
+end
+
+
+
+
+function Router._armRelease()
+    local wait = Router.RELEASE_IDLE_SECONDS
+    local t = GetTime and GetTime() or nil
+    if not (t and C_Timer and C_Timer.After and type(wait) == "number" and wait > 0) then
+        Router._dropSearchTables()
+        return
+    end
+    Router._idleSince = t
+    if Router._releaseArmed then return end
+    Router._releaseArmed = true
+    local function check()
+        Router._releaseArmed = nil
+        if not Router._bigTables or searchOwner ~= nil then return end
+        local left = Router._idleSince + wait - GetTime()
+        if left > 0.001 then
+            Router._releaseArmed = true
+            C_Timer.After(left, check)
+            return
+        end
+        Router._dropSearchTables()
+    end
+    C_Timer.After(wait, check)
 end
 
 
@@ -694,6 +752,7 @@ local function releaseSearch(ctx)
     if searchOwner ~= ctx then return end
     resetSearch()
     searchOwner = nil
+    if Router._bigTables then Router._armRelease() end
 end
 
 
@@ -917,6 +976,12 @@ local function heuristic(ctx, key)
     if lm and (key >= 0 or key <= BOARD_BASE) then
         local a = Router._landmarkAt(lm, inst, key)
         if a > hs then hs = a end
+
+        local second = ctx.lm2
+        if second then
+            a = Router._landmarkAt(second, inst, key)
+            if a > hs then hs = a end
+        end
     end
     if s then
         memo[s] = hs
@@ -926,6 +991,11 @@ local function heuristic(ctx, key)
 end
 
 local function relax(ctx, key, g, from, kind, yards, seconds, penalty, mode, transportID, via)
+
+
+
+
+    if ctx ~= searchOwner or ctx.task ~= FGPS.Scheduler.current then return end
     local s = slotOf[key]
     if s and gArr[s] ~= nil and gArr[s] <= g then return end
 
@@ -1186,9 +1256,80 @@ Router._attachCost = attachCost
 
 
 
+
+
+
+
+
+
+
+function Router._doorAllowed(ctx, fromInst, toInst)
+    local maps = FGPS.Data and FGPS.Data.insideMaps
+    if not maps or fromInst == toInst then return true end
+    if maps[fromInst] and not (ctx.insideStarts or {})[fromInst] then return false end
+    if maps[toInst] and not (ctx.insideEnds or {})[toInst] then return false end
+    return true
+end
+
+
+
+
+
+
+
+
+function Router._lineReach(inst)
+    local maps = FGPS.Data and FGPS.Data.insideMaps
+    if inst ~= nil and maps and maps[inst] then return Graph().SURFACE_ATTACH_RADIUS end
+    return nil
+end
+
+
+function Router._insideEnds(points)
+    local maps = FGPS.Data and FGPS.Data.insideMaps
+    local out = {}
+    if maps then
+        for _, p in ipairs(points) do
+            if p and p.inst ~= nil and maps[p.inst] then out[p.inst] = true end
+        end
+    end
+    return out
+end
+
+
+
+
+
+
+Router.DOOR_RECORD_YARDS = 5
+function Router._doorName(fromInst, fx, fy, toInst, tx, ty)
+    local maps = FGPS.Data and FGPS.Data.insideMaps
+    if not maps or fromInst == toInst then return nil end
+    local map, inst, x, y
+    if maps[toInst] then
+        map, inst, x, y = toInst, fromInst, fx, fy
+    elseif maps[fromInst] then
+        map, inst, x, y = fromInst, toInst, tx, ty
+    else
+        return nil
+    end
+    local best, bestD = nil, Router.DOOR_RECORD_YARDS
+    for _, rec in ipairs(FGPS.Data.interiors or {}) do
+        local e = rec.instanceMap == map and rec.entrance or nil
+        if e and e.inst == inst then
+            local d = math.sqrt((e.x - x) ^ 2 + (e.y - y) ^ 2)
+            if d <= bestD then best, bestD = rec, d end
+        end
+    end
+    return best and best.name or maps[map].name
+end
+
+
+
+
 local function edgeBase(ctx, fromKey, nbKey, kind, yards, seconds, transportID, shaped, fromIndoor)
     local C = Cost()
-    local access, variant = ctx.access, ctx.variant
+    local access, variant = ctx.access, ctx.ride
     local mode, extra, tid
     if kind == 8 then
         if variant == "no_flight" then return nil end
@@ -1207,6 +1348,8 @@ local function edgeBase(ctx, fromKey, nbKey, kind, yards, seconds, transportID, 
         extra = rec
         mode = C.ModeOf(kind, rec)
     elseif kind == 7 then
+        local G = Graph()
+        if not Router._doorAllowed(ctx, (G:Split(fromKey)), (G:Split(nbKey))) then return nil end
         mode = "portal"
     else
         mode = "ground"
@@ -1214,6 +1357,55 @@ local function edgeBase(ctx, fromKey, nbKey, kind, yards, seconds, transportID, 
     end
     local secs = C.EdgeSeconds(kind, yards, access, seconds, extra, shaped)
     if not secs then return nil end
+    return secs, mode, tid
+end
+
+
+
+
+
+
+
+
+
+function Router._staysAboard(rec, fromStop, toStop, cameFrom)
+    local legs = type(rec) == "table" and rec.legs
+    if type(legs) ~= "table" or not fromStop or not toStop then return false end
+    for i = 1, #legs do
+        local leg = legs[i]
+        if leg.to == fromStop and leg.from ~= toStop and (cameFrom == nil or leg.from == cameFrom) then return true end
+    end
+    return false
+end
+
+
+
+function Router._aboardAt(tid, fromKey, toKey, cameFrom)
+    local records = FGPS.Data and FGPS.Data.transports
+    local rec = tid and records and records[tid]
+    if not rec then return nil end
+    local G = Graph()
+    local fromTid, fromStop = G:NodeTransport(fromKey)
+    local toTid, toStop = G:NodeTransport(toKey)
+    if fromTid ~= tid or toTid ~= tid or not Router._staysAboard(rec, fromStop, toStop, cameFrom) then return nil end
+    return rec, fromStop
+end
+
+
+function Router._aboardSaving(tid, fromKey, toKey, cameFrom)
+    local rec, stop = Router._aboardAt(tid, fromKey, toKey, cameFrom)
+    if not rec then return 0 end
+    local C = Cost()
+    local saving = C.ExpectedWait(rec.period) - C.AboardWait(rec, stop)
+    return saving > 0 and saving or 0
+end
+
+
+
+
+function Router._leastBase(ctx, e, yards)
+    local secs, mode, tid = edgeBase(ctx, e.from, e.to, e.kind, yards, e.seconds, e.transportID)
+    if secs and e.kind == 9 then secs = secs - Router._aboardSaving(tid, e.from, e.to) end
     return secs, mode, tid
 end
 
@@ -1330,6 +1522,10 @@ local function visit(nbKey, kind, yards, seconds, transportID, shaped, entry)
         end
     elseif kind >= 7 and kind <= 11 then
         secs, mode, tid = edgeBase(ctx, node, nbKey, kind, yards, seconds, transportID, shaped, cur.indoor)
+
+        if secs and kind == 9 and cur.aboard and tid == cur.aboard then
+            secs = secs - Router._aboardSaving(tid, node, nbKey, cur.aboardFrom)
+        end
     else
         secs, mode = C.EdgeSeconds(kind, yards, access, seconds, nil, shaped), "ground"
     end
@@ -1382,7 +1578,7 @@ local function visit(nbKey, kind, yards, seconds, transportID, shaped, entry)
 
 
     local penalty, boarding = 0, 0
-    if mode ~= "ground" and mode ~= cur.mode then penalty, boarding = C.TransferPenalty(variant), C.TransferPenalty() end
+    if mode ~= "ground" and mode ~= cur.mode then penalty, boarding = C.TransferPenalty(ctx.ride), C.TransferPenalty() end
     if kind == KIND_CONNECTOR and cur.z then
 
 
@@ -1450,7 +1646,7 @@ local function hubUsable(ctx, key, flags)
     local ok = ctx.hubOK[key]
     if ok ~= nil then return ok end
     local G, A = Graph(), Access()
-    local access, variant = ctx.access, ctx.variant
+    local access, variant = ctx.access, ctx.ride
     ok = false
     local taxiID = G:NodeTaxiID(key)
     if taxiID then
@@ -1565,7 +1761,16 @@ Router.LANDMARK_NONE = 91 ^ 3 - 1
 Router.LANDMARK_SETUPS = 8
 
 
+
+
+
 Router.LANDMARK_ORIGIN_YARDS = 500
+
+
+
+
+
+Router.LANDMARK_MEMO_KEYS = 200000
 
 
 
@@ -1641,6 +1846,7 @@ end
 
 
 
+
 function Router._landmarkAt(lm, inst, key)
     local side = lm.insts[inst]
     if side == nil then side = Router._landmarkSide(lm, inst) end
@@ -1655,7 +1861,15 @@ function Router._landmarkAt(lm, inst, key)
         idx = side.board[hub - side.base]
         if not idx then return 0 end
     end
-    return Router._landmarkBound(lm, side, idx)
+    local memo = side.memo
+    local v = memo[idx]
+    if v then return v end
+    v = Router._landmarkBound(lm, side, idx)
+    local count = lm.bounds
+    if count.n < Router.LANDMARK_MEMO_KEYS then
+        memo[idx], count.n, side.n = v, count.n + 1, side.n + 1
+    end
+    return v
 end
 
 
@@ -1694,7 +1908,9 @@ end
 
 function Router._landmarkSide(lm, inst)
     local G = Graph()
-    local block = G:Landmarks(inst)
+
+    local block
+    if lm.roads then block = G:RoadsLandmarks(inst) else block = G:Landmarks(inst) end
     local side = false
     if block and block.speed == lm.speed and G:IsVetted(inst) then
         local board = Router._landmarkBoard(inst, block)
@@ -1706,7 +1922,7 @@ function Router._landmarkSide(lm, inst)
                 rows[i] = c and block.p[c] or false
                 if c then any = true end
             end
-            if any then side = { rows = rows, row = block.row, base = inst * KEY_BASE, board = board } end
+            if any then side = { rows = rows, row = block.row, base = inst * KEY_BASE, board = board, src = block.p, memo = {}, n = 0 } end
         end
     end
     lm.insts[inst] = side
@@ -1839,6 +2055,82 @@ end
 
 
 
+function Router._keptServes(kept, o)
+    if kept.oInst ~= o.inst then return false end
+    local D, reach = Coords().Distance, Router.LANDMARK_ORIGIN_YARDS
+    if D(kept.oX, kept.oY, o.x, o.y) <= reach then return true end
+    local along = kept.along
+    for i = 1, along and #along or 0, 2 do
+        if D(along[i], along[i + 1], o.x, o.y) <= reach then return true end
+    end
+    return false
+end
+
+
+
+function Router._noteAlong(ctx, legs)
+    local lm = ctx.lm
+    if not lm or not lm.oInst or lm.along then return end
+    local along = {}
+    for _, leg in ipairs(legs) do
+        if leg.kind == "walk" and leg.inst == lm.oInst then
+            for _, p in ipairs(leg.points or {}) do
+                along[#along + 1], along[#along + 2] = p.x, p.y
+            end
+        end
+    end
+    lm.along = along
+end
+
+
+
+
+
+function Router._keptColumns(active)
+    local G = Graph()
+    for inst, side in pairs(active.insts) do
+        local block
+        if active.roads then block = G:RoadsLandmarks(inst) else block = G:Landmarks(inst) end
+        if (side and side.src ~= (block and block.p)) or (not side and block) then
+            if side then active.bounds.n = active.bounds.n - side.n end
+            active.insts[inst] = nil
+        end
+    end
+end
+
+
+function Router._forgetBounds(active)
+    for _, set in ipairs({ active, active.second or false }) do
+        for _, side in pairs(set and set.insts or {}) do
+            if side then side.memo, side.n = {}, 0 end
+        end
+    end
+    active.bounds.n = 0
+end
+
+
+
+
+function Router._keepBoundsOf(active)
+    local last = Router._boundsOf
+    if last and last ~= active then Router._forgetBounds(last) end
+    Router._boundsOf = active
+end
+
+
+
+
+
+
+
+function Router._releaseBounds()
+    local last = Router._boundsOf
+    if last then Router._forgetBounds(last) end
+end
+
+
+
+
 
 function Router.UsesLandmarks(access, variant)
     if not Router.LANDMARKS then return false end
@@ -1847,10 +2139,10 @@ function Router.UsesLandmarks(access, variant)
 end
 
 function Router._landmarkSetup(ctx)
-    ctx.lm = nil
+    ctx.lm, ctx.lm2 = nil, nil
     local C, G = Cost(), Graph()
     local access, variant, dest = ctx.access, ctx.variant, ctx.dest
-    if not Router.UsesLandmarks(access, variant) then return end
+    if not Router.UsesLandmarks(access, ctx.ride) then return end
     local lm = G:Landmarks(dest.inst)
 
     if not lm or not vettedInst(ctx, dest.inst) then return end
@@ -1874,22 +2166,71 @@ function Router._landmarkSetup(ctx)
 
 
 
+
+
+
     local cacheKey
     if access.hash ~= nil then
-        cacheKey = string.format("%s|%s|%.3f|%.3f|%s|%s|%s|%.6f|%.6f|%.9g|%.9g", tostring(access.hash), tostring(variant),
+        cacheKey = string.format("%s|%s|%.3f|%.3f|%s|%s|%s|%.6f|%.6f|%.9g|%.9g|%s|%s|%s|%s", tostring(access.hash), tostring(variant) .. "/" .. tostring(ctx.ride),
             dest.x, dest.y, tostring(dest.z), tostring(dest.zHint), Router._placeKey(dest), ctx.maxStraight or 0,
-            ctx.hubReach or 0, scale, ctx.straightRate or 0)
+            ctx.hubReach or 0, scale, ctx.straightRate or 0, tostring(dest.poiIndex), tostring(dest.map),
+            tostring(dest.floor), tostring(Router._freePoint(ctx, dest, true)))
         local mine = Router._landmarkSetups and Router._landmarkSetups[lm]
         local kept = mine and mine[cacheKey]
-        local o = ctx.origin
-        if kept and (kept.oInst ~= o.inst or Coords().Distance(kept.oX, kept.oY, o.x, o.y) > Router.LANDMARK_ORIGIN_YARDS) then kept = nil end
+        if kept and not Router._keptServes(kept, ctx.origin) then kept = nil end
         if kept then
-
-            kept.insts = {}
-            ctx.lm = kept
+            Router._keptColumns(kept)
+            if kept.second then Router._keptColumns(kept.second) end
+            Router._keepBoundsOf(kept)
+            ctx.lm, ctx.lm2 = kept, kept.second
             return
         end
     end
+    local active = Router._landmarkActive(ctx, lm, board, scale)
+    if not active then return end
+
+
+
+
+
+    if variant == "roads_only" then
+        local roads = G:RoadsLandmarks(dest.inst)
+        local rboard = roads and Router._landmarkBoard(dest.inst, roads)
+
+
+        if rboard and not Scheduler().Yield() then return end
+        if rboard then
+            local second = Router._landmarkActive(ctx, roads, rboard, 1 / speed)
+            if second == false then return end
+
+            if second then second.bounds = active.bounds end
+            active.second = second
+        end
+    end
+    ctx.lm, ctx.lm2 = active, active.second
+    if cacheKey then
+        local setups = Router._landmarkSetups
+        if not setups then
+            setups = setmetatable({}, { __mode = "k" })
+            Router._landmarkSetups = setups
+        end
+        local mine = setups[lm]
+        if not mine or mine.n >= Router.LANDMARK_SETUPS then
+            mine = { n = 0 }
+            setups[lm] = mine
+        end
+        local o = ctx.origin
+        active.oInst, active.oX, active.oY = o.inst, o.x, o.y
+        if mine[cacheKey] then mine[cacheKey] = active else mine[cacheKey], mine.n = active, mine.n + 1 end
+        Router._keepBoundsOf(active)
+    end
+end
+
+
+
+
+function Router._landmarkActive(ctx, lm, board, scale)
+    local G, dest = Graph(), ctx.dest
     local k = lm.k
     local all = {}
     for l = 1, k do all[l] = l end
@@ -1897,7 +2238,7 @@ function Router._landmarkSetup(ctx)
 
 
     local attach = Router._landmarkWays(ctx, lm, board, scale, all, true)
-    if not attach then return end
+    if not attach then return false end
     local first
     for i = 1, #attach do
         if not first or attach[i].c < first.c then first = attach[i] end
@@ -1908,7 +2249,10 @@ function Router._landmarkSetup(ctx)
     local unpack, none = G.UnpackLandmark, Router.LANDMARK_NONE
     for key in pairs(first and ctx.originAttach or {}) do
         local inst = floor(key / KEY_BASE)
-        local block = inst == dest.inst and lm or G:Landmarks(inst)
+        local block = lm
+        if inst ~= dest.inst then
+            if lm.roads then block = G:RoadsLandmarks(inst) else block = G:Landmarks(inst) end
+        end
         if block and block.speed == lm.speed then
             local cols = Router._landmarkColumns(block)
             any = true
@@ -1944,7 +2288,8 @@ function Router._landmarkSetup(ctx)
     local exact, reach = Router.LANDMARK_EXACT_YARDS, ctx.maxStraight or 0
     while exact < reach and Router._lineBound(ctx, exact) < want do exact = exact + 50 end
     local ways = Router._landmarkWays(ctx, lm, board, scale, pick, false, exact)
-    if not ways or #ways == 0 then return end
+    if not ways then return false end
+    if #ways == 0 then return nil end
 
 
 
@@ -1977,25 +2322,14 @@ function Router._landmarkSetup(ctx)
             for t = 1, n do wlo[(j - 1) * n + t], whi[(j - 1) * n + t] = ulo[t], uhi[t] end
         end
     end
+
+
+    local unjoined = ways.unjoined or (exact < reach and not ctx.destEnclosed)
     local active = { ids = {}, n = n, p = {}, ways = #kept, wc = wc, wlo = wlo, whi = whi, scale = scale,
-                     speed = lm.speed, insts = {}, dead = ways.dead, unjoined = ways.unjoined and 0 or huge }
+                     speed = lm.speed, insts = {}, dead = ways.dead, unjoined = unjoined and 0 or huge, roads = lm.roads,
+                     bounds = { n = 0 } }
     for t = 1, n do active.ids[t] = lm.ids[pick[t]] end
-    ctx.lm = active
-    if cacheKey then
-        local setups = Router._landmarkSetups
-        if not setups then
-            setups = setmetatable({}, { __mode = "k" })
-            Router._landmarkSetups = setups
-        end
-        local mine = setups[lm]
-        if not mine or mine.n >= Router.LANDMARK_SETUPS then
-            mine = { n = 0 }
-            setups[lm] = mine
-        end
-        local o = ctx.origin
-        active.oInst, active.oX, active.oY = o.inst, o.x, o.y
-        if mine[cacheKey] then mine[cacheKey] = active else mine[cacheKey], mine.n = active, mine.n + 1 end
-    end
+    return active
 end
 
 local function roadLineKey(x1, y1, x2, y2)
@@ -2260,10 +2594,12 @@ end
 
 
 local function relaxDirect(ctx, fromKey, g, inst, x, y, fromZ, testZ)
+
+    if ctx ~= searchOwner then return end
     if ctx.goals then return Router._goalsDirect(ctx, fromKey, g, inst, x, y, fromZ, testZ) end
     if closed[DEST] or inst ~= ctx.dest.inst then return end
     local d = Coords().Distance(x, y, ctx.dest.x, ctx.dest.y)
-    if d > ctx.maxStraight then return end
+    if d > ctx.maxStraight or d > (Router._lineReach(inst) or d) then return end
 
 
 
@@ -2323,7 +2659,10 @@ local function expandBoarding(ctx, key)
     cur.ctx, cur.key, cur.node, cur.g, cur.mode, cur.boarding = ctx, key, hub, g, mode, true
     cur.z, cur.zt, cur.boardOnly = z, zt, nil
     cur.indoor, cur.C, cur.G = indoorNode(hub), Cost(), G
+    cur.aboard, cur.aboardFrom = nil, nil
     G:Neighbors(hub, visit, closed)
+
+    if ctx ~= searchOwner then return end
     cur.boarding = nil
     local inst, x, y = G:NodePos(hub)
     if ctx.goals then
@@ -2394,7 +2733,7 @@ local function expand(ctx, key)
         if key == ORIGIN then
             for teleKey, tele in pairs(ctx.teleports) do
 
-                local penalty = C.TransferPenalty(ctx.variant)
+                local penalty = C.TransferPenalty(ctx.ride)
                 relax(ctx, teleKey, g + tele.seconds + penalty, ORIGIN, tele.kind, 0, tele.seconds, C.TransferPenalty(), tele.mode, tele.option.id, nil)
             end
         end
@@ -2404,6 +2743,14 @@ local function expand(ctx, key)
 
     local _, indoor, stacked = G:NodePlace(key)
     cur.indoor = indoor
+
+    cur.aboard, cur.aboardFrom = nil, nil
+    local slot = slotOf[key]
+    if slot and (packArr[slot] or 0) % 256 == 9 and tidArr[slot] then
+        local from = parent and (parent <= BOARD_BASE and BOARD_BASE - parent or parent)
+        local fromTid, fromStop = G:NodeTransport(from)
+        if fromTid == tidArr[slot] then cur.aboard, cur.aboardFrom = fromTid, fromStop end
+    end
     G:Neighbors(key, visit, closed)
     if ctx.goals then
         Router._goalAttach(ctx, key, g)
@@ -2414,10 +2761,13 @@ local function expand(ctx, key)
             if secs then relax(ctx, DEST, g + charged, key, KIND_ATTACH, yards, secs, 0, "ground", nil, VIA_ATTACH) end
         end
     end
+    local inst, x, y
     if ctx.maxStraight > 0 then
-        local inst, x, y = G:NodePos(key)
+        inst, x, y = G:NodePos(key)
         if x then
             relaxDirect(ctx, key, g, inst, x, y, z, zt)
+
+            if ctx ~= searchOwner then return end
             local vetted = vettedInst(ctx, inst)
             if ctx.hubReach > 0 and not (indoor or stacked) then
                 cur.boardOnly = vetted or nil
@@ -2432,17 +2782,23 @@ local function expand(ctx, key)
                 end
                 G:HubsNear(inst, x, y, ctx.hubReach, hubVisit, cells)
             end
+        end
+    end
 
 
-            if G.IsHubFlags(G:NodeFlags(key)) and not (vetted and cur.mode == "ground") then
-                local list = ctx.hubAttach[key]
-                if list == nil then
 
-                    list = attachFor(ctx, { inst = inst, x = x, y = y, z = zt }, false, true) or false
-                    ctx.hubAttach[key] = list
-                end
-                if list then relaxAttachList(ctx, key, g, list, VIA_HUB_ATTACH, z) end
+
+
+    if G.IsHubFlags(G:NodeFlags(key)) then
+        if not x then inst, x, y = G:NodePos(key) end
+        if x and not (vettedInst(ctx, inst) and cur.mode == "ground") then
+            local list = ctx.hubAttach[key]
+            if list == nil then
+
+                list = attachFor(ctx, { inst = inst, x = x, y = y, z = zt }, false, true) or false
+                ctx.hubAttach[key] = list
             end
+            if list then relaxAttachList(ctx, key, g, list, VIA_HUB_ATTACH, z) end
         end
     end
 end
@@ -2465,6 +2821,7 @@ local function search(ctx)
     resetSearch()
     ctx.rf = {}
     ctx.ground = Cost().GroundSpeed(ctx.access)
+    ctx.task = S.current
     searchOwner = ctx
     touchedKeys = 1
     slotOf[ORIGIN] = 1
@@ -2483,6 +2840,9 @@ local function search(ctx)
         return nil, "CANCELLED"
     end
     while heapSize > 0 do
+
+
+        if searchOwner ~= ctx then break end
         if maxSeconds and underCount == 0 then
             ctx.expansions = expansions
             return nil, "BOUND"
@@ -2537,6 +2897,7 @@ local function search(ctx)
         end
     end
     ctx.expansions = expansions
+    if searchOwner ~= ctx then return nil, "CANCELLED" end
     return nil, "EXHAUSTED"
 end
 
@@ -2580,12 +2941,20 @@ local KIND_STREET = 16
 local KIND_TERRAIN_ROAD, KIND_TERRAIN_GRID = 18, 19
 local ZERO_YARDS = 0.01
 
+
+
+
+local function pointFlags(key)
+    local f = Graph():NodeFlags(key)
+    return f and f % 256
+end
+
 local function flagsOf(ctx, key)
     local F = Route().FLAGS
     if key == ORIGIN then return F.ORIGIN end
     if key == DEST then return F.STOP end
     if key <= TELE_BASE then return F.TELEPORT end
-    return Graph():NodeFlags(key)
+    return pointFlags(key)
 end
 
 local function newWalk(ctx, fromKey)
@@ -2794,6 +3163,14 @@ local function mergeLastFlags(leg, extra)
 end
 
 
+
+function Router._noteHazard(leg, liquid, yards)
+    if not liquid then return end
+    leg.hazardYards = leg.hazardYards or {}
+    leg.hazardYards[liquid] = (leg.hazardYards[liquid] or 0) + yards
+end
+
+
 local function addAttach(ctx, leg, cand, edge, toVirtual)
     local G = Graph()
     local total = edge.yards
@@ -2814,6 +3191,11 @@ local function addAttach(ctx, leg, cand, edge, toVirtual)
     local guessed = guessFrom or guessTo or nil
 
     local stacked = toVirtual and edge.to == DEST and ctx.destStacked or nil
+
+
+    if cand and segYards > 0 and cand.segKind == KIND_SURFACE_SWIM and cand.otherKey then
+        Router._noteHazard(leg, G:HazardCrossing(toVirtual and edge.from or edge.to, cand.otherKey), segYards)
+    end
     if toVirtual then
         local dinst, dx, dy = posOf(ctx, edge.to)
         if cand and segYards > 0 then
@@ -2842,12 +3224,12 @@ local function addAttach(ctx, leg, cand, edge, toVirtual)
             else
                 noteClimb(leg, nil, 0, zFrom, zTo, guessed)
             end
-            addPoint(leg, nx, ny, G:NodeFlags(edge.to), cand.segKind, segYards, segYards * share)
+            addPoint(leg, nx, ny, pointFlags(edge.to), cand.segKind, segYards, segYards * share)
         elseif attachYards < ZERO_YARDS then
-            mergeLastFlags(leg, G:NodeFlags(edge.to))
+            mergeLastFlags(leg, pointFlags(edge.to))
             noteClimb(leg, nil, 0, zFrom, zTo, guessed)
         else
-            addPoint(leg, nx, ny, G:NodeFlags(edge.to), KIND_ATTACH, attachYards, attachYards * share, zFrom, zTo, guessed)
+            addPoint(leg, nx, ny, pointFlags(edge.to), KIND_ATTACH, attachYards, attachYards * share, zFrom, zTo, guessed)
         end
     end
 end
@@ -2873,7 +3255,6 @@ local function taxiPathPoints(from, to)
 end
 
 local function convertPoints(raw, baseFlags, kind)
-    local F = Route().FLAGS
     local out = {}
     for i, pt in ipairs(raw) do
         local f = 0
@@ -2932,7 +3313,8 @@ local function extendTaxiLeg(leg, edge)
     leg.label = string.format(L["Flight from %s to %s"], taxiName(leg.taxiFrom), taxiName(toID))
 end
 
-local function buildTransportLeg(ctx, edge)
+
+local function buildTransportLeg(ctx, edge, prev)
     local G, R = Graph(), Route()
     local F = R.FLAGS
     local fromInst, fx, fy = G:NodePos(edge.from)
@@ -2957,7 +3339,11 @@ local function buildTransportLeg(ctx, edge)
         points = { { x = fx, y = fy, f = baseFlag }, { x = tx, y = ty, f = baseFlag, k = edge.kind } }
         if fromInst ~= toInst then split = 1 end
     end
+
+
+
     local yards = edge.yards
+    if dataYards and dataYards > 0 then yards = dataYards end
     if not yards or yards == 0 then yards = dataYards or polylineYards(points, split) end
 
 
@@ -2971,12 +3357,24 @@ local function buildTransportLeg(ctx, edge)
     end
     local stopFrom = rec and rec.stops and rec.stops[fromStop or 0] or nil
     local stopTo = rec and rec.stops and rec.stops[toStop or 0] or nil
-    local wait = 0
-    if edge.kind == 9 then wait = Cost().ExpectedWait(rec and rec.period) elseif edge.kind == 10 then wait = Const.TRAM_WAIT end
+    local wait, aboard = 0, nil
+    if edge.kind == 9 then
+        wait = Cost().ExpectedWait(rec and rec.period)
+
+        if prev and prev.kind == 9 and prev.transportID == edge.transportID then
+            local prevTid, cameFrom = G:NodeTransport(prev.from)
+            local aboardRec, stop
+            if prevTid == edge.transportID then aboardRec, stop = Router._aboardAt(edge.transportID, edge.from, edge.to, cameFrom) end
+            if aboardRec then wait, aboard = Cost().AboardWait(aboardRec, stop), true end
+        end
+    elseif edge.kind == 10 then
+        wait = Const.TRAM_WAIT
+    end
     return { kind = edge.mode, inst = fromInst, toInst = toInst ~= fromInst and toInst or nil, points = points, split = split,
-             yards = yards, seconds = edge.seconds + edge.penalty, penaltySeconds = edge.penalty, wait = wait,
+             yards = yards, seconds = edge.seconds + edge.penalty, penaltySeconds = edge.penalty, wait = wait, aboard = aboard,
              fromKey = edge.from, toKey = edge.to, transportID = edge.transportID,
-             label = rec and rec.name or R.LegLabel(edge.mode), stopFrom = stopFrom and stopFrom.name or nil,
+             label = rec and rec.name or (edge.kind == 7 and Router._doorName(fromInst, fx, fy, toInst, tx, ty))
+                 or R.LegLabel(edge.mode), stopFrom = stopFrom and stopFrom.name or nil,
              stopTo = stopTo and stopTo.name or nil, period = rec and rec.period or nil,
 
 
@@ -3065,6 +3463,16 @@ local function pierYards(x1, y1, x2, y2, access)
     return yards, seconds
 end
 
+
+
+
+function Router._guessedDockStep(walk, yards)
+    if not yards or yards <= 0 then return end
+    walk.verifiedYards = walk.verifiedYards - yards
+    if walk.verifiedYards < 0 then walk.verifiedYards = 0 end
+    walk.unverifiedYards = walk.unverifiedYards + yards
+end
+
 local function extendWalkToPier(walk, edge, which, access)
     local stop = pierStop(edge, which)
     if not stop or (stop.inst and walk.inst and stop.inst ~= walk.inst) then return end
@@ -3074,21 +3482,14 @@ local function extendWalkToPier(walk, edge, which, access)
     if not yards then
 
 
+
         if last.k == KIND_ATTACH and inCapital(walk.inst, last.x, last.y) then
-            local prev = walk.points[#walk.points - 1]
-            if prev then
-                local d = Coords().Distance(prev.x, prev.y, last.x, last.y)
-                if d and d > 0 then
-                    walk.unverifiedYards = walk.unverifiedYards - d
-                    if walk.unverifiedYards < 0 then walk.unverifiedYards = 0 end
-                    walk.verifiedYards = walk.verifiedYards + d
-                end
-            end
             last.k = KIND_PIER
         end
         return
     end
     addPoint(walk, stop.x, stop.y, 0, KIND_PIER, yards, seconds)
+    Router._guessedDockStep(walk, yards)
 end
 
 local function startWalkAtPier(walk, edge, access)
@@ -3101,6 +3502,7 @@ local function startWalkAtPier(walk, edge, access)
     local hx, hy, hf = first.x, first.y, first.f
     first.x, first.y, first.f = stop.x, stop.y, 0
     addPoint(walk, hx, hy, hf, KIND_PIER, yards, seconds)
+    Router._guessedDockStep(walk, yards)
 end
 
 
@@ -3193,25 +3595,20 @@ local function buildLegs(ctx, edges)
                         addPoint(walk, foot.x, foot.y, 0, foot.kind, foot.along, secPer * foot.along)
 
 
-                        addPoint(walk, nx, ny, Graph():NodeFlags(e.to), drawKind, foot.hop, secPer * foot.hop)
+                        addPoint(walk, nx, ny, pointFlags(e.to), drawKind, foot.hop, secPer * foot.hop)
                     else
-                        local prev = walk.points[#walk.points]
-                        local bx, by = skulkBend(walk.inst, prev.x, prev.y, nx, ny)
-                        if bx then
-                            local halfY = (e.yards or 0) * 0.5
-                            local halfS = (e.seconds or 0) * 0.5
-                            addPoint(walk, bx, by, 0, drawKind, halfY, halfS, zFrom, nil)
-                            addPoint(walk, nx, ny, Graph():NodeFlags(e.to), drawKind, halfY, halfS, nil, zTo, nil, stacked)
-                        else
-                            addPoint(walk, nx, ny, Graph():NodeFlags(e.to), drawKind, e.yards, e.seconds, zFrom, zTo, nil, stacked)
-                        end
+                        addPoint(walk, nx, ny, pointFlags(e.to), drawKind, e.yards, e.seconds, zFrom, zTo, nil, stacked)
                     end
+                    if drawKind ~= e.kind then Router._guessedDockStep(walk, foot and foot.hop or e.yards) end
                 else
                     local mids = Graph():EdgeShape(e.from, e.to, e.kind)
                     local prev = walk.points[#walk.points]
                     local px, py = prev.x, prev.y
                     local snap = e.kind == 2
                     local shapeTags = mids and Router._shapeTags(e.from, e.to, px, py, mids, nx, ny)
+
+
+                    local hazard = e.kind == KIND_SURFACE_SWIM and Graph():HazardCrossing(e.from, e.to) or nil
                     if mids then
                         for i = 1, #mids do
                             local p = mids[i]
@@ -3222,6 +3619,7 @@ local function buildLegs(ctx, edges)
 
                             local point = walk.points[#walk.points]
                             point.shape = true
+                            point.hazard = hazard
                             if shapeTags then
                                 point.room, point.indoor, point.stacked = shapeTags.room, shapeTags.indoor, shapeTags.stacked
                                 point.climbForm, point.z = shapeTags.climbForm, shapeTags.z and shapeTags.z[i]
@@ -3230,7 +3628,13 @@ local function buildLegs(ctx, edges)
                         end
                     end
                     if snap then nx, ny = snapToStreet(walk.inst, px, py, nx, ny) end
-                    addPoint(walk, nx, ny, Graph():NodeFlags(e.to), e.kind, e.yards, e.seconds, nil, Graph():NodeHeight(e.to))
+                    addPoint(walk, nx, ny, pointFlags(e.to), e.kind, e.yards, e.seconds, nil, Graph():NodeHeight(e.to))
+                    walk.points[#walk.points].hazard = hazard
+                    Router._noteHazard(walk, hazard, e.yards)
+
+                    if e.kind == KIND_ROAD and mids and #mids > 0 then
+                        walk.roadShapedYards = (walk.roadShapedYards or 0) + e.yards
+                    end
                 end
             end
             walk.toKey = e.to >= 0 and e.to or nil
@@ -3252,7 +3656,7 @@ local function buildLegs(ctx, edges)
             elseif e.mode == "hearth" or e.mode == "spell" then
                 legs[#legs + 1] = buildTeleportLeg(ctx, e)
             else
-                legs[#legs + 1] = buildTransportLeg(ctx, e)
+                legs[#legs + 1] = buildTransportLeg(ctx, e, prev)
             end
         end
         prev = e
@@ -3283,12 +3687,11 @@ local function straightLeg(ctx)
     local destTestZ = destTestHeightFrom(ctx, originTestZ) or d.z
     if o.inst == d.inst and cutsObstacle(o.inst, o.x, o.y, d.x, d.y, ctx.cityTrip, originTestZ, destTestZ) then return nil end
     local yards = Coords().Distance(o.x, o.y, d.x, d.y)
-    local honest, chargeBase = straightCost(ctx, yards, o.inst, o.x, o.y, d.x, d.y)
+    local honest = straightCost(ctx, yards, o.inst, o.x, o.y, d.x, d.y)
     if not honest then
 
         honest = C.EdgeSeconds(KIND_ATTACH, yards, ctx.access)
         if not honest then return nil end
-        chargeBase = honest * C.RoadFactor(ctx.variant, KIND_ATTACH) * C.ChordFactor(KIND_ATTACH, yards)
     end
     local leg = { kind = "walk", inst = o.inst, points = { { x = o.x, y = o.y, f = F.ORIGIN }, { x = d.x, y = d.y, f = F.STOP, k = KIND_ATTACH } },
                   yards = yards, seconds = honest, verifiedYards = 0, unverifiedYards = yards, roadYards = 0, straightYards = yards, connectorYards = 0, meshYards = 0,
@@ -3335,13 +3738,27 @@ end
 function attachFor(ctx, pos, isDest, isHub)
 
 
+
     local opts = { allowUnverified = ctx.access.allowUnverified ~= false, map = not isHub and pos.map or nil,
                    floor = not isHub and pos.floor or nil, poiIndex = (isDest and not isHub) and pos.poiIndex or nil,
                    place = not isHub and pos.place or nil, free = not isHub and Router._freePoint(ctx, pos, isDest) or nil }
-    if FGPS.Perf then FGPS.Perf:Begin("attach") end
+
+
+    local perf = FGPS.Perf
+    local started = perf and perf.enabled and debugprofilestop() or nil
     local list, radius = Graph():AttachProgressive(pos.inst, pos.x, pos.y, opts)
-    if FGPS.Perf then FGPS.Perf:End("attach") end
+    if started then perf:Record("attach", debugprofilestop() - started) end
     local map, count = candidateMap(list)
+    local reach = Router._lineReach(pos.inst)
+    if count > 0 and reach then
+        local near, nearN = {}, 0
+        for key, cand in pairs(map) do
+            if (cand.attachYards or cand.dist or 0) <= reach then
+                near[key], nearN = cand, nearN + 1
+            end
+        end
+        if nearN > 0 then map, count = near, nearN end
+    end
 
 
 
@@ -3524,6 +3941,10 @@ local function setupTeleports(ctx)
             ctx.vpos[key] = { inst = e.inst, x = e.x, y = e.y, map = e.map }
             ctx.teleports[key] = { option = e, kind = opt.kind, mode = opt.mode, wait = remaining,
                                    seconds = cast + Const.HEARTH_LOAD_SECONDS + remaining }
+
+
+
+            if remaining > 0 then ctx.teleportWaits = true end
             local list, _, _, enclosed = attachFor(ctx, ctx.vpos[key], false)
             ctx.teleAttach[key], ctx.teleEnclosed[key] = list, enclosed
         end
@@ -3559,6 +3980,7 @@ end
 
 
 
+
 local function setupFastLinks(ctx)
 
 
@@ -3570,7 +3992,7 @@ local function setupFastLinks(ctx)
     local list = {}
     for i = 1, #edges do
         local e = edges[i]
-        local secs = edgeBase(ctx, e.from, e.to, e.kind, e.yards, e.seconds, e.transportID)
+        local secs = Router._leastBase(ctx, e, e.yards)
         if secs and e.yards > secs * speed then
             list[#list + 1] = { fx = e.fx, fy = e.fy, tx = e.tx, ty = e.ty, secs = secs,
                                 rest = secs + D(e.tx, e.ty, dest.x, dest.y) / speed }
@@ -3589,7 +4011,7 @@ local function setupFastLinks(ctx)
     local lm = ctx.lm
     for i = 1, #cross.into do
         local e = cross.into[i]
-        local secs = edgeBase(ctx, e.from, e.to, e.kind, 0, e.seconds, e.transportID)
+        local secs = Router._leastBase(ctx, e, 0)
         if secs then
             local alt = secs + estimateFrom(list, speed, e.x, e.y, dest)
             if not outside or alt < outside then outside = alt end
@@ -3597,7 +4019,12 @@ local function setupFastLinks(ctx)
 
 
             if lm then
-                local landed = secs + Router._landmarkAt(lm, dest.inst, e.to)
+                local bound = Router._landmarkAt(lm, dest.inst, e.to)
+                if ctx.lm2 then
+                    local roads = Router._landmarkAt(ctx.lm2, dest.inst, e.to)
+                    if roads > bound then bound = roads end
+                end
+                local landed = secs + bound
                 if alt > landed then landed = alt end
                 if not outsideAlt or landed < outsideAlt then outsideAlt = landed end
             end
@@ -3609,7 +4036,7 @@ local function setupFastLinks(ctx)
         local inside = #list
         for i = 1, #cross.out do
             local e = cross.out[i]
-            local secs = edgeBase(ctx, e.from, e.to, e.kind, 0, e.seconds, e.transportID)
+            local secs = Router._leastBase(ctx, e, 0)
 
 
             if secs and secs + outside < estimateFrom(list, speed, e.x, e.y, dest) then
@@ -3643,12 +4070,17 @@ function Router._outsideList(ctx, inst)
     local cross = G:CrossLinks(inst)
     for i = 1, #cross.out do
         local e = cross.out[i]
-        local secs = edgeBase(ctx, e.from, e.to, e.kind, 0, e.seconds, e.transportID)
+        local secs = Router._leastBase(ctx, e, 0)
         if secs then
             local toInst, tx, ty = G:NodePos(e.to)
+
+
+
+
+
+
             local after = outside
             if toInst == dest.inst and tx then after = estimateFrom(ctx.fastLinks, speed, tx, ty, dest) end
-            if after < outside then after = outside end
             list[#list + 1] = { fx = e.x, fy = e.y, rest = secs + after }
         end
     end
@@ -3659,7 +4091,7 @@ function Router._outsideList(ctx, inst)
     local edges = G:FixedEdges(inst)
     for i = 1, #edges do
         local e = edges[i]
-        local secs = edgeBase(ctx, e.from, e.to, e.kind, e.yards, e.seconds, e.transportID)
+        local secs = Router._leastBase(ctx, e, e.yards)
         if secs and e.yards > secs * speed then
             local rest = huge
             for j = 1, #list do
@@ -3727,8 +4159,8 @@ end
 
 local KIND_WORDS = { [7] = "portals", [8] = "flights", [9] = "boats or zeppelins", [10] = "the tram", [11] = "elevators" }
 
-local function transportLinkUsable(ctx, kind, transportID)
-    local access, variant = ctx.access, ctx.variant
+local function transportLinkUsable(ctx, kind, transportID, fromInst, toInst)
+    local access, variant = ctx.access, ctx.ride
     local A = Access()
     if kind == 8 then
         if variant == "no_flight" then return false end
@@ -3748,7 +4180,7 @@ local function transportLinkUsable(ctx, kind, transportID)
         local t = access.transports
         return not (t and t.boat == false and t.zeppelin == false)
     end
-    if kind == 7 then return true end
+    if kind == 7 then return Router._doorAllowed(ctx, fromInst, toInst) end
     return false
 end
 
@@ -3766,7 +4198,7 @@ local function instancesReachableByAccess(ctx, fromInst, toInst)
                 local links = G:LinkKinds(cur, nextInst)
                 for i = 1, #links do
                     local link = links[i]
-                    if transportLinkUsable(ctx, link.kind, link.transportID) then
+                    if transportLinkUsable(ctx, link.kind, link.transportID, cur, nextInst) then
                         if nextInst == toInst then return true end
                         seen[nextInst] = true
                         frontier[#frontier + 1] = nextInst
@@ -3788,9 +4220,45 @@ local function teleportReaches(ctx)
     return false
 end
 
-local function unreachableMessage(ctx)
+
+function Router._doorOutside(map)
     local G = Graph()
-    local o, d = ctx.origin.inst, ctx.dest.inst
+    local best
+    for inst in pairs(FGPS.Data and FGPS.Data.instances or {}) do
+        if inst ~= map and (best == nil or inst < best) then
+            for _, link in ipairs(G:LinkKinds(map, inst)) do
+                if link.kind == 7 then
+                    best = inst
+                    break
+                end
+            end
+        end
+    end
+    return best
+end
+
+
+local function unreachableMessage(ctx, o, d)
+    local G = Graph()
+    o, d = o or ctx.origin.inst, d or ctx.dest.inst
+
+
+
+    local maps = FGPS.Data and FGPS.Data.insideMaps
+    local inside = maps and o ~= d and ((maps[d] and d) or (maps[o] and o)) or nil
+    if inside then
+        local outside = Router._doorOutside(inside)
+        local followed = outside and not maps[outside]
+        if inside == d and followed and not instancesReachableByAccess(ctx, o, outside) and not teleportReaches(ctx) then
+            return unreachableMessage(ctx, o, outside)
+        end
+        if inside == o and followed and not instancesReachableByAccess(ctx, outside, d) then
+            return unreachableMessage(ctx, outside, d)
+        end
+        local name = maps[inside].name or instanceName(inside)
+        if inside == d then return string.format(L["Cabbie knows no way yet to this place inside %s."], name) end
+        return string.format(L["Cabbie knows no way yet from this place inside %s."], name)
+    end
     if not G:InstancesConnected(o, d) then
         return string.format(L["No known transport connects %s and %s."], instanceName(o), instanceName(d))
     end
@@ -3811,6 +4279,45 @@ local function unreachableMessage(ctx)
             instanceName(d), table.concat(words, " " .. L["or"] .. " "))
     end
     return string.format(L["%s is reachable only through another continent's transports, which are currently disabled."], instanceName(d))
+end
+
+
+function Router._searchLegs(ctx)
+    local ok, reason = search(ctx)
+    if not ok then return nil, reason end
+    local edges = collectEdges()
+    if not edges then return nil, "EXHAUSTED" end
+    return buildLegs(ctx, edges)
+end
+
+
+
+
+
+
+
+
+function Router._unlessSlowerThanWithout(ctx, legs)
+    if ctx.variant ~= "roads_only" and ctx.variant ~= "prefer_roads" then return legs end
+    local first = legs[1]
+    if not first or (first.kind ~= "hearth" and first.kind ~= "spell") then return legs end
+    local o, d = ctx.origin, ctx.dest
+    if o.inst ~= d.inst and not instancesReachableByAccess(ctx, o.inst, d.inst) then return legs end
+    local function total(list)
+        local s = 0
+        for i = 1, #list do s = s + (list[i].seconds or 0) end
+        return s
+    end
+    local seconds = total(legs)
+    local teleports, bound, expansions = ctx.teleports, ctx.maxSeconds, ctx.expansions or 0
+    ctx.teleports = {}
+    ctx.maxSeconds = (bound and bound < seconds) and bound or seconds
+    local other, reason = Router._searchLegs(ctx)
+    ctx.teleports, ctx.maxSeconds = teleports, bound
+    ctx.expansions = expansions + (ctx.expansions or 0)
+    if reason == "CANCELLED" then return nil, reason end
+    if other and total(other) <= seconds then return other end
+    return legs
 end
 
 local function computeSegment(ctx)
@@ -3914,17 +4421,14 @@ local function computeSegment(ctx)
     setupFastLinks(ctx)
     if not Scheduler().Yield() then return nil, { code = "CANCELLED", message = L.ROUTE_CANCELLED } end
 
-    local ok, reason = search(ctx)
-    if ok then
-        local edges = collectEdges()
-        if edges then
-            local legs = buildLegs(ctx, edges)
+    local legs, reason = Router._searchLegs(ctx)
+    if legs then legs, reason = Router._unlessSlowerThanWithout(ctx, legs) end
+    if legs then Router._noteAlong(ctx, legs) end
+    if legs then
 
 
-            if #legs == 1 and legs[1].straight then ctx.fallback = "straight" end
-            return legs
-        end
-        reason = "EXHAUSTED"
+        if #legs == 1 and legs[1].straight then ctx.fallback = "straight" end
+        return legs
     end
     if reason == "CANCELLED" then return nil, { code = "CANCELLED", message = L.ROUTE_CANCELLED } end
     if reason == "BOUND" then
@@ -4171,9 +4675,15 @@ Router.routeCache = newLRU(Router.CACHE_SIZE)
 Router.segmentCache = newLRU(Router.CACHE_SIZE)
 Router.cacheHash = nil
 
+
+
+
+Router.cacheEpoch = 0
+
 function Router:InvalidateCache()
     self.routeCache = newLRU(self.CACHE_SIZE)
     self.segmentCache = newLRU(self.CACHE_SIZE)
+    Router.cacheEpoch = Router.cacheEpoch + 1
 end
 
 local function syncCacheHash(hash)
@@ -4262,7 +4772,7 @@ local function finalizeRoute(route, request, access)
     local C = Cost()
     local totalSeconds, totalYards, unverified, verified, transfers = 0, 0, 0, 0, 0
     local road, mesh, street, terrainRoad, terrainGround = 0, 0, 0, 0, 0
-    local surface, surfaceSwim = 0, 0
+    local surface, surfaceSwim, roadShaped, hazard = 0, 0, 0, nil
     local legs = route.legs
     for i, leg in ipairs(legs) do
         totalSeconds = totalSeconds + (leg.seconds or 0)
@@ -4270,12 +4780,17 @@ local function finalizeRoute(route, request, access)
         unverified = unverified + (leg.unverifiedYards or 0)
         verified = verified + (leg.verifiedYards or 0)
         road = road + (leg.roadYards or 0)
+        roadShaped = roadShaped + (leg.roadShapedYards or 0)
         mesh = mesh + (leg.meshYards or 0)
         street = street + (leg.streetYards or 0)
         terrainRoad = terrainRoad + (leg.terrainRoadYards or 0)
         terrainGround = terrainGround + (leg.terrainGroundYards or 0)
         surface = surface + (leg.surfaceYards or 0)
         surfaceSwim = surfaceSwim + (leg.surfaceSwimYards or 0)
+        for liquid, yards in pairs(leg.hazardYards or {}) do
+            hazard = hazard or {}
+            hazard[liquid] = (hazard[liquid] or 0) + yards
+        end
         if leg.kind ~= "walk" then
             local prev = legs[i - 1]
             if not prev or prev.kind ~= leg.kind or prev.transportID ~= leg.transportID or leg.kind == "hearth" or leg.kind == "spell" then
@@ -4285,7 +4800,8 @@ local function finalizeRoute(route, request, access)
     end
     route.totalSeconds, route.totalYards = totalSeconds, totalYards
     route.unverifiedYards, route.verifiedYards, route.transfers = unverified, verified, transfers
-    route.roadYards = road
+
+    route.roadYards, route.roadShapedYards = road, roadShaped
 
     route.streetYards = street
 
@@ -4294,6 +4810,8 @@ local function finalizeRoute(route, request, access)
 
     route.surfaceYards, route.surfaceSwimYards = surface, surfaceSwim
 
+    route.hazardYards = hazard
+
 
     route.meshYards = mesh
 
@@ -4301,8 +4819,6 @@ local function finalizeRoute(route, request, access)
     route.assumptions = { groundSpeed = C.GroundSpeed(access), speedLabel = C.SpeedLabel(access), mountSpeed = access.mountSpeed,
                           hasMount = access.hasMount, taxi = access.transports and access.transports.taxi ~= false }
     route.explain = C.Explain(route)
-    route.accessHash = access.hash
-    route.prefsHash = Util.Hash({ route.variant, access.allowUnverified, access.preferRoads, access.roadShortcuts, access.avoidDanger, access.dangerMargin })
     route.createdAt = GetTime and GetTime() or 0
     Router.nextRouteID = Router.nextRouteID + 1
     route.id = Router.nextRouteID
@@ -4314,9 +4830,10 @@ end
 
 
 
+
 local function searchVariant(request, access)
     local variant = request.variant or "fastest"
-    if variant == "fastest" and access.preferRoads then
+    if access.preferRoads then
 
         return access.roadShortcuts and "prefer_roads" or "roads_only"
     end
@@ -4341,6 +4858,10 @@ function Router._bindGoal(ctx, goal)
     s.destLowG, s.destHighG = ctx.destLowG, ctx.destHighG
     s.destZg, s.cityTrip = ctx.destZg, ctx.cityTrip
     s.destRoadNode, s.destHubKey, s.destAttach = ctx.destRoadNode, ctx.destHubKey, ctx.destAttach
+
+
+    s.destPos = ctx.vpos[DEST]
+    ctx.vpos[DEST] = goal.dest
     ctx.dest, ctx.destKey = goal.dest, goal.key
     ctx.destEnclosed, ctx.destStacked = goal.enclosed, goal.stacked
     ctx.destZ, ctx.destGuessed = goal.z, goal.guessed
@@ -4354,6 +4875,7 @@ function Router._unbindGoal(ctx, goal)
     local s = ctx._gs
     if not s or not s.on then return end
     if goal then goal.roadNode = ctx.destRoadNode end
+    ctx.vpos[DEST] = s.destPos
     ctx.dest, ctx.destKey = s.dest, s.destKey
     ctx.destEnclosed, ctx.destStacked = s.destEnclosed, s.destStacked
     ctx.destZ, ctx.destGuessed = s.destZ, s.destGuessed
@@ -4375,17 +4897,18 @@ function Router._goalH(ctx, key)
     local goals, h = ctx.goals, huge
     local speed = ctx.maxSpeed
     if not speed or speed <= 0 then return 0, 0 end
-    if inst ~= ctx.origin.inst then
-        for i = 1, #goals do
-            local rest = goals[i].outsideRest or 0
-            if rest < h then h = rest end
+
+
+
+    for i = 1, #goals do
+        local goal = goals[i]
+        local alt
+        if inst == goal.dest.inst then
+            alt = estimateFrom(goal.fastLinks, speed, x, y, goal.dest)
+        else
+            alt = goal.outsideRest or 0
         end
-    else
-        for i = 1, #goals do
-            local goal = goals[i]
-            local alt = estimateFrom(goal.fastLinks, speed, x, y, goal.dest)
-            if alt < h then h = alt end
-        end
+        if alt < h then h = alt end
     end
     if h == huge then h = 0 end
     if s then
@@ -4424,7 +4947,7 @@ function Router._closeGoal(ctx, key)
     Router._bindGoal(ctx, goal)
     local built
     if edges then
-        local ok, result = pcall(buildLegs, ctx, edges)
+        local ok, result = Scheduler().Protect(buildLegs, ctx, edges)
         if ok then built = result end
     end
     Router._unbindGoal(ctx, goal)
@@ -4459,7 +4982,7 @@ function Router._goalsDirect(ctx, fromKey, g, inst, x, y, fromZ, testZ)
         local dest = goal.dest
         if not closed[goal.key] and inst == dest.inst then
             local d = D(x, y, dest.x, dest.y)
-            if d <= ctx.maxStraight then
+            if d <= ctx.maxStraight and d <= (Router._lineReach(inst) or d) then
                 local least = g + Router._lineBound(ctx, d)
                 local known = Router._gAt(goal.key)
                 if not (known and least >= known) and not Router._swimRefused(inst, x, y, dest.x, dest.y, false) then
@@ -4523,10 +5046,13 @@ function Router._computeGoals(handle)
     local maxStraight = (access.allowUnverified ~= false) and Router.MaxStraightYards() or 0
     local hubReach = Router.HUB_REACH_YARDS
     if hubReach > maxStraight then hubReach = maxStraight end
-    local ctx = { access = access, variant = variant, maxSeconds = 1e12, origin = origin, dest = stops[1],
+    local ctx = { access = access, variant = variant, ride = request.variant or "fastest", maxSeconds = 1e12, origin = origin, dest = stops[1],
                   vpos = { [ORIGIN] = origin }, originAttach = {}, destAttach = {}, teleAttach = {}, teleEnclosed = {},
                   teleports = {}, hubAttach = {}, hubOK = {}, hubCells = {}, vetted = {}, goals = {}, goalSet = {},
                   goalHubs = {}, maxStraight = maxStraight, hubReach = hubReach, expansions = 0 }
+    local ends = {}
+    for _, stop in ipairs(stops) do ends[#ends + 1] = stop end
+    ctx.insideStarts, ctx.insideEnds = Router._insideEnds({ origin }), Router._insideEnds(ends)
     ctx.straightRate = (Cost().EdgeSeconds(KIND_ATTACH, 1, access) or 0) * Cost().RoadFactor(variant, KIND_ATTACH)
     local cities, nStops = {}, #stops
     local goalKeys = Router.GOAL_KEYS
@@ -4541,6 +5067,7 @@ function Router._computeGoals(handle)
     local G = Graph()
     local originGraph = G:Ensure(origin.inst)
     local function cancelled()
+        releaseSearch(ctx)
         return nil, { code = "CANCELLED", message = L.ROUTE_CANCELLED }
     end
     if originGraph then
@@ -4594,7 +5121,43 @@ function Router._computeGoals(handle)
     for i = 1, #ctx.goals do
         results[i] = Router._finishGoal(ctx, ctx.goals[i], request, access)
     end
+
+
+    releaseSearch(ctx)
     return { goalSearch = true, uncacheable = true, expansions = ctx.expansions or 0, results = results }
+end
+
+
+
+
+
+
+function Router._spendTeleports(access, request, legs)
+    local landing = FGPS.Personal and FGPS.Personal.LANDING_SPELLS or {}
+    local stone, spells = false, {}
+    for _, leg in ipairs(legs) do
+        local option = leg.option
+        if leg.kind == "hearth" then
+            stone = true
+        elseif leg.kind == "spell" and type(option) == "table" and landing[option.id] then
+            spells[option.id] = true
+        end
+    end
+    if not stone and next(spells) == nil then return access, request end
+    local copy = {}
+    for k, v in pairs(access) do copy[k] = v end
+    if stone then copy.hearth = nil end
+    if next(spells) ~= nil and type(access.spells) == "table" then
+        copy.spells = {}
+        for _, sp in ipairs(access.spells) do
+            if not spells[sp.id] then copy.spells[#copy.spells + 1] = sp end
+        end
+    end
+    copy.hash = Util.Hash({ "spent", access.hash })
+    local req = {}
+    for k, v in pairs(request) do req[k] = v end
+    req.access = copy
+    return copy, req
 end
 
 local function runRequest(handle)
@@ -4605,6 +5168,7 @@ local function runRequest(handle)
     local route = { variant = request.variant, legs = {}, steps = {}, stops = {}, fallback = nil, fallbackStops = {},
                     expansions = 0, reason = request.reason, origin = { inst = handle.origin.inst, x = handle.origin.x, y = handle.origin.y } }
     local prev = handle.origin
+    local stones = access
     for i, stop in ipairs(handle.stops) do
         local key = segmentKey(prev, stop, request)
 
@@ -4615,12 +5179,19 @@ local function runRequest(handle)
             local maxStraight = (access.allowUnverified ~= false) and Router.MaxStraightYards() or 0
             local hubReach = Router.HUB_REACH_YARDS
             if hubReach > maxStraight then hubReach = maxStraight end
-            local ctx = { access = access, variant = variant, maxSeconds = request.maxSeconds, origin = prev, dest = stop,
+            local ctx = { access = stones, variant = variant, ride = request.variant or "fastest", maxSeconds = request.maxSeconds, origin = prev, dest = stop,
                           vpos = { [ORIGIN] = prev, [DEST] = stop }, originAttach = {}, destAttach = {}, teleAttach = {}, teleEnclosed = {}, teleports = {},
                           hubAttach = {}, hubOK = {}, hubCells = {}, vetted = {}, maxStraight = maxStraight, hubReach = hubReach, expansions = 0 }
-            if FGPS.Perf then FGPS.Perf:Begin("route") end
+            ctx.insideStarts, ctx.insideEnds = Router._insideEnds({ prev }), Router._insideEnds({ stop })
+
+
+
+            local perf = FGPS.Perf
+            local started = perf and perf.enabled and debugprofilestop() or nil
             local legs, err = computeSegment(ctx)
-            if FGPS.Perf then FGPS.Perf:End("route") end
+            if started and not (type(err) == "table" and err.code == "CANCELLED") then
+                perf:Record("route", debugprofilestop() - started)
+            end
             releaseSearch(ctx)
             if legs and fallbackCapped(request, ctx, legs) then
                 legs, err = nil, { code = "NO_PATH", reason = "FALLBACK_CAPPED", message = L.ROUTE_NO_PATH,
@@ -4636,13 +5207,16 @@ local function runRequest(handle)
                 if i > 1 then err.partial = finalizeRoute(route, request, access) end
                 return nil, err
             end
-            seg = { legs = legs, fallback = ctx.fallback, expansions = ctx.expansions, attachInfo = ctx.attachInfo }
+            seg = { legs = legs, fallback = ctx.fallback, expansions = ctx.expansions, attachInfo = ctx.attachInfo,
+                    uncacheable = ctx.teleportWaits }
 
 
             if levelsApart(ctx.originAttach) and ctx.origin.z == nil and ctx.origin.zHint == nil then
                 seg.uncacheable = true
             end
-            if not waitsForCooldown(legs) and not seg.uncacheable then lruPut(Router.segmentCache, key, seg) end
+            if not waitsForCooldown(legs) and not seg.uncacheable and handle.epoch == Router.cacheEpoch then
+                lruPut(Router.segmentCache, key, seg)
+            end
         end
 
         if type(seg.legs) ~= "table" or #seg.legs == 0 then
@@ -4651,6 +5225,7 @@ local function runRequest(handle)
         if seg.uncacheable then route.uncacheable = true end
         appendSegment(route, seg, i, stop)
         prev = stop
+        stones, request = Router._spendTeleports(stones, request, seg.legs)
         if not Scheduler().Yield() then return nil, { code = "CANCELLED", message = L.ROUTE_CANCELLED } end
     end
     return finalizeRoute(route, request, access)
@@ -4696,6 +5271,7 @@ function Router._noteTiming(handle, route, err)
         budgetMs = handle.budgetMs or 0,
         fps = handle.fps,
         reason = reason,
+        why = type(request) == "table" and request.why or nil,
         continent = origin.inst,
     })
 end
@@ -4733,6 +5309,9 @@ local function startHandle(handle)
         return
     end
     Router.running = handle
+
+
+    handle.epoch = Router.cacheEpoch
     local access = handle.request.access
     handle.task = Scheduler():Run(function() return runRequest(handle) end, {
         label = "route",
@@ -4747,7 +5326,8 @@ local function startHandle(handle)
                 startNext()
                 return
             end
-            if ok and result and not cancelled and handle.key and not result.uncacheable and Router.cacheHash == access.hash and not waitsForCooldown(result.legs) then
+            if ok and result and not cancelled and handle.key and not result.uncacheable and Router.cacheHash == access.hash
+                and handle.epoch == Router.cacheEpoch and not waitsForCooldown(result.legs) then
                 lruPut(Router.routeCache, handle.key, routeCopy(result))
             end
 
@@ -4944,8 +5524,11 @@ function Router:Alternatives(request, callback)
     end
     local base = request.variant or "fastest"
     local order = { base }
+
+
+    local access = request.access or Access():Snapshot()
     for _, v in ipairs(self.VARIANTS) do
-        if v ~= base then order[#order + 1] = v end
+        if v ~= base and not (v == "prefer_roads" and access.preferRoads) then order[#order + 1] = v end
     end
     local results, errors, index = {}, {}, 0
     local function step()
@@ -5005,5 +5588,11 @@ function Router:Init()
         Events:Register("DATA_PART_LOADED", function()
             Router:InvalidateCache()
         end, self)
+
+
+        Events:Register("NAV_ARRIVED", function(_, _, isFinal)
+            if isFinal then Router._releaseBounds() end
+        end, self)
+        Events:Register("NAV_CANCELLED", function() Router._releaseBounds() end, self)
     end
 end

@@ -170,6 +170,7 @@ local function setOverlayState(entry, state)
     if not overlay then return end
     if state == "hidden" then
         pcall(overlay.Hide, overlay)
+        if overlay.EnableMouse then pcall(overlay.EnableMouse, overlay, false) end
         if overlay.EnableKeyboard then pcall(overlay.EnableKeyboard, overlay, false) end
         return
     end
@@ -188,6 +189,7 @@ local function setOverlayState(entry, state)
         paintPlainOverlay(overlay, HIGHLIGHT_COLOR, entry.hover and 0.18 or 0.10, entry.label)
     end
     overlay:Show()
+    if overlay.EnableMouse then pcall(overlay.EnableMouse, overlay, true) end
 end
 
 local function ensureOverlay(entry)
@@ -618,7 +620,7 @@ local function ensureDialog()
     dialog.Hint = dialog:CreateFontString(nil, "ARTWORK", look.Font("hint"))
     if dialog.Hint.SetJustifyH then dialog.Hint:SetJustifyH("LEFT") end
     if dialog.Hint.SetWordWrap then dialog.Hint:SetWordWrap(true) end
-    dialog.Hint:SetText(L["Drag to move. Arrow keys nudge the selection (Shift: 10 px)."])
+    dialog.Hint:SetText(L["Drag to move. The arrow keys move the selection a little (with Shift, more)."])
     dialog.Reset = look.Button(dialog, L["Reset to default"], BUTTON_WIDTH, BUTTON_HEIGHT)
     dialog.Reset:SetScript("OnClick", function()
         if EditMode.selectedKey then EditMode.ResetEntry(EditMode.selectedKey) end
@@ -745,7 +747,7 @@ function EditMode.ResetEntry(key)
         if setting.default ~= nil then safeSet(setting, setting.default, entry) end
     end
     local positions = Positions()
-    if positions then positions.Reset(key) end
+    if positions then positions.Reset(key, EditMode.layoutName) end
     EditMode.ApplyEntryPosition(entry)
     if entry.onPositionChanged then pcall(entry.onPositionChanged, entry.frame, "reset", nil) end
     if EditMode.selectedKey == key then
@@ -772,6 +774,38 @@ function EditMode.ApplyEntryPosition(entry)
     end
 end
 
+-- opts.available, when given, says the element can be moved right now. While it cannot
+-- (the arrow is switched off, or a fight has hidden it) the overlay stays down and takes
+-- no mouse, instead of an invisible clickable patch where the element would be.
+local function entryAvailable(entry)
+    if type(entry.available) ~= "function" then return true end
+    local ok, yes = pcall(entry.available)
+    if not ok then return true end
+    return yes and true or false
+end
+
+local function showEntry(entry)
+    local frame = entry.frame
+    if not frame:IsShown() then frame:Show() end
+    frame:SetMovable(true)
+    ensureOverlay(entry)
+    setOverlayState(entry, EditMode.selectedKey == entry.key and "selected" or "highlight")
+end
+
+local function hideEntryOverlay(entry)
+    -- ClearSelection would paint the overlay highlighted again. Drop the selection first.
+    if EditMode.selectedKey == entry.key then
+        EditMode.selectedKey = nil
+        if EditMode.dialog then
+            EditMode.closingDialog = true
+            EditMode.dialog:Hide()
+            EditMode.closingDialog = false
+        end
+    end
+    ensureOverlay(entry)
+    setOverlayState(entry, "hidden")
+end
+
 local function enterEntry(entry)
     local frame = entry.frame
     entry.wasMouseEnabled = frame:IsMouseEnabled() and true or false
@@ -780,10 +814,25 @@ local function enterEntry(entry)
         local ok, err = pcall(entry.onEditModeEnter, frame)
         if not ok and FGPS.Log then FGPS.Log:Error("onEditModeEnter for %s failed: %s", entry.key, tostring(err)) end
     end
-    if not frame:IsShown() then frame:Show() end
-    frame:SetMovable(true)
-    ensureOverlay(entry)
-    setOverlayState(entry, "highlight")
+    if not entryAvailable(entry) then
+        hideEntryOverlay(entry)
+        return
+    end
+    showEntry(entry)
+end
+
+local function refreshAvailability()
+    if not EditMode.active then return end
+    for _, key in ipairs(EditMode.order) do
+        local entry = EditMode.entries[key]
+        if entry and entry.available then
+            if entryAvailable(entry) then
+                if not entry.overlay or not entry.overlay:IsShown() then showEntry(entry) end
+            else
+                hideEntryOverlay(entry)
+            end
+        end
+    end
 end
 
 local function exitEntry(entry)
@@ -803,7 +852,7 @@ end
 
 -- opts = { key (required), label, defaultPosition, settings = { {type="slider"|"dropdown"|"checkbox",
 --          label, min, max, step, format, options, get, set, default}, ... }, onPositionChanged(frame, reason, record),
---          applyPosition(frame, layoutName), onEditModeEnter(frame), onEditModeExit(frame),
+--          applyPosition(frame, layoutName), available(), onEditModeEnter(frame), onEditModeExit(frame),
 --          onSettingChanged(frame, setting, value), positionOpts (passed to Positions.Restore) }
 function EditMode.Register(frame, opts)
     assert(type(frame) == "table", "EditMode.Register: frame is required")
@@ -824,6 +873,7 @@ function EditMode.Register(frame, opts)
     entry.settings = opts.settings
     entry.onPositionChanged = opts.onPositionChanged
     entry.applyPosition = opts.applyPosition
+    entry.available = opts.available
     entry.onEditModeEnter = opts.onEditModeEnter
     entry.onEditModeExit = opts.onEditModeExit
     entry.onSettingChanged = opts.onSettingChanged
@@ -932,7 +982,7 @@ showEditorBar = function()
         bar:SetFrameStrata("DIALOG")
         bar:SetToplevel(true)
         bar:EnableMouse(true)
-        bar.Text = frames.CreateLabel(bar, L["Cabbie layout editor: drag frames, arrow keys nudge (Shift: 10 px)."],
+        bar.Text = frames.CreateLabel(bar, L["Move Cabbie's arrow and windows. The arrow keys move the selection a little (with Shift, more)."],
             { kind = "small", color = "text" })
         bar.Text:SetPoint("LEFT", bar, "LEFT", 10, 0)
         bar.Done = frames.CreateButton(bar, L["Done"], function() EditMode.Exit() end, { width = 70, primary = true })
@@ -969,12 +1019,12 @@ end
 
 local function slashLayout()
     if EditMode.active and EditMode.native then
-        FGPS:Print(L["Edit Mode is open; move the Cabbie frames there."])
+        FGPS:Print(L["Edit Mode is open; move Cabbie's arrow and windows there."])
         return
     end
     local nowActive = EditMode.ToggleEditor()
     if nowActive then
-        FGPS:Print(L["Layout editor opened. Drag the frames, then press Done or Escape."])
+        FGPS:Print(L["Layout editor opened. Drag to move things, then press Done or Escape."])
     else
         FGPS:Print(L["Layout editor closed."])
     end
@@ -997,6 +1047,7 @@ end
 
 local function onCombatState(_, inCombatNow)
     if inCombatNow and EditMode.active and not EditMode.native then EditMode.Exit() end
+    refreshAvailability()
     if inCombatNow then
         if EditMode.editorBar and EditMode.editorBar.EnableKeyboard then EditMode.editorBar:EnableKeyboard(false) end
         setSelectedKeyboard(false)
@@ -1023,10 +1074,13 @@ function EditMode:Init()
     if FGPS.Events then
         FGPS.Events:RegisterWoW("EDIT_MODE_LAYOUTS_UPDATED", onLayoutsUpdated, EditMode)
         FGPS.Events:Register("COMBAT_STATE", onCombatState, EditMode)
-        FGPS.Events:Register("SETTINGS_CHANGED", function() refreshDialogValues() end, EditMode)
+        FGPS.Events:Register("SETTINGS_CHANGED", function()
+            refreshDialogValues()
+            refreshAvailability()
+        end, EditMode)
     end
     if FGPS.Slash and FGPS.Slash.Register then
-        FGPS.Slash.Register("layout", slashLayout, L["Toggle the layout editor for the HUD frames (fallback when Edit Mode is unavailable)"])
+        FGPS.Slash.Register("layout", slashLayout, L["Move Cabbie's arrow and windows on the screen (when the game has no Edit Mode)"])
     end
     -- Late load while Edit Mode is already open.
     if EditMode.IsAvailable() and type(EditModeManagerFrame.IsEditModeActive) == "function" then

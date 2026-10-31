@@ -58,6 +58,8 @@ local InWorldPin = {
         noticeGiven = false,    -- the back-off was said for this route
         suppressed = false,     -- released for combat, will be re-asserted
         questAtRelease = nil,   -- the quest in focus when it was released (a change from it is the player's)
+        fightMoveAt = nil,      -- when the focus last moved in that fight outside a quest's moment
+        questMomentAt = nil,    -- when a quest was last accepted, handed in or dropped
         ignore = 0,             -- > 0 while our own API calls fire events
         unavailableMaps = {},
         -- The quest the player selects by its round marker (the last section of this file):
@@ -711,10 +713,17 @@ function InWorldPin.Update(force)
             return false
         end
     end
+    -- A marker that cannot follow the place ahead (on no map, or on one that refuses a waypoint)
+    -- comes down, as for a leg without a way to walk: left up, it stayed on a place already passed
+    -- and kept the focus behind the player. The next place that can be marked is placed fresh.
     local uiMapID, mx, my = resolveMap(inst, x, y)
-    if not uiMapID then return false end
+    if not uiMapID then
+        if st.set then InWorldPin.Restore("place ahead on no map") end
+        return false
+    end
     if st.unavailableMaps[uiMapID] and key == st.targetKey then return false end
     if not canSetOnMap(uiMapID) then
+        if st.set then InWorldPin.Restore("map refuses a waypoint") end
         st.unavailableMaps[uiMapID] = true
         st.targetKey = key
         return false
@@ -734,6 +743,18 @@ end
 -------------------------------------------------------------------------------
 -- Events
 -------------------------------------------------------------------------------
+-- ROUTE_UPDATED (and the start) is fired before the new route's first progress, so the pin's
+-- copy of progress is still the previous route's. The navigator has already stored the fresh
+-- table on this route; using the old index applies a hearthstone, a portal or a lift that
+-- belongs to a different leg and clears the pin.
+local function progressOf(route)
+    local Navigator = FGPS.Navigator
+    local st = InWorldPin.state
+    if Navigator and Navigator.route == route and type(Navigator.progress) == "table" then
+        st.progress = Navigator.progress
+    end
+end
+
 local function onRouteStarted(_, route)
     local st = InWorldPin.state
     st.route = route
@@ -741,6 +762,7 @@ local function onRouteStarted(_, route)
     st.noticeGiven = false
     st.unavailableMaps = {}
     st.targetKey, st.lastSet = nil, nil
+    progressOf(route)
     if st.progress then InWorldPin.Update(true) end
 end
 
@@ -756,6 +778,7 @@ local function onRouteUpdated(_, route, reason)
     if reason == "destination" and Navigator and Navigator.askedBy == "player" then
         st.backedOff, st.noticeGiven = false, false
     end
+    progressOf(route)
     if st.progress then InWorldPin.Update(true) end
 end
 
@@ -791,7 +814,7 @@ local function onCombatState(_, inCombat)
             -- What has the focus as the marker lets go, so that only a change made during the
             -- fight counts as the player's: a quest they had before the route may stay in focus
             -- under the waypoint, and "anything tracked" afterwards would read it as one.
-            st.questAtRelease = focusedQuest()
+            st.questAtRelease, st.fightMoveAt = focusedQuest(), nil
             withIgnoredEvents(C_SuperTrack.SetSuperTrackedUserWaypoint, false)
             quietFor(InWorldPin.QUEST_QUIET)
         end
@@ -801,11 +824,12 @@ local function onCombatState(_, inCombat)
         -- in focus, or a user waypoint that is not the marker's (their own pin). No waypoint at
         -- all is no pin of theirs when the client dropped ours without a word: it is put back.
         -- The player's own clear sent USER_WAYPOINT_UPDATED (state.pinClearedInFight): theirs.
+        -- A quest the game focused by itself in the fight is in questAtRelease (onSuperTrackingChanged).
         local wp = currentWaypoint()
         local userTookOver = focusedQuest() ~= st.questAtRelease
             or (wp ~= nil and not waypointMatches(wp, st.target))
             or (wp == nil and st.pinClearedInFight)
-        st.questAtRelease = nil
+        st.questAtRelease, st.fightMoveAt = nil, nil
         st.pinClearedInFight = nil
         if userTookOver then
             InWorldPin.BackOff("combat")
@@ -918,6 +942,18 @@ local function onSuperTrackingChanged()
     st.focusQuest = quest
     -- A pin cleared while the marker is released for a fight, and not by Cabbie: the player's.
     if st.suppressed and st.ignore == 0 and currentWaypoint() == nil then st.pinClearedInFight = true end
+    -- A focus that moves in that fight is the player's when the fight ends (onCombatState), unless
+    -- it moves at a quest's moment, when the game moves it by itself: that quest, or none, is then
+    -- what the end of the fight compares with. A quest reported later in the same frame is
+    -- matched by noteQuestMoment.
+    if st.suppressed and quest ~= before then
+        local t = now()
+        if st.questMomentAt and t - st.questMomentAt <= InWorldPin.QUEST_QUIET then
+            st.questAtRelease = quest
+        else
+            st.fightMoveAt = t
+        end
+    end
     local own = st.ignore > 0 or (quest ~= nil and quest == st.ownQuest)
     if quest ~= st.ownQuest then st.ownQuest = nil end
     if quest and quest ~= before and not own and followsSelection() then
@@ -936,6 +972,16 @@ local function onSuperTrackingChanged()
     if st.ignore > 0 or not st.set or st.backedOff then return end
     if InWorldPin.IsOurTrackingIntact() then return end
     InWorldPin.BackOff("user")
+end
+
+-- A quest accepted, handed in or dropped: a moment at which the game may move its focus by itself.
+-- In a fight that released the marker, a focus that moved in this same frame before the quest was
+-- reported is the game's too (onSuperTrackingChanged).
+local function noteQuestMoment()
+    quietFor(InWorldPin.QUEST_QUIET)
+    local st = InWorldPin.state
+    st.questMomentAt = now()
+    if st.suppressed and st.fightMoveAt == st.questMomentAt then st.questAtRelease = focusedQuest() end
 end
 
 local function onSettingsChanged(_, key, value)
@@ -969,25 +1015,28 @@ function InWorldPin:Init()
         E:RegisterWoW("SUPER_TRACKING_CHANGED", onSuperTrackingChanged, InWorldPin)
         E:RegisterWoW("USER_WAYPOINT_UPDATED", onSuperTrackingChanged, InWorldPin)
         -- Moments at which the game may move its focus by itself (see the section above).
-        local function questEvent() quietFor(InWorldPin.QUEST_QUIET) end
         -- A quest handed in or dropped: Nav/Quests.lua hears it first and ends a route that led to
         -- it, and the client still has the quest in its log then, so giveBack has just focused it
         -- again. That focus, given by this module, goes now; one the player gave is the game's.
         local function questLeft(_, questID)
-            quietFor(InWorldPin.QUEST_QUIET)
+            noteQuestMoment()
             local st = InWorldPin.state
             if questID ~= nil and questID == st.ownQuest and focusedQuest() == questID then
                 st.ownQuest = nil
                 withIgnoredEvents(C_SuperTrack.SetSuperTrackedQuestID, 0)
             end
         end
-        E:RegisterWoW("QUEST_ACCEPTED", questEvent, InWorldPin)
+        E:RegisterWoW("QUEST_ACCEPTED", noteQuestMoment, InWorldPin)
         E:RegisterWoW("QUEST_TURNED_IN", questLeft, InWorldPin)
         E:RegisterWoW("QUEST_REMOVED", questLeft, InWorldPin)
         -- Entering the world is the first moment the client's own waypoint is certain to be loaded.
         E:Register("WORLD_ENTERED", function()
             quietFor(InWorldPin.WORLD_QUIET)
             InWorldPin.ClearLeftover(true)
+            -- A fight can end behind a loading screen with no COMBAT_STATE, and under hide_all the
+            -- marker would stay released until the next fight ends: the fight is read again, as
+            -- the navigator reads it.
+            if InCombatLockdown and inFight() ~= InWorldPin.state.inCombat then onCombatState(nil, inFight()) end
         end, InWorldPin)
     end
     InWorldPin.state.focusQuest = focusedQuest()

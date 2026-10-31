@@ -17,6 +17,7 @@
 
 
 
+
 local ADDON_NAME, FGPS = ...
 
 local Route = {}
@@ -41,22 +42,6 @@ Route.OPEN_GROUND_KINDS = { [19] = true }
 
 
 Route.SURFACE_KINDS = { [22] = true, [23] = true }
-function Route.IsOpenGround(kind)
-    return Route.UNVERIFIED_KINDS[kind] == true or Route.OPEN_GROUND_KINDS[kind] == true
-end
-
-
-Route.KIND4_PAINT_ERROR_SAMPLES = {
-    elwynn_eastvale_5_none = {
-        src = "signpost:Eastvale Logging Camp:5-None",
-        map = 1429,
-        chordYards = 177.4,
-        shapeYards = 370.9,
-    },
-}
-function Route.Kind4PaintExcessYards(sample)
-    return sample.shapeYards - sample.chordYards
-end
 
 
 local drawDashed
@@ -558,6 +543,7 @@ function Route.Summary(route)
         yards = route and route.totalYards or 0,
         unverifiedYards = route and route.unverifiedYards or 0,
         verifiedYards = route and route.verifiedYards or 0,
+
 
 
         roadYards = route and route.roadYards or 0,

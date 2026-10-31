@@ -49,6 +49,7 @@ local MapPlaces = {
 
 
 
+
     MAX_ICONS = 60,
 
 
@@ -73,9 +74,9 @@ local MapPlaces = {
         { key = "inns", types = { 7 }, texture = MEDIA .. "place_inn", default = false,
           label = "Show inns on the world map",
           tooltip = "Inns of the zone you are looking at get a small icon on the world map. Left-click one to route there." },
-        { key = "dungeons", types = { 3 }, texture = MEDIA .. "place_dungeon", default = false,
-          label = "Show dungeon entrances on the world map",
-          tooltip = "Dungeon entrances of the zone you are looking at get a small icon on the world map. Left-click one to route there." },
+        { key = "dungeons", types = { 3, 4 }, texture = MEDIA .. "place_dungeon", default = false,
+          label = "Show dungeon and raid entrances on the world map",
+          tooltip = "Dungeon and raid entrances of the zone you are looking at get a small icon on the world map. Left-click one to route there." },
         { key = "banks", types = { 11 }, texture = MEDIA .. "place_bank", default = false,
           label = "Show banks on the world map",
           tooltip = "Banks of the zone you are looking at get a small icon on the world map. Left-click one to route there." },
@@ -259,15 +260,21 @@ end
 
 
 
+
+
+
+
+
 function MapPlaces.PlacesFor(mapID)
     local out = {}
     if not MapPlaces.MapShowsPlaces(mapID) then return out end
     local P = poi()
     if not P then return out end
+    local lists, total = {}, 0
     for _, row in ipairs(MapPlaces.CATEGORIES) do
         if MapPlaces.CategoryEnabled(row) then
+            local list = {}
             for _, i in ipairs(indicesFor(row)) do
-                if #out >= MapPlaces.MAX_ICONS then return out end
                 local belongs = P.map[i] == mapID
                 if not belongs and row.hostTypes and row.hostTypes[P.type[i]] then
                     belongs = MapPlaces.HostZone(i) == mapID
@@ -275,11 +282,31 @@ function MapPlaces.PlacesFor(mapID)
                 if belongs then
                     local mx, my = toMap(P.inst[i], P.x[i], P.y[i], mapID)
                     if mx and mx >= 0 and mx <= 1 and my >= 0 and my <= 1 then
-                        out[#out + 1] = { index = i, x = mx, y = my, category = row,
-                                          otherFaction = isOtherFaction(factionOf(i)) }
+                        list[#list + 1] = { index = i, x = mx, y = my, category = row }
                     end
                 end
             end
+            if #list > 0 then
+                lists[#lists + 1] = list
+                total = total + #list
+            end
+        end
+    end
+
+    local quota, left = {}, min(MapPlaces.MAX_ICONS, total)
+    for k = 1, #lists do quota[k] = 0 end
+    while left > 0 do
+        for k = 1, #lists do
+            if left > 0 and quota[k] < #lists[k] then
+                quota[k], left = quota[k] + 1, left - 1
+            end
+        end
+    end
+    for k, list in ipairs(lists) do
+        for n = 1, quota[k] do
+            local place = list[n]
+            place.otherFaction = isOtherFaction(factionOf(place.index))
+            out[#out + 1] = place
         end
     end
     return out
@@ -341,7 +368,7 @@ local function ensureReplacePopup()
         OnAccept = function(self)
             local dest = self.data
             local WorldMap = FGPS.UI.WorldMap
-            if dest and WorldMap and WorldMap.GoTo then WorldMap.GoTo(dest, { start = true }) end
+            if dest and WorldMap and WorldMap.GoTo then WorldMap.GoTo(dest, { start = true, quiet = true }) end
         end,
         OnCancel = function() end,
         OnAlt = function(self)
@@ -356,7 +383,7 @@ end
 local function askBeforeReplace(dest)
     if not ensureReplacePopup() or type(StaticPopup_Show) ~= "function" then
         local WorldMap = FGPS.UI.WorldMap
-        if WorldMap and WorldMap.GoTo then WorldMap.GoTo(dest, { start = true }) end
+        if WorldMap and WorldMap.GoTo then WorldMap.GoTo(dest, { start = true, quiet = true }) end
         return
     end
     local name = (dest and dest.name) or L["that place"]
@@ -404,7 +431,7 @@ local function onClick(icon, button)
         askBeforeReplace(dest)
         return
     end
-    WorldMap.GoTo(dest, { start = true })
+    WorldMap.GoTo(dest, { start = true, quiet = true })
 end
 
 local function onEnter(icon)

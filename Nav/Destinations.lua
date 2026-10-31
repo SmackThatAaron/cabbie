@@ -20,6 +20,10 @@
 
 
 
+
+
+
+
 local ADDON_NAME, FGPS = ...
 
 local L = FGPS.L
@@ -55,6 +59,7 @@ local TYPE_LABELS = {
     bank = "Bank", auction = "Auction house", trainer = "Trainer", dock = "Dock", tram = "Tram", graveyard = "Graveyard",
     portal = "Portal", zone = "Zone", battleground = "Battleground", stable = "Stable master", subzone = "Area",
     taxi = "Flight master", quest = "Quest", coord = "Coordinates", custom = "Custom", service = "Service",
+    room = "Room", boss = "Boss",
 }
 
 
@@ -62,9 +67,11 @@ local TYPE_PRIORITY = {
     capital = 1, town = 2, zone = 3, taxi = 4, flightmaster = 4, inn = 5, dungeon = 6, raid = 6, landmark = 7,
     dock = 8, tram = 8, portal = 9, bank = 10, auction = 10, mailbox = 11, repair = 12, vendor = 13, trainer = 13,
     stable = 14, graveyard = 15, battleground = 16, subzone = 17, service = 5, coord = 20, custom = 20, quest = 20,
+    room = 18, boss = 18,
 }
 
 local SCORE_EXACT, SCORE_PREFIX, SCORE_WORD, SCORE_SUBSTRING, SCORE_ZONE = 100, 80, 60, 40, 30
+
 
 
 
@@ -80,6 +87,7 @@ local KIND_WORDS = {
     flight = "flightmaster", ["flight master"] = "flightmaster", flightmaster = "flightmaster",
     trainer = "trainer", vendor = "vendor",
     inn = "inn", innkeeper = "inn",
+    stable = "stable", ["stable master"] = "stable",
 }
 
 
@@ -95,6 +103,9 @@ end
 Destinations.Distance = dist
 
 local function lower(s) return Util.Lower(s) end
+
+
+local function fold(s) return (lower(s):gsub("'", "")) end
 
 local function maps() return FGPS.Data and FGPS.Data.maps or nil end
 local function poi() return FGPS.Data and FGPS.Data.poi or nil end
@@ -230,54 +241,13 @@ end
 
 
 
-function Destinations.PlayerPos()
-    local C = FGPS.Coords
-    if C and C.PlayerPos then return C.PlayerPos() end
-    if not UnitPosition then return nil end
-    local py, px, _, inst = UnitPosition("player")
-    if not px or not py then return nil end
-    local pos = { inst = inst, x = px, y = py }
-    if C_Map and C_Map.GetBestMapForUnit then
-        local map = C_Map.GetBestMapForUnit("player")
-        if map then
-            pos.map = map
-            if C_Map.GetPlayerMapPosition then
-                local v = C_Map.GetPlayerMapPosition(map, "player")
-                if v then pos.mx, pos.my = v:GetXY() end
-            end
-        end
-    end
-    return pos
-end
 
-local function mapToWorld(uiMapID, mx, my)
-    local C = FGPS.Coords
-    if C and C.MapToWorld then return C.MapToWorld(uiMapID, mx, my) end
-    local m = maps() and maps()[uiMapID]
-    if not m or not m.minX then return nil end
-    return m.inst, m.maxX - mx * (m.maxX - m.minX), m.maxY - my * (m.maxY - m.minY)
-end
+function Destinations.PlayerPos() return FGPS.Coords.PlayerPos() end
+
+local function mapToWorld(uiMapID, mx, my) return FGPS.Coords.MapToWorld(uiMapID, mx, my) end
 Destinations.MapToWorld = mapToWorld
 
-local function worldToMap(inst, x, y, uiMapID)
-    local C = FGPS.Coords
-    if C and C.WorldToMap then return C.WorldToMap(inst, x, y, uiMapID) end
-    local all = maps()
-    if not all then return nil end
-    local id = uiMapID
-    if not id then
-        local bestArea
-        for mapID, m in pairs(all) do
-            if m.kind == 3 and m.inst == inst and m.minX and x >= m.minX and x <= m.maxX and y >= m.minY and y <= m.maxY then
-                local area = (m.maxX - m.minX) * (m.maxY - m.minY)
-                if not bestArea or area < bestArea then id, bestArea = mapID, area end
-            end
-        end
-    end
-    local m = id and all[id]
-    if not m or not m.minX or m.inst ~= inst then return nil end
-    return id, (m.maxX - x) / (m.maxX - m.minX), (m.maxY - y) / (m.maxY - m.minY)
-end
+local function worldToMap(inst, x, y, uiMapID) return FGPS.Coords.WorldToMap(inst, x, y, uiMapID) end
 Destinations.WorldToMap = worldToMap
 
 local function mapName(uiMapID)
@@ -291,13 +261,7 @@ local function mapName(uiMapID)
 end
 Destinations.MapName = mapName
 
-local function zoneAt(inst, x, y)
-    local C = FGPS.Coords
-    if C and C.ZoneAt then return C.ZoneAt(inst, x, y) end
-    local id = worldToMap(inst, x, y)
-    if not id then return nil end
-    return id, mapName(id)
-end
+local function zoneAt(inst, x, y) return FGPS.Coords.ZoneAt(inst, x, y) end
 
 
 
@@ -369,10 +333,20 @@ function Destinations.ApplyReachability(dest)
             end
         end
     end
+
+
+
+
+    if Graph.HasData and Graph.IsLoaded and Graph:HasData(dest.inst) and not Graph:IsLoaded(dest.inst) then
+        dest.reachable = nil
+        dest.reachableNote = "not_loaded"
+        return dest
+    end
     dest.reachable = false
     dest.reachableNote = "no_verified_path"
     return dest
 end
+
 
 
 function Destinations.Resolve(dest)
@@ -480,8 +454,18 @@ function Destinations.FromMapClick(uiMapID, mx, my)
 end
 
 
+
+
+
+function Destinations.DecimalCommas(text)
+    if type(text) ~= "string" then return text end
+    return (text:gsub("(%d),(%d+)([%s,;:/]+%-?%d+),(%d)", "%1.%2%3.%4", 1))
+end
+
+
 function Destinations.ParseCoords(text)
     if type(text) ~= "string" then return nil end
+    text = Destinations.DecimalCommas(text)
     local nums = {}
     local rest = text:gsub("(%-?%d+%.?%d*)", function(n)
         if #nums < 2 then
@@ -517,12 +501,12 @@ Destinations.ScoreName = scoreName
 function Destinations.ResolveZoneName(name)
     local all = maps()
     if not all or type(name) ~= "string" then return nil end
-    local q = lower(Util.Trim(name))
+    local q = Util.Trim(fold(name))
     if q == "" then return nil end
     local bestID, bestScore, bestKind
     for id, m in pairs(all) do
         if m.name and m.minX and m.sys ~= 1 then
-            local s = scoreName(lower(m.name), q)
+            local s = scoreName(fold(m.name), q)
             if s > 0 then
                 local kindRank = (m.kind == 3) and 0 or 1
                 if not bestScore or s > bestScore or (s == bestScore and (kindRank < bestKind or (kindRank == bestKind and id < bestID))) then
@@ -564,10 +548,13 @@ function Destinations.FromCoords(mapArg, x100, y100)
     return dest
 end
 
-function Destinations.FromPOI(poiIndex)
+
+
+
+function Destinations.FromPOI(poiIndex, opts)
     local dest = destFromPOIIndex(tonumber(poiIndex))
     if not dest then return nil, "no_poi" end
-    Destinations.ApplyReachability(dest)
+    if not (opts and opts.reachability == false) then Destinations.ApplyReachability(dest) end
     return dest
 end
 
@@ -585,36 +572,116 @@ end
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
 local index = { static = nil, learned = nil, learnedCount = -1,
-                srcPoi = nil, srcPoiCount = nil, srcMaps = nil, srcTaxi = nil }
+                srcPoi = nil, srcPoiCount = nil, srcMaps = nil, srcTaxi = nil, srcInteriors = nil,
+                srcInside = nil, srcLinks = nil, srcLocale = nil }
 
 local function addEntry(list, e)
-    e.key = lower(e.name)
-    e.zoneKey = e.zoneName and lower(e.zoneName) or ""
+    e.key = fold(e.name)
+    e.zoneKey = e.zoneName and fold(e.zoneName) or ""
     list[#list + 1] = e
 end
 
+
+
+
+
+
+
+local function addInsideEntries(list, map, rec, ownName)
+    local LocalRoomName = FGPS.Coords and FGPS.Coords.LocalRoomName
+    for _, room in ipairs(rec.rooms or {}) do
+        local name = LocalRoomName and type(room.name) == "string" and LocalRoomName(room.name, room.area) or nil
+        if name and (ownName or room.name ~= rec.name) then
+            addEntry(list, { kind = "inside", ref = map, name = name, inst = map, x = room.x, y = room.y, z = room.z,
+                             type = "room", code = 0, fac = 0, zoneName = rec.name, dungeon = rec.name })
+        end
+    end
+    for _, boss in ipairs(rec.bosses or {}) do
+        if type(boss.name) == "string" then
+            addEntry(list, { kind = "inside", ref = map, name = boss.name, inst = map, x = boss.x, y = boss.y, z = boss.z,
+                             type = "boss", code = 0, fac = 0, zoneName = rec.name, dungeon = rec.name })
+        end
+    end
+end
+
+
+
+
+local doorSet = { links = nil, maps = nil }
+local function doorMaps()
+    local links = FGPS.Data and FGPS.Data.links
+    if doorSet.maps and doorSet.links == links then return doorSet.maps end
+    local set = {}
+    for _, l in ipairs(type(links) == "table" and links or {}) do
+        if l[5] == 7 then set[l[1]], set[l[3]] = true, true end
+    end
+    doorSet.links, doorSet.maps = links, set
+    return set
+end
+
+
+
+function Destinations.EnteredByDoor(map)
+    local inside = FGPS.Data and FGPS.Data.insideMaps
+    return map ~= nil and type(inside) == "table" and inside[map] ~= nil and doorMaps()[map] == true
+end
+
 local function buildStatic()
-    local list = {}
     local P = poi()
+    local static = { poi = P, n = 0, key = {}, fac = {}, zoneKey = {}, extra = {}, alias = {} }
     local names = zoneNames()
     local zoneEntryNames, flightNames = {}, {}
     if P then
+        local otherNames = {}
+        local interiors = FGPS.Data and FGPS.Data.interiors
+        if type(interiors) == "table" then
+            for _, rec in ipairs(interiors) do
+                if type(rec) == "table" and rec.source and type(rec.aliases) == "table" then
+                    otherNames[(rec.kind == "raid" and "4|" or "3|") .. rec.source] = rec.aliases
+                end
+            end
+        end
+        local key, fac, zoneKey, alias = static.key, static.fac, static.zoneKey, static.alias
+        static.n = P.n
         for i = 1, P.n do
-            local code = P.type[i]
-            local e = { kind = "poi", ref = i, name = P.name[i], inst = P.inst[i], x = P.x[i], y = P.y[i], map = P.map[i],
-                        type = TYPE_NAMES[code] or "landmark", code = code, fac = sideOf(i) or 0, zoneName = names[P.zone[i] or 0] }
-            if code == 18 then zoneEntryNames[lower(e.name)] = true end
-            if code == 6 then flightNames[lower(e.name)] = true end
-            addEntry(list, e)
+            local code, name, zone = P.type[i], P.name[i], P.zone[i] or 0
+            key[i] = fold(name)
+            fac[i] = sideOf(i) or 0
+            if not zoneKey[zone] then zoneKey[zone] = names[zone] and fold(names[zone]) or "" end
+            if code == 18 then zoneEntryNames[lower(name)] = true end
+            if code == 6 then flightNames[lower(name)] = true end
+            local other = (code == 3 or code == 4) and otherNames[code .. "|" .. tostring(P.src[i])] or nil
+            if type(other) == "table" then
+                for _, text in ipairs(other) do
+                    if type(text) == "string" and text ~= "" then alias[#alias + 1] = { row = i, key = fold(text) } end
+                end
+            end
         end
     end
     local all = maps()
     if all then
+
+
+        local Graph = FGPS.Graph
+        local hasData = Graph and Graph.HasData
         for id, m in pairs(all) do
-            if m.kind == 3 and m.minX and m.name and not zoneEntryNames[lower(m.name)] then
-                addEntry(list, { kind = "zone", ref = id, name = m.name, inst = m.inst, x = (m.minX + m.maxX) / 2,
-                                 y = (m.minY + m.maxY) / 2, map = id, type = "zone", code = 18, fac = 0, zoneName = m.name })
+            if m.kind == 3 and m.minX and m.name and not zoneEntryNames[lower(m.name)]
+                and (not hasData or Graph:HasData(m.inst)) then
+                addEntry(static.extra, { kind = "zone", ref = id, name = m.name, inst = m.inst, x = (m.minX + m.maxX) / 2,
+                                         y = (m.minY + m.maxY) / 2, map = id, type = "zone", code = 18, fac = 0, zoneName = m.name })
             end
         end
     end
@@ -625,12 +692,36 @@ local function buildStatic()
             if n.name and not flightNames[lower(n.name)] then
                 local fac = (n.fac == 3 or n.fac == nil) and 0 or n.fac
                 local zone = n.map and mapName(n.map) or nil
-                addEntry(list, { kind = "taxi", ref = nodeID, name = n.name, inst = n.inst, x = n.x, y = n.y, map = n.map,
-                                 type = "taxi", code = 6, fac = fac, zoneName = zone })
+                addEntry(static.extra, { kind = "taxi", ref = nodeID, name = n.name, inst = n.inst, x = n.x, y = n.y, map = n.map,
+                                         type = "taxi", code = 6, fac = fac, zoneName = zone })
             end
         end
     end
-    return list
+    local inside = FGPS.Data and FGPS.Data.insideMaps
+    if type(inside) == "table" then
+        local doors, ids = doorMaps(), {}
+        for map in pairs(inside) do
+            if doors[map] then ids[#ids + 1] = map end
+        end
+        table.sort(ids)
+        for _, map in ipairs(ids) do addInsideEntries(static.extra, map, inside[map], false) end
+    end
+    return static
+end
+
+
+
+local function entryPlace(static, e)
+    if type(e) == "number" then
+        local P = static.poi
+        return P.name[e], P.inst[e], P.x[e], P.y[e], TYPE_NAMES[P.type[e]] or "landmark"
+    end
+    return e.name, e.inst, e.x, e.y, e.type
+end
+
+local function entryKey(static, e)
+    if type(e) == "number" then return static.key[e] end
+    return e.key
 end
 
 local function learnedServices()
@@ -674,9 +765,14 @@ end
 
 local function ensureIndex()
     local P, all, taxi = poi(), maps(), FGPS.Data and FGPS.Data.taxi or nil
-    if not index.static or index.srcPoi ~= P or index.srcPoiCount ~= (P and P.n) or index.srcMaps ~= all or index.srcTaxi ~= taxi then
+    local interiors = FGPS.Data and FGPS.Data.interiors or nil
+    local inside, links = FGPS.Data and FGPS.Data.insideMaps or nil, FGPS.Data and FGPS.Data.links or nil
+    local locale = FGPS.Coords and FGPS.Coords.ClientLocale and FGPS.Coords.ClientLocale() or false
+    if not index.static or index.srcPoi ~= P or index.srcPoiCount ~= (P and P.n) or index.srcMaps ~= all or index.srcTaxi ~= taxi
+        or index.srcInteriors ~= interiors or index.srcInside ~= inside or index.srcLinks ~= links or index.srcLocale ~= locale then
         index.static = buildStatic()
         index.srcPoi, index.srcPoiCount, index.srcMaps, index.srcTaxi = P, P and P.n, all, taxi
+        index.srcInteriors, index.srcInside, index.srcLinks, index.srcLocale = interiors, inside, links, locale
     end
     local learned = learnedServices()
     if not index.learned or index.learnedCount ~= #learned then
@@ -687,7 +783,7 @@ local function ensureIndex()
 end
 
 local function destFromEntry(e)
-    if e.kind == "poi" then return destFromPOIIndex(e.ref) end
+    if type(e) == "number" then return destFromPOIIndex(e) end
     if e.kind == "taxi" then
         local dest = { kind = "taxi", taxiNodeID = e.ref, name = e.name, inst = e.inst, x = e.x, y = e.y, map = e.map,
                        type = "taxi", zoneName = e.zoneName, faction = e.fac ~= 0 and e.fac or nil }
@@ -697,6 +793,11 @@ local function destFromEntry(e)
         local dest = { kind = "custom", name = e.name, inst = e.inst, x = e.x, y = e.y, map = e.map, type = "zone",
                        zoneName = e.zoneName, uiMapID = e.ref }
         return finishDest(dest)
+    end
+    if e.kind == "inside" then
+
+        return { kind = "inside", type = e.type, name = e.name, inst = e.inst, x = e.x, y = e.y, z = e.z,
+                 dungeon = e.dungeon, zoneName = e.dungeon }
     end
     local s = e.learned or {}
     local dest = { kind = "service", name = e.name, inst = e.inst, x = e.x, y = e.y, map = e.map, mx = s.mx, my = s.my,
@@ -733,16 +834,16 @@ end
 
 
 
-local function scoreEntry(e, words, whole)
+local function scoreEntry(key, zoneKey, words, whole)
     local total
     for _, w in ipairs(words) do
-        local s = scoreName(e.key, w)
-        if s == 0 and e.zoneKey ~= "" and (e.zoneKey:find(w, 1, true)) then s = SCORE_ZONE end
+        local s = scoreName(key, w)
+        if s == 0 and zoneKey ~= "" and (zoneKey:find(w, 1, true)) then s = SCORE_ZONE end
         if s == 0 then return 0 end
         if not total or s < total then total = s end
     end
     if total and whole then
-        local s = scoreName(e.key, whole)
+        local s = scoreName(key, whole)
         if s > total then total = s end
     end
     return total or 0
@@ -762,7 +863,7 @@ end
 
 function Destinations.Search(text, opts)
     opts = opts or {}
-    local q = lower(Util.Trim(text or ""))
+    local q = Util.Trim(fold(text or ""))
     if q == "" then return {} end
     local split = Util.Split(q, " ")
     if #split == 0 then return {} end
@@ -782,6 +883,8 @@ function Destinations.Search(text, opts)
     local playerCode = opts.faction == "Alliance" and 1 or opts.faction == "Horde" and 2 or Destinations.PlayerFactionCode()
     local allFactions = opts.allFactions or opts.faction == "all"
     local types = typeFilter(opts.types)
+
+    if types and (types.dungeon or types.raid) then types.room, types.boss = true, true end
     local first = typeFilter(opts.first)
     local kindOf = KIND_WORDS[q] and typeFilter({ KIND_WORDS[q] }) or nil
     local kinds = opts.kinds and typeFilter(opts.kinds) or nil
@@ -789,49 +892,68 @@ function Destinations.Search(text, opts)
     local static, learned = ensureIndex()
 
     local hits = {}
-    local function consider(e)
-        if types and not types[e.type] then return end
-        if kinds and not kinds[e.kind] then return end
-        local side = not allFactions and otherSide(e.fac, playerCode) or nil
-        if side and e.learned then return end
-        if side and not ANY_SIDE_TYPES[e.type] and not ITEM_TYPES[e.type] then return end
-        local s, tier = scoreEntry(e, words, whole), 1
-        if kindOf and kindOf[e.type] then
+
+
+
+
+
+
+    local function consider(e, kind, typeName, fac, key, zoneKey, isLearned, isAlias)
+        if types and not types[typeName] then return end
+        if kinds and not kinds[kind] then return end
+        local side = not allFactions and otherSide(fac, playerCode) or nil
+        if side and isLearned then return end
+        if side and not ANY_SIDE_TYPES[typeName] and not ITEM_TYPES[typeName] then return end
+        local s, tier = scoreEntry(key, zoneKey, words, whole), 1
+
+
+        if isAlias and s < SCORE_PREFIX then return end
+        if kindOf and kindOf[typeName] then
             s, tier = SCORE_EXACT, 0
-        elseif first and first[e.type] and s >= SCORE_WORD then
+        elseif first and first[typeName] and s >= SCORE_WORD then
             tier = 0
         end
         if s > 0 then
+            local _, inst, x, y = entryPlace(static, e)
             local d
-            if pos and pos.inst == e.inst then d = dist(pos.x, pos.y, e.x, e.y) else d = 1e9 end
-            hits[#hits + 1] = { e = e, score = s, tier = tier, dist = d, prio = TYPE_PRIORITY[e.type] or 18,
-                                side = side, other = side ~= nil }
+            if pos and pos.inst == inst then d = dist(pos.x, pos.y, x, y) else d = 1e9 end
+            local item = 0
+            if ITEM_TYPES[typeName] then
+                if side then item = 2 elseif not kindOf and fac ~= 1 and fac ~= 2 then item = 1 end
+            end
+            hits[#hits + 1] = { e = e, score = s, tier = tier, dist = d, prio = TYPE_PRIORITY[typeName] or 18,
+                                side = side, other = side ~= nil, item = item }
         end
     end
-    for i = 1, #static do consider(static[i]) end
-    for i = 1, #learned do consider(learned[i]) end
-
-
-
-
-
-
-    local function itemSide(h)
-        if not ITEM_TYPES[h.e.type] then return 0 end
-        if h.other then return 2 end
-        if kindOf then return 0 end
-        if h.e.fac == 1 or h.e.fac == 2 then return 0 end
-        return 1
+    if static.n > 0 then
+        local P, keys, facs, zoneKeys = static.poi, static.key, static.fac, static.zoneKey
+        local ptype, pzone = P.type, P.zone
+        for i = 1, static.n do
+            consider(i, "poi", TYPE_NAMES[ptype[i]] or "landmark", facs[i], keys[i], zoneKeys[pzone[i] or 0], false)
+        end
+        local alias = static.alias
+        for j = 1, #alias do
+            local i = alias[j].row
+            consider(i, "poi", TYPE_NAMES[ptype[i]] or "landmark", facs[i], alias[j].key, zoneKeys[pzone[i] or 0], false, true)
+        end
+    end
+    local extra = static.extra
+    for i = 1, #extra do
+        local e = extra[i]
+        consider(e, e.kind, e.type, e.fac, e.key, e.zoneKey, false)
+    end
+    for i = 1, #learned do
+        local e = learned[i]
+        consider(e, e.kind, e.type, e.fac, e.key, e.zoneKey, e.learned ~= nil)
     end
     table.sort(hits, function(a, b)
         if a.tier ~= b.tier then return a.tier < b.tier end
-        local sa, sb = itemSide(a), itemSide(b)
-        if sa ~= sb then return sa < sb end
+        if a.item ~= b.item then return a.item < b.item end
         if a.score ~= b.score then return a.score > b.score end
         if a.other ~= b.other then return b.other end
         if a.prio ~= b.prio then return a.prio < b.prio end
         if a.dist ~= b.dist then return a.dist < b.dist end
-        return a.e.key < b.e.key
+        return entryKey(static, a.e) < entryKey(static, b.e)
     end)
 
 
@@ -842,16 +964,16 @@ function Destinations.Search(text, opts)
     for i = 1, #hits do
         local h = hits[i]
         local e = h.e
+        local name, inst, x, y, typeName = entryPlace(static, e)
         local kept
-        local sameName = byName[e.name]
+        local sameName = byName[name]
         if sameName then
             for j = 1, #sameName do
                 local r = sameName[j]
-                if r.dest.inst == e.inst and r.x == e.x and r.y == e.y then kept = r break end
+                if r.dest.inst == inst and r.x == x and r.y == y then kept = r break end
             end
         end
         if kept then
-            local typeName = e.type
             local more = kept.moreTypes
             local listed = typeName == kept.dest.type
             if more and not listed then
@@ -872,17 +994,39 @@ function Destinations.Search(text, opts)
             if dest then
                 local row = { dest = dest, score = h.score, label = labelFor(dest.name, dest.zoneName, dest.type, nil, h.side),
                               distance = h.dist < 1e9 and h.dist or nil, otherFaction = h.other or nil,
-                              x = e.x, y = e.y, side = h.side }
+                              x = x, y = y, side = h.side }
                 out[#out + 1] = row
                 if not sameName then
                     sameName = {}
-                    byName[e.name] = sameName
+                    byName[name] = sameName
                 end
                 sameName[#sameName + 1] = row
             end
         end
     end
     for i = 1, #out do out[i].x, out[i].y, out[i].side = nil, nil, nil end
+    return out
+end
+
+
+
+
+
+function Destinations.InsidePlaces(map)
+    local inside = FGPS.Data and FGPS.Data.insideMaps
+    local rec = type(inside) == "table" and map ~= nil and inside[map] or nil
+    if type(rec) ~= "table" then return {} end
+    local entries = {}
+    addInsideEntries(entries, map, rec, true)
+    table.sort(entries, function(a, b)
+        if a.type ~= b.type then return a.type == "room" end
+        return a.key < b.key
+    end)
+    local out = {}
+    for i, e in ipairs(entries) do
+        local dest = destFromEntry(e)
+        out[i] = { dest = dest, score = 0, label = labelFor(dest.name, dest.zoneName, dest.type) }
+    end
     return out
 end
 
@@ -898,20 +1042,27 @@ function Destinations.Browse(opts)
     local pos = Destinations.PlayerPos()
     local static = ensureIndex()
     local hits = {}
-    for i = 1, #static do
-        local e = static[i]
-        if types[e.type] then
-            local side = otherSide(e.fac, playerCode)
-            if not (side and not ANY_SIDE_TYPES[e.type] and not ITEM_TYPES[e.type]) then
-                local d
-                if pos and pos.inst == e.inst then d = dist(pos.x, pos.y, e.x, e.y) else d = 1e9 end
-                hits[#hits + 1] = { e = e, dist = d, side = side, other = side ~= nil }
-            end
+    local function consider(e, typeName, fac, inst, x, y)
+        local side = otherSide(fac, playerCode)
+        if not (side and not ANY_SIDE_TYPES[typeName] and not ITEM_TYPES[typeName]) then
+            local d
+            if pos and pos.inst == inst then d = dist(pos.x, pos.y, x, y) else d = 1e9 end
+            hits[#hits + 1] = { e = e, dist = d, side = side, other = side ~= nil }
         end
+    end
+    local P, facs = static.poi, static.fac
+    for i = 1, static.n do
+        local typeName = TYPE_NAMES[P.type[i]] or "landmark"
+        if types[typeName] then consider(i, typeName, facs[i], P.inst[i], P.x[i], P.y[i]) end
+    end
+    local extra = static.extra
+    for i = 1, #extra do
+        local e = extra[i]
+        if types[e.type] then consider(e, e.type, e.fac, e.inst, e.x, e.y) end
     end
     table.sort(hits, function(a, b)
         if a.dist ~= b.dist then return a.dist < b.dist end
-        return a.e.key < b.e.key
+        return entryKey(static, a.e) < entryKey(static, b.e)
     end)
     local out = {}
     for i = 1, #hits do
@@ -934,47 +1085,6 @@ end
 
 
 
-function Destinations.BrowseTowns(opts)
-    opts = opts or {}
-    local limit = opts.limit or 25
-    local playerCode = opts.faction == "Alliance" and 1 or opts.faction == "Horde" and 2 or Destinations.PlayerFactionCode()
-    local pos = Destinations.PlayerPos()
-    local static = ensureIndex()
-    local hits = {}
-    for i = 1, #static do
-        local e = static[i]
-        if e.kind == "poi" and (e.type == "capital" or e.type == "town") then
-            local d
-            if pos and pos.inst == e.inst then d = dist(pos.x, pos.y, e.x, e.y) else d = 1e9 end
-            local tier = 1
-            if e.type == "capital" and (playerCode == 3 or e.fac == playerCode) then tier = 0 end
-            hits[#hits + 1] = { e = e, dist = d, tier = tier, side = otherSide(e.fac, playerCode) }
-        end
-    end
-    table.sort(hits, function(a, b)
-        if a.tier ~= b.tier then return a.tier < b.tier end
-        if a.dist ~= b.dist then return a.dist < b.dist end
-        return a.e.key < b.e.key
-    end)
-    local out = {}
-    for i = 1, #hits do
-        if #out >= limit then break end
-        local h = hits[i]
-        local dest = destFromEntry(h.e)
-        if dest then
-            out[#out + 1] = {
-                dest = dest, score = 0,
-                label = labelFor(dest.name, dest.zoneName, dest.type, nil, h.side),
-                distance = h.dist < 1e9 and h.dist or nil,
-                otherFaction = h.side ~= nil or nil,
-            }
-        end
-    end
-    return out
-end
-
-
-
 
 
 
@@ -982,7 +1092,8 @@ end
 local PLAIN_FIELDS = { "kind", "inst", "x", "y", "map", "mx", "my", "name", "zoneName", "type", "typeCode", "poiIndex",
                        "poiKey", "dataVersion", "questID", "taxiNodeID", "reachable", "adjustedYards", "faction", "serviceKind", "uiMapID",
                        "originalX", "originalY", "complete", "source", "learned",
-                        "questTarget", "questChosen", "objectiveIndex", "areaIndex", "areaRadius", "finishedCount" }
+                        "questTarget", "questChosen", "objectiveIndex", "areaIndex", "areaRadius", "finishedCount",
+                       "z", "dungeon" }
 
 
 

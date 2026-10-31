@@ -121,7 +121,7 @@ end
 
 function Favorites.BuildItems(favorites, recents)
     local items = { { kind = "header", label = L["Favorites"] } }
-    if #favorites == 0 then items[#items + 1] = { kind = "empty", label = L["No favorites yet. Star a place in Search, or right-click a town on the map."] } end
+    if #favorites == 0 then items[#items + 1] = { kind = "empty", label = L["No favorites yet. Star a place in Search."] } end
     for i, dest in ipairs(favorites) do
         items[#items + 1] = { kind = "favorite", index = i, dest = dest, label = describe(dest), right = distanceText(dest) }
     end
@@ -263,27 +263,24 @@ end
 
 
 
+
 function Favorites:Rename(newName)
     local Destinations = FGPS.Destinations
     local item = self:Selected()
     newName = Util.Trim(newName or "")
     if not item or item.kind ~= "favorite" or newName == "" then return false end
-    if Destinations and Destinations.RenameFavorite then
-        Destinations.RenameFavorite(item.index, newName)
-    else
-        item.dest.name = newName
-        local saved = FGPS.DB and FGPS.DB.account and FGPS.DB.account.favorites
-        if type(saved) == "table" then
-            local entry = saved[item.index]
-            if type(entry) == "table" and entry ~= item.dest then
-                local same = Destinations and Destinations.Equal and Destinations.Equal(entry, item.dest)
-                if same or (entry.x == item.dest.x and entry.y == item.dest.y and entry.inst == item.dest.inst) then
-                    entry.name = newName
-                end
+    item.dest.name = newName
+    local saved = FGPS.DB and FGPS.DB.account and FGPS.DB.account.favorites
+    if type(saved) == "table" then
+        local entry = saved[item.index]
+        if type(entry) == "table" and entry ~= item.dest then
+            local same = Destinations and Destinations.Equal and Destinations.Equal(entry, item.dest)
+            if same or (entry.x == item.dest.x and entry.y == item.dest.y and entry.inst == item.dest.inst) then
+                entry.name = newName
             end
         end
-        FGPS.Events:Fire("FAVORITES_CHANGED")
     end
+    FGPS.Events:Fire("FAVORITES_CHANGED")
     FGPS:Print(L["Favorite renamed to %s."], newName)
     self:Refresh()
     return true
@@ -413,7 +410,7 @@ local function slashFav(args)
         if rest ~= "" then dest = Util.ShallowCopy(dest) dest.name = rest end
         local ok, reason = Destinations.AddFavorite(dest)
         if ok == false then
-            FGPS:Print(L["Could not add favorite (%s)."], tostring(reason))
+            FGPS:Print(L["Could not add favorite (%s)."], FGPS.UI.Compat.ReasonText(reason, L["unknown reason"]))
         else
             FGPS:Print(L["Added to favorites: %s"], describe(dest))
         end
@@ -427,17 +424,25 @@ local function slashFav(args)
             FGPS:Print(L["Usage: /cabbie fav remove <number> (see /cabbie fav list)"])
             return
         end
-        Destinations.RemoveFavorite(index)
-        FGPS:Print(L["Favorite %d removed."], index)
+        if Destinations.RemoveFavorite(index) then
+            FGPS:Print(L["Favorite %d removed."], index)
+        else
+            FGPS:Print(L["No favorite %d; see /cabbie fav list."], index)
+        end
     elseif word ~= "" then
+
 
         local needle = Util.Lower(Util.Trim(args))
         local list = Destinations and Destinations.Favorites and Destinations.Favorites() or {}
         for _, dest in ipairs(list) do
-            if Util.Lower(dest.name or ""):find(needle, 1, true) then
-                goTo(dest)
-                return
-            end
+            if Util.Lower(dest.name or "") == needle then goTo(dest) return end
+        end
+        if needle:match("^%d+$") then
+            local dest = list[tonumber(needle)]
+            if dest then goTo(dest) return end
+        end
+        for _, dest in ipairs(list) do
+            if Util.Lower(dest.name or ""):find(needle, 1, true) then goTo(dest) return end
         end
         FGPS:Print(L["No favorite matches '%s'."], Util.Trim(args))
     else

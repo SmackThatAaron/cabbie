@@ -223,11 +223,13 @@ end
 
 
 
+
+
 function Access:RefreshFromTaxiMap()
     local char = charDB()
     if not char then return 0 end
     local confirmed, confirmedInst = char.taxiConfirmed, char.taxiConfirmedInst
-    local changed = 0
+    local changed, lost = 0, nil
     local mapID = GetTaxiMapID and plain(GetTaxiMapID()) or nil
     if mapID and C_TaxiMap and C_TaxiMap.GetAllTaxiNodes then
         local ok, nodes = pcall(C_TaxiMap.GetAllTaxiNodes, mapID)
@@ -241,7 +243,13 @@ function Access:RefreshFromTaxiMap()
                 if id and state ~= nil then
                     local known = state ~= unreachable
                     listed[id] = true
-                    if confirmed[id] ~= known then changed = changed + 1 end
+                    if confirmed[id] ~= known then
+                        changed = changed + 1
+                        if not known then
+                            lost = lost or {}
+                            lost[id] = true
+                        end
+                    end
                     confirmed[id] = known
                     local record = data and data[id]
                     if record and record.inst ~= nil then instances[record.inst] = true end
@@ -255,13 +263,15 @@ function Access:RefreshFromTaxiMap()
                     if record.inst == inst and not listed[id] and confirmed[id] ~= false then
                         confirmed[id] = false
                         changed = changed + 1
+                        lost = lost or {}
+                        lost[id] = true
                     end
                 end
             end
         end
     end
     if changed > 0 then self.dirty = true end
-    return changed
+    return changed, lost
 end
 
 
@@ -417,14 +427,12 @@ local function mountState(routing)
     return speed, hasMount, rank, line
 end
 
+
+
 local function canMountHere()
     local instanced, instanceType = false, "none"
     if FGPS.Coords and FGPS.Coords.IsInstanced then instanced, instanceType = FGPS.Coords.IsInstanced() end
     if instanced and instanceType ~= "none" and instanceType ~= "pvp" then return false end
-    if IsOutdoors then
-        local ok, outdoors = pcall(IsOutdoors)
-        if ok and outdoors == false then return false end
-    end
     return true
 end
 
@@ -452,23 +460,31 @@ local function hearthFallback()
     if type(bindName) ~= "string" or bindName == "" then return nil end
     local poi = FGPS.Data and FGPS.Data.poi
     if not poi or not poi.name then return nil end
-    local target = Util.Lower(bindName)
-    local found
-    for i = 1, poi.n or #poi.name do
-        local t = poi.type[i]
-        if (t == 7 or t == 1 or t == 5) and Util.Lower(poi.name[i]) == target then
-            found = i
-            if t == 7 then break end
+
+
+
+    local okAt, at = false, nil
+    if Personal and Personal.ResolveBind then okAt, at = pcall(Personal.ResolveBind, bindName) end
+    if not (okAt and type(at) == "table" and at.inst and at.x and at.y) then
+        local target = Util.Lower(bindName)
+        local found
+        for i = 1, poi.n or #poi.name do
+            local t = poi.type[i]
+            if (t == 7 or t == 1 or t == 5) and Util.Lower(poi.name[i]) == target then
+                found = i
+                if t == 7 then break end
+            end
         end
+        if not found then return nil end
+        at = { inst = poi.inst[found], x = poi.x[found], y = poi.y[found], map = poi.map[found] }
     end
-    if not found then return nil end
     local remaining = 0
     if C_Container.GetItemCooldown then
         local okCd, start, duration = pcall(C_Container.GetItemCooldown, itemID)
         if okCd then remaining = cooldownRemaining(start, duration) end
     end
     return { itemID = itemID, ready = remaining <= 0, cdRemaining = remaining, bindName = bindName,
-             inst = poi.inst[found], x = poi.x[found], y = poi.y[found], map = poi.map[found],
+             inst = at.inst, x = at.x, y = at.y, map = at.map,
              castSeconds = Const.HEARTH_CAST_SECONDS, name = bindName }
 end
 
@@ -479,7 +495,7 @@ local function personalOptions()
         local ok, options = pcall(personal.Options)
         if ok and type(options) == "table" then
             for _, opt in ipairs(options) do
-                if type(opt) == "table" and opt.inst and opt.x and opt.y and opt.known ~= false then
+                if type(opt) == "table" and opt.inst and opt.x and opt.y and opt.known ~= false and opt.routable ~= false then
 
 
                     local entry = {
@@ -617,14 +633,27 @@ local function build()
 end
 
 
+
+
 local function fallbackSnapshot(err)
+    local okS, s = pcall(settings)
+    local routing = okS and s and s.routing or {}
+    local switches = okS and s and s.transports or {}
+    local transports = {}
+    for _, k in ipairs({ "taxi", "boat", "zeppelin", "tram", "hearth", "spells" }) do transports[k] = switches[k] ~= false end
+    local okF, faction = pcall(function() return plain((UnitFactionGroup("player"))) end)
+    local factionMask = 3
+    if okF and faction == "Alliance" then factionMask = 1 elseif okF and faction == "Horde" then factionMask = 2 else faction = "Neutral" end
     local access = {
-        faction = "Neutral", factionMask = 3, level = 60, knownTaxi = {}, mountSpeed = 0, hasMount = false, canMount = true,
-        transports = { taxi = true, boat = true, zeppelin = true, tram = true, hearth = true, spells = true },
-        hearth = nil, spells = {}, allowUnverified = true, preferRoads = false, avoidDanger = false, dangerMargin = 3,
+        faction = faction, factionMask = factionMask, level = 60, knownTaxi = {}, mountSpeed = 0, hasMount = false, canMount = true,
+        transports = transports, hearth = nil, spells = {},
+        allowUnverified = routing.allowUnverified ~= false, preferRoads = routing.preferRoads == true,
+        roadShortcuts = routing.roadShortcuts == true, avoidDanger = routing.avoidDanger == true,
+        dangerMargin = tonumber(routing.dangerMargin) or 3,
         degraded = tostring(err),
     }
-    access.hash = Util.Hash("fallback")
+    access.hash = Util.Hash({ "fallback", f = factionMask, tr = transports, au = access.allowUnverified, pr = access.preferRoads,
+                              rs = access.roadShortcuts, ad = access.avoidDanger, dm = access.dangerMargin })
     return access
 end
 
@@ -645,6 +674,8 @@ function Access:Snapshot()
     if not ok then
         if FGPS.Log then FGPS.Log:Error("Access snapshot failed: %s", tostring(access)) end
         access = fallbackSnapshot(access)
+
+        access.expiresAt = (GetTime and GetTime() or 0) + 1
     end
     local previous = self.current
     self.current = access
@@ -713,11 +744,19 @@ function Access:Init()
 
 
 
+
+
+
+
     local function readAgain(refresh, scope)
         local leftOut = continentsLeftOut()
-        refresh(Access, scope)
+        local _, lost = refresh(Access, scope)
         Access.dirty = true
-        if continentsLeftOut() < leftOut then Events:Fire("FLIGHTS_KNOWN") end
+        if continentsLeftOut() < leftOut then
+            Events:Fire("FLIGHTS_KNOWN")
+        elseif type(lost) == "table" then
+            Events:Fire("FLIGHTS_LOST", lost)
+        end
     end
     Events:RegisterWoW("TAXI_NODE_STATUS_CHANGED", function() readAgain(Access.RefreshKnownTaxi, nil) end, self)
     Events:RegisterWoW("TAXIMAP_OPENED", function() readAgain(Access.RefreshFromTaxiMap) end, self)
@@ -750,6 +789,21 @@ function Access:Init()
             FGPS:Print(L["Cabbie does not know which flight paths you have yet, so routes leave flights out. Talk to any flight master once and it will use the ones you really have."])
         end
     end
-    Events:Register("ROUTE_PREVIEW", function(_, route) tellOnce(false, route) end, self)
-    Events:Register("ROUTE_STARTED", function(_, route) tellOnce(true, route) end, self)
+
+
+
+    Events:Register("ROUTE_PREVIEW", function(_, route)
+        local pending = {}
+        Access.pendingPreview = pending
+        local function tell()
+            if Access.pendingPreview ~= pending then return end
+            Access.pendingPreview = nil
+            tellOnce(false, route)
+        end
+        if C_Timer and C_Timer.After then C_Timer.After(0, tell) else tell() end
+    end, self)
+    Events:Register("ROUTE_STARTED", function(_, route)
+        Access.pendingPreview = nil
+        tellOnce(true, route)
+    end, self)
 end

@@ -81,6 +81,8 @@ local GLYPH = {
 
 
     enter = "ahead", level = "ahead",
+
+    hazard = "ahead",
     board = "board", fly = "board", hearth = "board", cast = "board",
     arrive = "arrive", stop_arrive = "arrive",
 }
@@ -104,12 +106,22 @@ end
 
 function Guide.RowText(step)
     if type(step) ~= "table" then return nil end
-    local text = step.shortText
-    if type(text) ~= "string" or text == "" then text = step.text end
+    local text, short = step.shortText, true
+    if type(text) ~= "string" or text == "" then text, short = step.text, false end
     if type(text) ~= "string" or text == "" then return nil end
 
     if isTurn(step.kind) and not step.toward and type(step.landmark) == "string" and step.landmark ~= "" then
-        return format(L["%s at %s"], text, step.landmark)
+        text = format(L["%s at %s"], text, step.landmark)
+    end
+
+
+    if short and type(step.joined) == "table" then
+        for i = 1, #step.joined do
+            local more = step.joined[i].shortText
+            if type(more) == "string" and more ~= "" then
+                text = format(L["%s, then %s"], text, Util.Lower(more:sub(1, 1)) .. more:sub(2))
+            end
+        end
     end
     return text
 end
@@ -339,15 +351,7 @@ function Guide.Aim(route, progress, speed)
     local yards = Guide.LookAheadYards(speed)
     if type(target) == "table" and (target.indoor or target.stacked) then yards = Guide.LOOKAHEAD_MIN_YARDS end
     local ahead, inst = heldAt(route, progress, Route.Cumulative(leg), along, along + yards), leg.inst
-    local split = leg.split
-    if split then
-        local jump = Route.Cumulative(leg)[split]
-        if along < jump then
-            if ahead > jump then ahead = jump end
-        else
-            inst = leg.toInst or leg.inst
-        end
-    end
+
     local x, y = Route.PointAlong(leg, ahead)
     if type(x) ~= "number" or type(y) ~= "number" then return nil end
     return x, y, inst
@@ -451,6 +455,52 @@ end
 
 local PAUSE_SENTENCE = { NO_PATH = "ROUTE_NO_PATH", UNREACHABLE = "ROUTE_UNREACHABLE", NO_DATA = "ROUTE_NO_DATA" }
 
+
+
+
+Guide.ROOMS_AHEAD = 3
+
+
+
+
+
+
+
+
+local function roomsAhead(route, progress)
+    local legs = type(route.legs) == "table" and route.legs or {}
+    local leg = legs[progress.legIndex]
+    local I, Route = FGPS.Inside, FGPS.Route
+    if not (type(leg) == "table" and leg.kind == "walk" and I and I.Runs) then return {} end
+    local runs = I.Runs(leg)
+    local pts = leg.points
+    local cum = Route and Route.Cumulative and Route.Cumulative(leg) or nil
+    local kinds = Route and Route.UNVERIFIED_KINDS or {}
+    local least = FGPS.Instructions and FGPS.Instructions.MIN_UNVERIFIED_YARDS or 20
+    local at = progress.inside.run or 0
+
+    local here = at > 0 and runs[at] or nil
+    if not here then at = 0 end
+    local from = here and here.first or 1
+    local out, guessed = {}, 0
+    for j = at + 1, #runs do
+        local run = runs[j]
+        if cum then
+            for i = from + 1, run.first do
+                if kinds[pts[i].k] then guessed = guessed + cum[i] - cum[i - 1] end
+            end
+        end
+        from = run.first
+        local name = run.name
+        if name then
+            out[#out + 1] = { name = name, open = guessed >= least or nil, climb = run.climb }
+            guessed = 0
+            if #out >= Guide.ROOMS_AHEAD then break end
+        end
+    end
+    return out
+end
+
 local function pausedText(reason)
     local key = type(reason) == "string" and PAUSE_SENTENCE[reason] or nil
     if key then return format(L.ARROW_PAUSED_REASON, L[key]) end
@@ -490,6 +540,26 @@ function Guide.Build(input)
         end
         if state == "paused" then
             model.rows = { { key = "paused", text = pausedText(input.pauseReason), current = false, grey = true } }
+        elseif noPosition and state == "active" and type(progress.inside) == "table" then
+
+
+
+            local rooms = roomsAhead(route, progress)
+            if #rooms == 0 then
+                model.rows = { { key = "rooms", text = L["Follow the way in"], current = true } }
+                model.callout = { key = "rooms", text = L["Follow the way in"], glyph = false }
+            else
+
+
+                local GO = { up = L["Go up to %s"], down = L["Go down to %s"] }
+                for i, room in ipairs(rooms) do
+                    local text = GO[room.climb] and format(GO[room.climb], room.name) or room.name
+                    model.rows[i] = { key = "room" .. i, text = text, current = i == 1, open = room.open }
+                end
+                local text = format(GO[rooms[1].climb] or L["Go to %s"], rooms[1].name)
+                if rooms[2] then text = format(L["%s, then %s"], text, rooms[2].name) end
+                model.callout = { key = "rooms", text = text, glyph = false, open = rooms[1].open }
+            end
         elseif noPosition then
 
 
@@ -950,6 +1020,11 @@ function Guide:Init()
         end
     end
 
+
+    Events:Register("ROUTE_WAITING", function(_, handle, why)
+        if why ~= "combat" or type(handle) ~= "table" or type(handle.waitingText) ~= "string" then return end
+        Guide.Say(handle.waitingText, 8)
+    end, self)
 
 
     Events:Register("DESTINATION_SET", function(_, dest)

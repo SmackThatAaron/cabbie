@@ -43,6 +43,7 @@ local LEADING = { town = true, capital = true }
 local TYPE_ICON = {
     flightmaster = "flight", taxi = "flight", inn = "inn", bank = "bank", repair = "repair", mailbox = "mail",
     vendor = "vendor", trainer = "trainer", stable = "stable", auction = "auction", dungeon = "dungeon", raid = "dungeon",
+    room = "dungeon", boss = "dungeon",
 }
 Rows.TYPE_ICON = TYPE_ICON       -- read by UI/Search.lua for the icons of the old window's rows
 -- The place types a service word asks for.
@@ -233,11 +234,30 @@ function Rows.For(text, minLetters)
     local trainerKind = Services and Services.TrainerKind or nil
     local class = trainerKind and type(service) == "string" and service:match("^trainer:(.+)$") or nil
     local rows = {}
+    local Go = FGPS.UI and FGPS.UI.Go
+    if Go and Go.FromCoordinates then
+        local dest = Go.FromCoordinates(typed)
+        if type(dest) == "table" then
+            local yards
+            local Coords = FGPS.Coords
+            local pos = Coords and Coords.PlayerPos and Coords.PlayerPos()
+            if pos and Coords.WorldDistance then
+                yards = Coords.WorldDistance(pos.inst, pos.x, pos.y, dest.inst, dest.x, dest.y)
+            end
+            rows[1] = {
+                kind = "place", icon = "map", name = dest.name, zone = dest.zoneName,
+                yards = yards, score = 100, group = 0, lead = true, dest = dest,
+            }
+        end
+    end
     local Destinations = FGPS.Destinations
     if Destinations and Destinations.Search then
         -- Not under pcall: a typed "/go" answers a lookup that raises as a failed command
         -- (UI/Go.lua), and the search line catches it where it calls this (UI/SearchLine.lua).
-        local found = Destinations.Search(typed, { limit = class and huge or Rows.MAX, first = FIRST })
+        -- Twins are dropped after the search returns. Asking for only the eight rows can then
+        -- leave the list short ("thunder bluff"). Four more covers those drops. A class trainer
+        -- still asks for every trainer.
+        local found = Destinations.Search(typed, { limit = class and huge or (Rows.MAX + 4), first = FIRST })
         if type(found) == "table" then
             -- A capital and the zone of its name ("Ironforge") lead to the same city and their rows
             -- would read alike: the zone's is left out, whichever of the two the engine gave first.
@@ -368,8 +388,13 @@ function Rows.Guide(noField)
     -- (C_SuperTrack) and Menus.QuestSelected starts the way to that quest. Otherwise the entry
     -- "Take me there" in the quest's right-click menu, where the client took it (Menus:Init).
     local Quests, Menus = FGPS.Quests, FGPS.UI.Menus
+    local Navigator = FGPS.Navigator
     local focusWatched = type(C_SuperTrack) == "table" and type(C_SuperTrack.GetSuperTrackedQuestID) == "function"
-    if Quests and Quests.FollowsMine and Quests.FollowsMine() and focusWatched and Menus and Menus.QuestSelected then
+    -- Menus.QuestSelected does nothing while a route that is not the quest's is set.
+    local routeSet = Navigator and Navigator.HasAnythingSet and Navigator:HasAnythingSet()
+    local questRoute = Quests and Quests.IsQuestRoute and Quests.IsQuestRoute()
+    if Quests and Quests.FollowsMine and Quests.FollowsMine() and focusWatched and Menus and Menus.QuestSelected
+        and (not routeSet or questRoute) then
         add("quest", "pickup", L["Click the round marker beside a quest and Cabbie leads you to it"])
     elseif Menus and Menus.questMenus == true then
         add("quest", "pickup", L["Right-click a quest in your quest list: Take me there"])

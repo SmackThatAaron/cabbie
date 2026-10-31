@@ -172,7 +172,7 @@ local function createButton()
         GameTooltip:SetOwner(self, "ANCHOR_LEFT")
         GameTooltip:SetText(L["Cabbie"] or "Cabbie")
         GameTooltip:AddLine(L["Open the Cabbie destination search"] or "Open search", 1, 1, 1, true)
-        GameTooltip:AddLine(L["Right-click: clear the route"] or "Right-click: clear the route", 0.8, 0.8, 0.8, true)
+        GameTooltip:AddLine(L["Right-click: clear the route and every stop"], 0.8, 0.8, 0.8, true)
         GameTooltip:AddLine(L["Drag: move the button around the minimap"], 0.8, 0.8, 0.8, true)
         GameTooltip:Show()
     end)
@@ -197,8 +197,11 @@ end
 
 function Launcher:Init()
     self:UpdateVisibility()
+    -- Boot calls Init once, and a second call must not stack another settings handler.
+    if self.eventsBound then return end
     local Events = FGPS.Events
     if Events and Events.Register then
+        self.eventsBound = true
         Events:Register("SETTINGS_CHANGED", function(_, path)
             if path == "minimapButton" or path == "*" then
                 Launcher:UpdateVisibility()

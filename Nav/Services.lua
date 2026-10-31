@@ -311,11 +311,6 @@ function ServiceSearch.Remember(kind, name, pos)
     return entry, true
 end
 
-function ServiceSearch.ClearLearned()
-    wipe(learnedList())
-    Events:Fire("LEARNED_SERVICES_CHANGED")
-end
-
 -------------------------------------------------------------------------------
 -- Nearest
 -------------------------------------------------------------------------------

@@ -84,7 +84,7 @@ local settingsDefaults = {
 DB.defaults = {
     settings = settingsDefaults,
     account = { version = DB.VERSION, settings = settingsDefaults, positions = {}, windows = {}, favorites = {},
-                recents = {}, learnedServices = {}, perf = {} },
+                recents = {}, learnedServices = {} },
 
     char = { knownTaxi = {}, itinerary = {} },
 
@@ -162,8 +162,6 @@ local migrations = {}
 
 
 
-
-
 migrations[3] = function(account)
     if type(account) ~= "table" then return end
     account.arrow = nil
@@ -173,6 +171,8 @@ migrations[3] = function(account)
         account.settings.panel = nil
     end
 end
+
+
 
 migrations[0] = function(account)
     if type(account.settings) ~= "table" then account.settings = {} end
@@ -293,11 +293,18 @@ end
 
 
 
+
+
+
 local RETIRED_QUEST_FIELDS = { "observed", "stats", "_seq", "_export", "_exportTime" }
 
 local function dropRetired(self)
     for _, key in ipairs(RETIRED_QUEST_FIELDS) do self.quests[key] = nil end
     self.account.routeReports = nil
+    if not FGPS:IsOwnerInstall() then
+        self.account.lastSession = nil
+        self.account.selftest = nil
+    end
     local settings = self.account.settings
     local quests = type(settings) == "table" and settings.quests or nil
     if type(quests) == "table" then quests.harvest = nil end
@@ -332,6 +339,7 @@ function DB:Init()
     applyDefaults(self.account, DB.defaults.account)
     applyDefaults(self.char, DB.defaults.char)
     applyDefaults(self.quests, DB.defaults.quests)
+    self.account.perf = nil
     self.settings = self.account.settings
 
 
@@ -398,12 +406,19 @@ function DB:ResetPositions()
     if FGPS.Events then FGPS.Events:Fire("POSITIONS_RESET", nil) end
 end
 
-function DB:ResetElementPosition(key)
+
+
+function DB:ResetElementPosition(key, layoutName)
     assert(key ~= nil, "DB:ResetElementPosition: key is required")
-    for _, layout in pairs(self.account.positions) do
+    if layoutName ~= nil then
+        local layout = self.account.positions[layoutName]
         if type(layout) == "table" then layout[key] = nil end
+    else
+        for _, layout in pairs(self.account.positions) do
+            if type(layout) == "table" then layout[key] = nil end
+        end
+        self.account.windows[key] = nil
     end
-    self.account.windows[key] = nil
     if FGPS.Events then FGPS.Events:Fire("POSITIONS_RESET", key) end
 end
 
@@ -425,7 +440,7 @@ end
 function DB:ResetAll()
     self:ResetSettings()
     self:ResetPositions()
-    wipe(self.account.perf)
+    self.account.perf = nil
     for key in pairs(PROTECTED_ACCOUNT_KEYS) do
         if type(self.account[key]) ~= "table" then self.account[key] = {} end
     end

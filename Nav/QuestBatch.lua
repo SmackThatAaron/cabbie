@@ -156,11 +156,16 @@ function QuestBatch.Collect(origin)
                                 x = position.x,
                                 y = position.y,
                                 map = position.map or origin.map,
+                                -- A giver stop, as QuestData.DestinationFor makes one: those end
+                                -- when their quest is accepted (Quests.OnQuestChanged), and a quest
+                                -- stop with no stage is taken for the game's marker of a quest
+                                -- already in the log.
                                 dest = {
                                     kind = "quest",
                                     type = "quest",
                                     questID = questID,
-                                    name = title,
+                                    questTarget = "giver",
+                                    name = QuestData.StartLabel(title, position),
                                     inst = position.inst,
                                     x = position.x,
                                     y = position.y,

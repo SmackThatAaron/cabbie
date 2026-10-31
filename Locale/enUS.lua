@@ -1,23 +1,23 @@
--- Cabbie/Locale/enUS.lua
--- English strings and the master catalogue every other locale is checked against.
---
--- FGPS.L falls back to the key itself, so a string that no locale translated still reads as the
--- English sentence a module asked for, never as a bare identifier. Two kinds of key exist:
---   * identifier keys (L.ROUTE_NO_PATH) for sentences that are too long or too formatted to use
---     as a key, and for anything a translator has to be able to find quickly;
---   * the English text itself (L["Start"], L["Turn left"]) for the short labels and sentences the
---     UI modules spell out inline.
--- The list at the bottom registers the second kind in this table, so this file is the complete
--- catalogue of keys a locale may override. tests/test_locale.lua fails a locale that invents a key
--- outside it, which catches typos in a translation before a player sees an English sentence where
--- a translated one was meant. Adding a string to the catalogue is part of adding it to the UI; see
--- docs/LOCALIZATION.md.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 local ADDON_NAME, FGPS = ...
 
 local L = setmetatable({}, { __index = function(_, key) return key end })
 FGPS.L = L
 
--- Identity and chat output
+
 L.ADDON_TITLE = "Cabbie"
 L.VERSION_LINE = "Version %s on client %s (build %s, interface %d)%s"
 L.NOT_FOREVER = " - warning: this client does not look like World of Warcraft: Forever"
@@ -25,7 +25,7 @@ L.BOOT_FAILED_MODULES = "%d part(s) of Cabbie failed to start; type /cabbie log 
 L.LOG_EMPTY = "Log is empty."
 L.LOG_HEADER = "Log buffer (%d entries, oldest first):"
 
--- Slash commands
+
 L.SLASH_UNKNOWN = "Unknown command '%s'. Type /cabbie help for the list of commands."
 L.SLASH_FAILED = "The command '%s' failed; type /cabbie log for details."
 L.HELP_HEADER = "Cabbie %s - commands:"
@@ -41,16 +41,16 @@ L.TRIP_SUMMARY = "Route: %s. Longest stretch %d yd. Off route %d. Recalculated %
 L.TRIP_NONE = "No finished route to report yet."
 L.TRIP_MARKED = "Marked this route: %s"
 L.TRIP_NO_MARK = "No route to mark yet. Start a route first."
--- The welcome window (UI/Setup.lua, redesigned 2026-10-17): one short window, three sentences and
--- the one question ("Follow my quests", whose words and tooltip are in the guidance block below).
+
+
 L.SETUP_TITLE = "Welcome to Cabbie"
 L.SETUP_HELP = "Show the welcome window"
-L.SETUP_INTRO = "Cabbie guides you to a place and never moves your character for you. While a route is set, your next steps stand beside the quest list. Shift-click the world map or type a place into the search at its top left to be guided there, and right-click a quest in your quest list and choose Take me there to go to it."
+L.SETUP_INTRO = "Cabbie guides you to a place and never moves your character for you. While a route is set, the next turn shows at the top of your screen, and Settings can also show your steps beside the quest list. Shift-click the world map or type a place into the search at its top left to be guided there, and right-click a quest in your quest list and choose Take me there to go to it."
 L.SETUP_LATER = "Everything else has a sensible default. Change it any time in Settings, and type /cabbie setup to see this again."
 L.SETUP_DONE = "Done"
 L.SETUP_SETTINGS = "Settings..."
 
--- Performance report
+
 L.PERF_HEADER = "Performance report (instrumentation %s, guidance %s, frame budget %d ms)"
 L.PERF_ON = "on"
 L.PERF_OFF = "off"
@@ -58,10 +58,10 @@ L.PERF_LABEL_LINE = "  %-14s count %6d  total %8.2f ms  avg %6.3f ms  max %6.3f 
 L.PERF_NO_LABELS = "  no timed sections recorded yet"
 L.PERF_MEMORY = "  memory: addon %.0f KB, Lua heap %.0f KB (sampled %.0f s ago)"
 L.PERF_METRIC = "  profiler %s: %.3f"
--- Two different memory questions, kept apart on purpose. The per-journey figure is what a journey
--- ALLOCATED, which garbage collection then reclaims; it is cheap to measure but says nothing about
--- a leak. What the budget in docs/PERFORMANCE_BUDGETS.md actually limits is what stays RETAINED
--- after a full collection, which "/cabbie perf trip" measures against a baseline the tester takes.
+
+
+
+
 L.PERF_TRIPS_ALLOCATED = "  trips: %d measured, %.1f KB allocated per trip on average, %.1f KB worst (allocated, not collected - type /cabbie perf trip for retained memory)"
 L.PERF_RETAINED_BASELINE = "Retained memory baseline taken after a full collection: %.1f KB. Complete your routes, then type /cabbie perf trip again."
 L.PERF_RETAINED_REPORT = "Retained since the baseline: %.1f KB after %d route(s), %.1f KB per route (budget: 50 KB over 20 routes)."
@@ -76,7 +76,7 @@ L.PERF_SAMPLED = "Memory sample recorded."
 L.PERF_ROUTES_NONE = "  no route timings recorded yet"
 L.PERF_ROUTE_LINE = "  %s, continent %s: cpu %.0f ms, wall %.0f ms, %d frames, %d expansions, budget %.1f ms, %.0f fps"
 
--- Self test and diagnostic report
+
 L.SELFTEST_HEADER = "Self test: %d checks - %d pass, %d note, %d warn, %d fail, %d skipped"
 L.SELFTEST_LINE = "  [%s] %-13s %s"
 L.SELFTEST_RUNNING = "Self test running..."
@@ -85,7 +85,7 @@ L.SELFTEST_SAVED_RELOAD_LOST = "the game reloaded the interface and Cabbie's sav
 L.REPORT_WRITTEN = "Diagnostic snapshot written to CabbieDB.report (SavedVariables\\Cabbie.lua, saved on /reload or on exit): %d setting(s) off default, %d log line(s), self test %d pass / %d warn / %d fail."
 L.REPORT_NO_DB = "Cannot write a report: the saved variables are not available."
 
--- Units and time formatting
+
 L.UNIT_YARDS = "yd"
 L.UNIT_METERS = "m"
 L.UNIT_KILOMETERS = "km"
@@ -94,7 +94,7 @@ L.TIME_MINUTES = "%dm %ds"
 L.TIME_HOURS = "%dh %dm"
 L.UNKNOWN_VALUE = "?"
 
--- Navigation vocabulary shared by Nav and UI modules
+
 L.NAV_STATE_IDLE = "Idle"
 L.NAV_STATE_PREVIEWING = "Previewing"
 L.NAV_STATE_ACTIVE = "Navigating"
@@ -114,13 +114,13 @@ L.POSITIONS_RESET_DONE = "Frame positions restored to defaults."
 L.DESTINATION_SET = "Destination set: %s"
 L.ARRIVED_AT = "You have arrived at %s."
 
--------------------------------------------------------------------------------
--- Catalogue: strings the modules look up by their English text. The entry maps the sentence to
--- itself, which is what the fallback would produce anyway; listing it here is what makes the
--- string translatable and what lets tests/test_locale.lua tell a translation from a typo.
--- Generated from the sources (every L["..."] lookup plus the option, label and settings tables
--- that are looked up as L[variable]); keep it sorted and add new UI strings as you write them.
--------------------------------------------------------------------------------
+
+
+
+
+
+
+
 local SELF = {
     " (available in %s)",
     "%.1f kilometers",
@@ -205,7 +205,6 @@ local SELF = {
     "and",
     "Area",
     "Arrival radius (yards)",
-    "Arrive",
     "Arrive at %s",
     "Arrived at stop %d.",
     "Assume mount speed",
@@ -231,13 +230,15 @@ local SELF = {
     "Board tram",
     "boat",
     "Boat",
+    "Boss",
     "build",
     "Cabbie",
     "Cabbie does not answer /way while \"Answer the /way command\" is off in its settings. /cabbie way still works.",
-    "Cabbie layout editor: drag frames, arrow keys nudge (Shift: 10 px).",
+    "Cabbie knows no way yet from this place inside %s.",
+    "Cabbie knows no way yet to this place inside %s.",
+    "Move Cabbie's arrow and windows. The arrow keys move the selection a little (with Shift, more).",
     "Cabbie voice guidance is working.",
-    "Cabbie's recorded voice speaks; it needs nothing installed. The game voice settings below stay greyed out until the game reports a voice.",
-    "Cancel",
+    "Cabbie's recorded voice",
     "Cancel route",
     "Cancel the current route",
     "Capital city",
@@ -299,7 +300,7 @@ local SELF = {
     "Dock",
     "Docks",
     "Done",
-    "Drag to move. Arrow keys nudge the selection (Shift: 10 px).",
+    "Drag to move. The arrow keys move the selection a little (with Shift, more).",
     "Drag: move the button around the minimap",
     "Draw route hints on the minimap",
     "Show the minimap button",
@@ -308,7 +309,7 @@ local SELF = {
     "Dungeon",
     "Dungeons",
     "Edit Mode",
-    "Edit Mode is open; move the Cabbie frames there.",
+    "Edit Mode is open; move Cabbie's arrow and windows there.",
     "Elevator",
     "Elevator down",
     "Elevator up",
@@ -348,11 +349,13 @@ local SELF = {
     "Hearthstone not used: on cooldown for %d min.",
     "Hide all guidance",
     "How far from the route you can stray before it is recalculated.",
+    "In %s",
     "In %s, %s",
     "In combat",
     "Inn",
     "Innkeeper",
     "instance %d",
+    "dungeons and raids",
     "interface",
     "It is available in %s.",
     "Stops",
@@ -363,7 +366,7 @@ local SELF = {
     "Landmark",
     "Landmarks",
     "Layout editor closed.",
-    "Layout editor opened. Drag the frames, then press Done or Escape.",
+    "Layout editor opened. Drag to move things, then press Done or Escape.",
     "Leave elevator",
     "Leave the elevator",
     "Leave the elevator at %s",
@@ -397,6 +400,7 @@ local SELF = {
     "Next waypoint on the way to the quest",
     "No %s found: %s.",
     "No arrival position is known for this spell.",
+    "No Rune of Teleportation in your bags; the teleport is not used for routing.",
     "no boats",
     "No boats",
     "No current destination to add. Set a destination first.",
@@ -405,22 +409,20 @@ local SELF = {
     "No destination was given.",
     "No distinct alternatives were found.",
     "No extra click",
+    "No favorite %d; see /cabbie fav list.",
     "No favorite matches '%s'.",
     "No favorites yet.",
-    "No favorites yet. Star a place in Search, or right-click a town on the map.",
+    "No favorites yet. Star a place in Search.",
     "no flights",
     "No flights",
     "No known transport connects %s and %s.",
     "no map location is known for this quest",
-    "No places match. Try a town name, a zone, or bank / flight / inn.",
     "No navigation data is available for %s.",
     "no quest is being tracked",
     "no quest was given",
-    "No quests with a known place. Open the quest panel, or accept a quest first.",
     "no sound available in this client",
     "No text-to-speech voices are installed.",
     "None reported by the game",
-    "no text-to-speech voices installed",
     "No turn-by-turn steps are available for this route.",
     "No road joins these points; the whole route is drawn dashed.",
     "No road was found; this route is drawn dashed.",
@@ -448,13 +450,13 @@ local SELF = {
     "Performance report",
     "Pick a category. The list is the nearest places of that kind.",
     "Pick a list.",
+    "Play a sample",
     "Portal",
     "Portals",
     "Position of '%s' restored to its default.",
     "prefer roads",
     "Prefer roads",
     "Preset colours",
-    "Preview",
     "Show route",
     "Prints diagnostics to chat and forwards errors to the error handler.",
     "Quest",
@@ -472,6 +474,7 @@ local SELF = {
     "Recent destinations; recent clear",
     "Remove",
     "Removed from favorites: %s",
+    "Removed the stop %s: its waypoint was removed.",
     "Rename",
     "Repair",
     "Reset",
@@ -484,11 +487,14 @@ local SELF = {
     "Reset settings|positions|routing|all|<element>",
     "Reset to default",
     "Resume guidance",
+    "Room",
     "Route",
     "Route computation budget (ms per frame)",
     "Route lines on the map:",
     "Route preview",
     "Route updated.",
+    "Route cleared.",
+    "No route set.",
     "Routing and transport preferences restored to defaults.",
     "Routing preferences cannot be reset in this session (the settings store did not load).",
     "Same as cancel",
@@ -515,18 +521,23 @@ local SELF = {
     "Show the turn call-out",
     "Show version, data version, client build and Edit Mode status",
     "Skip stop",
+    "Says one short sentence in the voice chosen on this page, with voice guidance on or off.",
     "Speak turn instructions out loud.",
+    "Speaking with Cabbie's recorded voice",
     "Off (the default): Cabbie's own recorded voice, the same on every computer. On: the voice chosen in the game's text-to-speech settings, which also says place names. Greyed out while the game reports no text-to-speech voice; the recorded one speaks then.",
     "Use the game's text-to-speech voice",
     "Speech rate",
     "Speech rate set to %d.",
     "Speech volume",
     "Speech volume set to %d.",
+    "Rate and volume apply to the game's voice only.",
     "Speed used for estimates when mount detection is uncertain.",
     "Spell not known yet.",
     "Stable master",
     "Start",
     "Start (or resume) navigation for the previewed route",
+    "Stay aboard",
+    "Stay aboard at %s",
     "Steps",
     "stop %d",
     "Stop %d",
@@ -550,7 +561,7 @@ local SELF = {
     "that place",
     "that quest location is no longer listed",
     "The cursor is not over the world map.",
-    "The game reports no text-to-speech voices on this computer",
+    "The game reports no text-to-speech voice on this computer, so the game voice settings below are greyed out. Cabbie's recorded voice needs nothing installed. Play a sample says one short sentence in it.",
     "that part of Cabbie is not ready",
     "the dock",
     "the far side",
@@ -566,14 +577,27 @@ local SELF = {
     "The search window is not available in this session.",
     "The search window is unavailable; use /cabbie go <x> <y> [zone] instead.",
     "There is no instruction to repeat.",
+    "That instruction has no recorded voice.",
     "there is no map pin set",
     "this client has no map pin",
     "This client offers none of the sounds the cues use.",
     "this quest is not in your quest log",
     "those coordinates could not be resolved",
+    "a lookup is still running",
+    "it is already a favorite",
+    "name lookups are switched off in the settings",
+    "no quest is chosen",
+    "not during a fight",
+    "that place cannot be saved",
+    "the favorites list is full",
+    "the lookups for this session are used up",
+    "the request was not understood",
+    "the search was stopped",
+    "this game client cannot look names up",
+    "wait a moment before the next one",
     "Time slice per frame for route calculation.",
     "Toggle debug output: on|off",
-    "Toggle the layout editor for the HUD frames (fallback when Edit Mode is unavailable)",
+    "Move Cabbie's arrow and windows on the screen (when the game has no Edit Mode)",
     "Town",
     "Towns",
     "Trainer",
@@ -590,7 +614,6 @@ local SELF = {
     "Turn sharply right",
     "Places",
     "Type a place name.",
-    "Type at least two characters, or open Favourites / Recent for a place you already used.",
     "U-turn",
     "unknown (GetBuildInfo unavailable)",
     "unknown (no data manifest loaded)",
@@ -605,7 +628,7 @@ local SELF = {
     "Usage: /cabbie cues on|off|volume <n>|turn on|off|transport on|off|arrival on|off|test|status",
     "Usage: /cabbie cues volume <0..100>",
     "Usage: /cabbie fav remove <number> (see /cabbie fav list)",
-    "Usage: /cabbie reset settings|positions|routing|all|<element> (search, preview, favorites, stops)",
+    "Usage: /cabbie reset settings|positions|routing|all|<element> (search, preview, favorites, stops, quests)",
     "Usage: /cabbie voice on|off|mute|repeat|list|voice <id>|rate <n>|volume <n>|verbosity <level>|test",
     "Usage: /cabbie voice rate <-10..10>",
     "Usage: /cabbie voice verbosity minimal|normal|detailed",
@@ -635,7 +658,9 @@ local SELF = {
     "Voice guidance is off; type /cabbie voice on first.",
     "Voice guidance muted; queued speech cleared.",
     "Voice guidance: %s (%s). Voice %s, rate %d, volume %d, verbosity %s, %d queued.",
+    "Voice guidance: %s (%s). Verbosity %s, %d queued.",
     "Voice guidance: on|off|mute|repeat|list|voice <id>|rate <n>|volume <n>",
+    "Voice sample",
     "Voice set to %s.",
     "Voice used for spoken guidance.",
     "Voice verbosity set to %s.",
@@ -664,30 +689,76 @@ local SELF = {
     "Your route continues by flight to %s, which this flight master does not offer.",
     "zeppelin",
     "Zeppelin",
+
+    "1.12 record",
+    "Answer the /way command",
+    "Audio cues instead of speech",
+    "Boarding a boat or zeppelin, taking a flight, getting off again.",
+    "Colour scheme",
+    "Colour-blind friendly replaces the route, transport and accent colours with a set that stays distinguishable for the common forms of colour blindness. The distinction between a road and open ground never depends on colour alone in either scheme: the map draws open ground dashed and the minimap draws it as larger hollow dots.",
+    "Cue before a turn",
+    "Cue for a transport action",
+    "Cue on arrival",
+    "Cue volume",
+    "Druid",
+    "Hunter",
+    "Lets Cabbie take waypoint coordinates written the way guides and web sites write them. The word is only claimed when no other add-on already owns it; /cabbie way always works.",
+    "Mage",
+    "Mute voice guidance",
+    "Nearest by route distance: the closest candidates by direct distance are routed and sorted by route length. A result marked (open ground) could not be routed; its distance is a direct estimate.",
+    "Normal or Large. Large adds two points to window list and label fonts.",
+    "Open Cabbie when the world map opens",
+    "Paladin",
+    "Priest",
+    "Repeat the current instruction",
+    "Rogue",
+    "Set a destination at the world map cursor",
+    "Shaman",
+    "Short sounds the game already ships, played before a turn, for a transport action and on arrival. They work with voice guidance on or off.",
+    "The destination search appears beside the world map each time you open it, and closes with it. It never takes the keyboard.",
+    "Warlock",
+    "Warrior",
+    "Zero is silence. Clients without a per-sound volume play cues at the game's own sound effect volume.",
+    "boats",
+    "boats or zeppelins",
+    "confirmed",
+    "elevators",
+    "flights",
+    "no zone of that name is known",
+    "objective place not known: the 1.12 records do not say where it is found, and the client names no position from here",
+    "portals",
+    "reported",
+    "that is not a coordinate pair",
+    "that place has no world position",
+    "the tram",
+    "trams",
+    "your current zone is unknown; name a zone after the coordinates",
+    "zeppelins",
     "Zone",
 }
 for i = 1, #SELF do L[SELF[i]] = SELF[i] end
 
--- Old keys still used by engine callers: map them to glossary wording so player text stays plain.
 
--- Quest support (Nav/QuestData.lua, UI/QuestPanel.lua, UI/QuestMap.lua).
--- Kept as its own block because it arrived as one feature and a translator can take it as one
--- piece; it registers itself exactly as the list above does.
---
--- Two kinds of quest string are deliberately NOT here. The first is any vanilla quest title or
--- objective text: none is bundled, the client answers for those in Forever's own wording, and a
--- catalogue entry for one would be the 1.12 wording this add-on refuses to ship. The second is the
--- prose Data/QuestIndex.lua carries -- the reasons a quest was dropped, the names of the quality
--- and source codes, the objective kinds. Those come out of a generated file that is rebuilt
--- whenever a source is refreshed, so pinning them here would leave the catalogue naming sentences
--- the data no longer contains. FGPS.L falls back to the key, so they read as their English selves
--- either way.
+
+
+
+
+
+
+
+
+
+
+
+
+
 local QUESTS = {
     "Quests: %d with a full route, %d with an objective whose place is not known, %d with only one known end.",
     "Forever's own quests: %d, and %d of them have a known start.",
     "Quest givers may have moved since the records were made. Names are the game's own for %d of %d quests, the 1.12 records' for the rest.",
     " (inside; no entrance is known)",
     " (inside; routes to the entrance)",
+    " (inside; the route goes in)",
     " - ",
     "%d levels above you",
     "%d more start with another race or class.",
@@ -709,15 +780,16 @@ local QUESTS = {
     "%s, at the entrance of %s",
     "%s, from later records",
     "%s, from the older version of this quest",
+    "%s, in %s",
     "%s, reported by another source",
     "%s: the giver hands it to you",
-    -- The kind of an objective of the Forever layer, which no source names (QuestData.KindName).
+
     "objective",
-    -- A quest record's mark in the quest window, after the distance (QuestPanel.MarkFlag).
+
     "may have moved",
     "not checked in game",
     "from the game",
-    -- How far away a place is, in a straight line: "1,742 yd away".
+
     "%s away",
     "+ ",
     "- ",
@@ -727,6 +799,7 @@ local QUESTS = {
     "Classic quest names come with Cabbie in English, and the game's own wording replaces them once it is known. This allows the button that spends part of a small per-session lookup budget to fill in the names of a search result.",
     "Cabbie cannot look a name up right now (%s).",
     "No quest name matches that. Search by zone or by level, or open a quest once and Cabbie will remember its name. Names known so far: %d of %d.",
+    "No quest name matches that. Search by zone or by level. A classic quest is found by its 1.12 name until Cabbie has seen the game's own name for it, then by that name. Names known so far from the game itself: %d of %d.",
     "Cabbie quests",
     "Confirmed on this client.",
     "Draw objective areas",
@@ -741,13 +814,14 @@ local QUESTS = {
     "Look up %d names (%d left)",
     "No bundled record for this quest.",
     "No routable quest matches that.",
-    "No stops yet. Open Search and press Add stop, or right-click a place on the map.",
+    "No stops yet. Open Search and press Add stop.",
+    "No stops yet. Open Search and press Add stop, or %s a place on the world map.",
     "Offer to look quest names up on the server",
     "Open the quest panel",
     "Or open Search for a town, inn, or flight master.",
     "Pins for the quests you have accepted and for a quest you searched for and selected. Never for quests you have not taken.",
     "Quest %d",
-    -- The nearby-quest card (Nav/QuestBatch.lua, UI/QuestPanel.lua) and its setting.
+
     "Quests to pick up nearby",
     "Adds the places where these quests start to your route as stops, in this order. The route starts when you press Start.",
     "Takes the last quest off this list.",
@@ -795,14 +869,17 @@ local QUESTS = {
     "starts in %s",
     "starts inside a dungeon",
     "the bundled quest records are not installed in this copy of Cabbie",
-    -- Whether a character can take a quest now (QuestData.CanTake).
+
+    "a faction",
     "another class takes this quest",
     "another quest of its group is done or taken",
     "another race takes this quest",
+    "is for characters of a lower standing with %s",
     "is for characters up to level %d",
     "is given during a holiday only",
     "it is in your quest log",
     "needs %s at %d",
+    "needs a better standing with %s",
     "needs a skill, and whether you have it cannot be told",
     "needs a standing with a faction, and how much is not known",
     "needs another quest done first: %s",
@@ -822,10 +899,10 @@ local QUESTS = {
 }
 for i = 1, #QUESTS do L[QUESTS[i]] = QUESTS[i] end
 
--- Sentences added after the first catalogue (sharing and following, measured travel times, riding a
--- transport, quest routes that follow progress, heights). They were found by comparing every
--- L["..."] the code looks up with the lists above; FGPS.L falls back to the key, so they always
--- read correctly in English, but a translator only sees what is listed here.
+
+
+
+
 local LATER = {
     "  %s (position not available)",
     "  %s: %.1f yards per second over %d samples",
@@ -844,6 +921,7 @@ local LATER = {
     "%s cross open ground from one place where creatures are known to stand to the next; nobody has walked the way between them.",
     "%s cross open ground on a way that keeps off cliffs and deep water; trees, rocks and fences along it are not known.",
     "%s follow ground, floors and halls read from the game's own world.",
+    "%s follow roads known from the game's signposts, drawn along the road's bends.",
     "%s follow roads known from the game's signposts; the line is drawn straight between junctions, so it cuts corners.",
     "%s follow roads traced from the ground of the game world.",
     "%s from %s",
@@ -856,6 +934,9 @@ local LATER = {
     "%s of this route is open ground (drawn dashed on the maps); expect obstacles.",
     "%s spot",
     "%s swim across water read from the game's own world.",
+    "%s cross fel read from the game's own world: it hurts, but there is no dry way.",
+    "%s cross slime read from the game's own world: it hurts, but there is no dry way.",
+    "%s cross lava read from the game's own world: it hurts, but there is no dry way.",
     "%s to %s",
     "%s, %s",
     "%s, then continue %s across open ground for %s",
@@ -872,6 +953,7 @@ local LATER = {
     "Clear Cabbie",
     "Clear everything Cabbie has set: the route, the preview, every stop and the map markers",
     "Clear route",
+    "Old key for Clear route",
     "Cleared. No route and no stops are set. Undo for %d seconds (/cabbie undo).",
     "Continue %s across open ground for %s",
     "Continue %s across open ground for %s.",
@@ -885,7 +967,7 @@ local LATER = {
     "Auction houses of the zone you are looking at get a small icon on the world map. Left-click one to route there.",
     "Banks of the zone you are looking at get a small icon on the world map. Left-click one to route there.",
     "Boat docks and zeppelin towers of the zone you are looking at get a small icon on the world map. Left-click one to route there.",
-    "Dungeon entrances of the zone you are looking at get a small icon on the world map. Left-click one to route there.",
+    "Dungeon and raid entrances of the zone you are looking at get a small icon on the world map. Left-click one to route there.",
     "Every town of the zone you are looking at gets a small icon on the world map. Left-click one to route there. Towns of the other faction are dimmed.",
     "Flight masters of the zone you are looking at get a small icon on the world map. Left-click one to route there.",
     "Graveyards of the zone you are looking at get a small icon on the world map. Left-click one to route there.",
@@ -929,7 +1011,7 @@ local LATER = {
     "Show auction houses on the world map",
     "Show banks on the world map",
     "Show docks and zeppelin towers on the world map",
-    "Show dungeon entrances on the world map",
+    "Show dungeon and raid entrances on the world map",
     "Show flight masters on the world map",
     "Show graveyards on the world map",
     "Show inns on the world map",
@@ -982,17 +1064,17 @@ local LATER = {
 }
 for i = 1, #LATER do L[LATER[i]] = LATER[i] end
 
--- The guidance that took the place of the floating arrow and the instruction panel: the Route
--- block and the call-out (UI/Guide.lua, UI/RouteBlock.lua), a place typed after "/cabbie" or "/go"
--- (UI/Go.lua), "Take me there" in the game's quest menus and the Route block's own menu
--- (UI/Menus.lua), and what the corpse popup (Nav/Social.lua) and a Shift-click on the world map
--- (UI/WorldMap.lua) say in the call-out. "Follow my quests" is here with its tooltip, which the
--- old settings page shows (UI/Settings.lua). Kept as its own block, as the quest strings are: it
--- arrived as one feature and a translator can take it as one piece. Four of its sentences are
--- identifier keys further up, because the catalogue had them already: "Arrived at %s"
--- (L.ARROW_ARRIVED), "Paused" (L.NAV_STATE_PAUSED), "Paused: %s" (L.ARROW_PAUSED_REASON) and "Turn
--- around" (L.ARROW_TURN_AROUND). tests/test_locale.lua reads the new modules and fails when one of
--- them looks up a sentence that is not listed.
+
+
+
+
+
+
+
+
+
+
+
 local GUIDANCE = {
     "'%s' is neither a command nor a place Cabbie knows. /cabbie help lists the commands.",
     "'%s' is neither a command nor enough of a place name to start a route. /cabbie help lists the commands, and %s %s looks for a place.",
@@ -1040,8 +1122,8 @@ local GUIDANCE = {
 }
 for i = 1, #GUIDANCE do L[GUIDANCE[i]] = GUIDANCE[i] end
 
--- The Turn arrow's panel in Edit Mode (UI/Callout.lua, UI/EditMode.lua): the look of the arrow and
--- its words, and the tooltip of a colour swatch.
+
+
 local ARROW_LOOK = {
     "Arrow",
     "Arrow colour",
@@ -1059,25 +1141,62 @@ local ARROW_LOOK = {
 }
 for i = 1, #ARROW_LOOK do L[ARROW_LOOK[i]] = ARROW_LOOK[i] end
 
--- Rooms and levels of the walkable surface read from the game's geometry (Nav/Instructions.lua,
--- steps "enter" and "level"): said in the call-out and the Route block like a turn. "Enter %s"
--- takes the room's name as the client writes it.
+
+
+
+
+
 local LEVELS = {
+    "%s, then %s",
     "Enter %s",
     "Go down the ramp to the lower level",
     "Go down to the lower level",
     "Go up the ramp to the upper level",
     "Go up to the upper level",
+    "Leave %s",
     "Take the stairs down",
     "Take the stairs up",
 }
 for i = 1, #LEVELS do L[LEVELS[i]] = LEVELS[i] end
 
--- The search line and the first-run guide (UI/SearchRows.lua, UI/SearchLine.lua): the guide's
--- title and its rows, the words of the "Go to:" line, its key binding and "Go to nearest" in the
--- minimap's menu (UI/Menus.lua). One block, as the guidance above: it arrived as one feature.
--- tests/test_locale.lua reads the two modules and fails when one looks up a sentence that is not
--- listed here.
+
+
+
+
+local INSIDE_ROOMS = {
+    "Follow the way in",
+    "Go down to %s",
+    "Go to %s",
+    "Go up to %s",
+}
+for i = 1, #INSIDE_ROOMS do L[INSIDE_ROOMS[i]] = INSIDE_ROOMS[i] end
+
+
+
+local HAZARDS = {
+    "Cross the fel here: it hurts, but there is no dry way",
+    "Cross the fel: it hurts",
+    "Cross the lava here: it hurts, but there is no dry way",
+    "Cross the lava: it hurts",
+    "Cross the slime here: it hurts, but there is no dry way",
+    "Cross the slime: it hurts",
+}
+for i = 1, #HAZARDS do L[HAZARDS[i]] = HAZARDS[i] end
+
+
+
+
+
+local COMPASS = {
+    "north", "north-west", "west", "south-west", "south", "south-east", "east", "north-east",
+}
+for i = 1, #COMPASS do L[COMPASS[i]] = COMPASS[i] end
+
+
+
+
+
+
 local SEARCH_LINE = {
     "Class trainer",
     "Click the round marker beside a quest and Cabbie leads you to it",
@@ -1100,10 +1219,10 @@ local SEARCH_LINE = {
 }
 for i = 1, #SEARCH_LINE do L[SEARCH_LINE[i]] = SEARCH_LINE[i] end
 
--- The pick-up marks (UI/QuestMarks.lua): the lines of a mark's tooltip beside the sentences
--- QuestData already has (the quest's name, where the place comes from), and the settings
--- checkbox with its tooltip (UI/Settings.lua). tests/test_questmarks.lua reads the module and
--- fails when one of its lookups is not listed.
+
+
+
+
 local PICKUP_MARKS = {
     "A yellow ! on the world map and the minimap where you can take a quest now, as far as the records say. Hover one to see where its place comes from; Shift-click it on the world map to go there.",
     "Level %d",
@@ -1131,9 +1250,7 @@ L["On screen"] = "On screen"
 
 L["Arrow"] = "Arrow"
 
-L["Step list"] = "Step list"
 
-L["Map marks"] = "Map marks"
 
 L["Routing"] = "Routing"
 
@@ -1158,28 +1275,19 @@ L["Text size"] = "Text size"
 
 L["Try Favorites, or Search for a town."] = "Try Favorites, or Search for a town."
 
-L["No stops yet. Open Search and press Add stop, or right-click a place on the map."] =
-    "No stops yet. Open Search and press Add stop, or right-click a place on the map."
+L["No stops yet. Open Search and press Add stop."] = "No stops yet. Open Search and press Add stop."
 
 L["Or open Search for a town, inn, or flight master."] = "Or open Search for a town, inn, or flight master."
 
 L["Map"] = "Map"
 L["Place icons"] = "Place icons"
 
--- Strings the modules read as L["..."] that were missing here (2026-10-17: Navigator, Cost, QuestData,
--- MapShot, Preview, QuestMap, Search, WorldMap); tools/check_locale.py now fails such a string.
+
+
 L["%s cut across city streets and squares on lines checked against the city map; nobody has walked those exact lines."] = "%s cut across city streets and squares on lines checked against the city map; nobody has walked those exact lines."
 L["Continue"] = "Continue"
 L["Your route from last time is still set (%d stop(s)). Continue or clear?"] = "Your route from last time is still set (%d stop(s)). Continue or clear?"
 L["Search by zone (\"Westfall\"), by level (\"24\" or \"20-30\"), or by a quest name you have already seen. %d routable quests are bundled."] = "Search by zone (\"Westfall\"), by level (\"24\" or \"20-30\"), or by a quest name you have already seen. %d routable quests are bundled."
-L["Maintainer tool: screenshot every zone and city map for road tracing; mapshot stop cancels"] = "Maintainer tool: screenshot every zone and city map for road tracing; mapshot stop cancels"
-L["Map pictures are not available in this client."] = "Map pictures are not available in this client."
-L["Map pictures cannot start in combat."] = "Map pictures cannot start in combat."
-L["Map pictures done: %d screenshots are in the game's Screenshots folder."] = "Map pictures done: %d screenshots are in the game's Screenshots folder."
-L["Map pictures stopped after %d screenshots."] = "Map pictures stopped after %d screenshots."
-L["Map pictures stopped after %d screenshots: the world map was closed or combat began."] = "Map pictures stopped after %d screenshots: the world map was closed or combat began."
-L["Map pictures: %d maps, about %d seconds. Leave the map open; /cabbie mapshot stop cancels."] = "Map pictures: %d maps, about %d seconds. Leave the map open; /cabbie mapshot stop cancels."
-L["Open the world map first, then type /cabbie mapshot again."] = "Open the world map first, then type /cabbie mapshot again."
 L["%s of this route is open ground (drawn dashed on the maps); expect obstacles."] = "%s of this route is open ground (drawn dashed on the maps); expect obstacles."
 L["%s of this route is a guessed way over open ground (drawn dashed on the maps); expect obstacles."] = "%s of this route is a guessed way over open ground (drawn dashed on the maps); expect obstacles."
 L["%s open ground"] = "%s open ground"
@@ -1191,7 +1299,7 @@ L["No quests with a known location."] = "No quests with a known location."
 L["Weapon master"] = "Weapon master"
 L["Stop"] = "Stop"
 
--- The continents' maps ship as folders of their own that Cabbie loads when needed (Core/DataLoad.lua).
+
 L["Cabbie cannot route in %s: its map add-on, %s, is not installed. Reinstall Cabbie with all its folders."] = "Cabbie cannot route in %s: its map add-on, %s, is not installed. Reinstall Cabbie with all its folders."
 L["Cabbie cannot route in %s: %s is turned off. Turn it on in the AddOns list at character select."] = "Cabbie cannot route in %s: %s is turned off. Turn it on in the AddOns list at character select."
 L["%s is from another version of Cabbie. Reinstall Cabbie so that all its folders match."] = "%s is from another version of Cabbie. Reinstall Cabbie so that all its folders match."

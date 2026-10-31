@@ -65,7 +65,7 @@ local ZONE_MAP_TYPE = 3
 
 
 QuestMarks.EVENTS = { "QUEST_ACCEPTED", "QUEST_REMOVED", "QUEST_TURNED_IN", "PLAYER_LEVEL_UP",
-                      "SKILL_LINES_CHANGED", "ZONE_CHANGED_NEW_AREA" }
+    "ZONE_CHANGED_NEW_AREA" }
 
 
 local LIVE = {}
@@ -130,6 +130,88 @@ end
 
 
 
+
+
+
+
+QuestMarks.giversByMap = {}
+local function giversOn(QuestData, uiMapID)
+    local D = FGPS.Destinations
+    local side = D and D.PlayerFactionCode and D.PlayerFactionCode() or 3
+    local bySide = QuestMarks.giversByMap[side]
+    if not bySide then bySide = {} QuestMarks.giversByMap[side] = bySide end
+    local cached = bySide[uiMapID]
+    if cached then return cached end
+    cached = QuestData.GiversOnMap(uiMapID) or {}
+    bySide[uiMapID] = cached
+    return cached
+end
+
+
+local function gatingSkillLines()
+    if QuestMarks.skillLines then return QuestMarks.skillLines end
+    local lines = {}
+    local QuestData = FGPS.QuestData
+    local quests = QuestData and QuestData.Dataset and QuestData.Dataset()
+    if quests and type(quests.sk) == "table" then
+        for _, skill in pairs(quests.sk) do
+            if type(skill) == "number" then lines[math.floor(skill / 1000)] = true end
+        end
+    end
+    QuestMarks.skillLines = lines
+    return lines
+end
+
+local function skillRanks()
+    local ranks = {}
+    if not (C_SkillInfo and C_SkillInfo.GetSkillLineInfoByID) then return ranks end
+    for line in pairs(gatingSkillLines()) do
+        local ok, info = pcall(C_SkillInfo.GetSkillLineInfoByID, line)
+
+        if ok and type(info) == "table" and not (issecretvalue and issecretvalue(info.rank)) then
+            ranks[line] = tonumber(info.rank)
+        end
+    end
+    return ranks
+end
+
+
+
+local function gatingFactions()
+    if QuestMarks.factions then return QuestMarks.factions end
+    local factions = {}
+    local QuestData = FGPS.QuestData
+    local quests = QuestData and QuestData.Dataset and QuestData.Dataset()
+    if quests and type(quests.rp) == "table" then
+        for _, rp in pairs(quests.rp) do
+            if type(rp) == "number" then
+                if rp >= 10000 then factions[math.floor(rp / 10000)] = true end
+                if rp % 10000 > 0 then factions[rp % 10000] = true end
+            end
+        end
+    end
+    QuestMarks.factions = factions
+    return factions
+end
+
+local function standings()
+    local out = {}
+    if not (C_Reputation and C_Reputation.GetFactionDataByID) then return out end
+    for faction in pairs(gatingFactions()) do
+        local ok, data = pcall(C_Reputation.GetFactionDataByID, faction)
+        if ok and type(data) == "table" and not (issecretvalue and issecretvalue(data.currentStanding)) then
+            out[faction] = tonumber(data.currentStanding)
+        end
+    end
+    return out
+end
+
+local function sameRanks(a, b)
+    for key, value in pairs(a) do if b[key] ~= value then return false end end
+    for key, value in pairs(b) do if a[key] ~= value then return false end end
+    return true
+end
+
 function QuestMarks.MarksFor(uiMapID, onMinimap, verdicts)
     uiMapID = tonumber(uiMapID)
     if not uiMapID or not QuestMarks.Wanted() then return {} end
@@ -138,7 +220,7 @@ function QuestMarks.MarksFor(uiMapID, onMinimap, verdicts)
     local playerLevel, range = QuestData.PlayerLevel(), trivialRange()
     local out = {}
     verdicts = verdicts or {}
-    for _, entry in ipairs(QuestData.GiversOnMap(uiMapID)) do
+    for _, entry in ipairs(giversOn(QuestData, uiMapID)) do
         local id, pos = entry.id, entry.position
         if pos and not pos.interior and pos.src ~= SRC_ITEM_DROP and id ~= pinned then
             local verdict = verdicts[id]
@@ -296,6 +378,7 @@ function QuestMarks:Redraw()
     if not (map and self.layer) then return end
     local mapID = self.live and not (map.IsShown and not map:IsShown()) and map:GetMapID() or nil
     local marks = mapID and QuestMarks.MarksFor(mapID, false, self.verdicts) or nil
+    if mapID then QuestMarks.skillRanks, QuestMarks.standings = skillRanks(), standings() end
     self:ClearDrawing()
     if not marks or #marks == 0 then return end
     if not self.pinPool then
@@ -420,6 +503,26 @@ end
 
 
 
+local function onSkillLines()
+    local now = skillRanks()
+    local prev = QuestMarks.skillRanks
+    QuestMarks.skillRanks = now
+    if prev and sameRanks(prev, now) then return end
+    onQuestEvent()
+end
+
+
+
+local function onFactions()
+    local now = standings()
+    local prev = QuestMarks.standings
+    QuestMarks.standings = now
+    if prev and sameRanks(prev, now) then return end
+    onQuestEvent()
+end
+
+
+
 
 local function onQuestsUpdated(_, count)
     if count == QuestMarks.logCount then return end
@@ -431,6 +534,8 @@ local function goLive(self)
     self.live = true
     local Events = FGPS.Events
     for _, event in ipairs(QuestMarks.EVENTS) do Events:RegisterWoW(event, onQuestEvent, LIVE) end
+    Events:RegisterWoW("SKILL_LINES_CHANGED", onSkillLines, LIVE)
+    Events:RegisterWoW("UPDATE_FACTION", onFactions, LIVE)
     Events:Register("QUESTS_UPDATED", onQuestsUpdated, LIVE)
 end
 

@@ -13,8 +13,8 @@ local Boot = {
     coreOrder = { "Scheduler", "Perf", "DataLoad" },
     -- Fixed module order from ARCHITECTURE.md section 4.
     order = {
-        "Coords", "Graph", "Access", "Cost", "Router", "Instructions", "Personal", "Transport",
-        "Destinations", "Quests", "ServiceSearch", "Calibrate", "Social", "QuestData", "QuestBatch", "Navigator",
+        "Coords", "Graph", "Access", "Cost", "Route", "Router", "Instructions", "Personal", "Transport",
+        "Destinations", "Quests", "ServiceSearch", "Calibrate", "Social", "QuestData", "QuestBatch", "Inside", "Navigator",
         "UI.Guide", "UI.RouteBlock", "UI.Callout", "UI.Go", "UI.Menus", "UI.SearchLine",
         "UI.Skins", "UI.Frames", "UI.Positions", "UI.EditMode", "UI.WorldMap",
         "UI.MapPlaces", "UI.Minimap", "UI.Launcher", "UI.QuestMap", "UI.QuestMarks", "UI.QuestPanel", "UI.Search", "UI.Preview", "UI.Favorites", "UI.Itinerary", "UI.Voice",

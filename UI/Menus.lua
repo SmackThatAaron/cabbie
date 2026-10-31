@@ -410,6 +410,12 @@ Menus.NEAREST = {
 
 
 
+local NAVIGATOR_ENDS = { quest = true, resurrected = true }
+
+
+
+
+
 function Menus.GoToNearest(service, word)
     local Services, Go, Guide = FGPS.ServiceSearch, FGPS.UI.Go, FGPS.UI.Guide
     if not (Services and Services.Nearest and Go and Go.Start) then return false end
@@ -429,7 +435,11 @@ function Menus.GoToNearest(service, word)
 
 
 
-    local pick = {}
+
+    local Nav = FGPS.Navigator
+
+
+    local pick = { previewed = Nav and Nav.GetState and Nav:GetState() == "previewing" and Nav:GetRoute() or nil }
     Menus.nearestPick = pick
     return Services.Nearest(asked, { limit = 1 }, function(list)
         if Menus.nearestPick ~= pick then return end
@@ -452,6 +462,9 @@ function Menus.OnTrackingMenu(owner, root)
     for _, service in ipairs(Menus.NEAREST) do
         nearest:CreateButton(L[service[2]], function() Menus.GoToNearest(service[1], L[service[2]]) end)
     end
+
+    local Look = FGPS.UI.Look
+    if Look and Look.NoteOnce then Look.NoteOnce("tracking", "Tracking menu: entry added") end
 end
 
 
@@ -470,11 +483,24 @@ function Menus:Init()
 
 
 
-    FGPS.Events:Register("DESTINATION_SET", function()
-        Menus.nearestPick = nil
+
+
+    FGPS.Events:Register("DESTINATION_SET", function(_, _, askedBy)
+        if askedBy ~= "navigator" then Menus.nearestPick = nil end
         Menus.noPlaceSaid = nil
     end, self)
-    FGPS.Events:Register("NAV_CANCELLED", function() Menus.nearestPick = nil end, self)
+    FGPS.Events:Register("NAV_CANCELLED", function(_, reason)
+        if not NAVIGATOR_ENDS[reason] then Menus.nearestPick = nil end
+    end, self)
+
+
+    FGPS.Events:Register("NAV_STATE", function(_, new, old)
+        local pick = Menus.nearestPick
+        if pick and pick.previewed and new == "active" and old == "previewing"
+            and FGPS.Navigator:GetRoute() == pick.previewed then
+            Menus.nearestPick = nil
+        end
+    end, self)
     local RouteBlock = FGPS.UI.RouteBlock
     local frame = RouteBlock and RouteBlock.frame or nil
 

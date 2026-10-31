@@ -20,8 +20,7 @@ local ADDON_NAME, FGPS = ...
 
 local L = FGPS.L
 local Util = FGPS.Util
-local type, ipairs, pairs, tostring, tonumber, format = type, ipairs, pairs, tostring, tonumber, string.format
-local floor = math.floor
+local type, ipairs, tostring, tonumber, format = type, ipairs, tostring, tonumber, string.format
 
 local UISettings = {
     category = nil,
@@ -47,6 +46,17 @@ local UNITS = { { "yards", "Yards" }, { "metric", "Metric" } }
 local MODIFIERS = { { "CTRL_RIGHT", "Ctrl + Right-click" }, { "ALT_LEFT", "Alt + Left-click" },
                     { "SHIFT_RIGHT", "Shift + Right-click" },
                     { "NONE", "No extra click", "Switches off the extra click only. Shift + Left-click still goes to the spot." } }
+
+
+
+
+function UISettings.MapClickLabel(modifier)
+    if modifier == "NONE" then return nil end
+    for _, entry in ipairs(MODIFIERS) do
+        if entry[1] == modifier then return L[entry[2]] end
+    end
+    return nil
+end
 local COMBAT_MODES = { { "all", "Keep everything (visuals and voice)" }, { "visuals_only", "Visuals only, no voice" },
                        { "hide_all", "Hide all guidance" } }
 local VERBOSITY = { { "minimal", "Minimal" }, { "normal", "Normal" }, { "detailed", "Detailed" } }
@@ -152,20 +162,26 @@ end
 
 
 
-local function addButton(category, name, buttonText, onClick, tooltip)
-    if CreateSettingsButtonInitializer and Settings.RegisterInitializer then
-        local initializer = CreateSettingsButtonInitializer(L[name], L[buttonText], onClick, L[tooltip or name], true)
-        Settings.RegisterInitializer(category, initializer)
-        return true
+
+local function buttonInitializer(name, buttonText, onClick, tooltip)
+    if not Settings.RegisterInitializer then return nil end
+    if CreateSettingsButtonInitializer then
+        return CreateSettingsButtonInitializer(L[name], L[buttonText], onClick, L[tooltip or name], true)
     end
-    if Settings.CreateElementInitializer and Settings.RegisterInitializer then
+    if Settings.CreateElementInitializer then
         local data = { name = L[name], buttonText = L[buttonText], buttonClick = onClick, tooltip = L[tooltip or name] }
         local initializer = Settings.CreateElementInitializer("SettingButtonControlTemplate", data)
         if initializer and initializer.AddSearchTags then initializer:AddSearchTags(L[name]) end
-        Settings.RegisterInitializer(category, initializer)
-        return true
+        return initializer
     end
-    return false
+    return nil
+end
+
+local function addButton(category, name, buttonText, onClick, tooltip)
+    local initializer = buttonInitializer(name, buttonText, onClick, tooltip)
+    if not initializer then return false end
+    Settings.RegisterInitializer(category, initializer)
+    return true
 end
 
 
@@ -215,11 +231,23 @@ end
 local Actions = {}
 UISettings.Actions = Actions
 
+local function elementName(key)
+    for _, entry in ipairs(ELEMENT_KEYS) do
+        if entry[1] == key then
+            return (entry[2]:match("^Reset (.*) position$")) or key
+        end
+    end
+    return nil
+end
+
 function Actions.ResetElement(key)
     local DB = FGPS.DB
     key = ELEMENT_ALIASES[key] or key
+    local name = elementName(key)
+    if not name then return false end
     if DB and DB.ResetElementPosition then DB:ResetElementPosition(key) end
-    FGPS:Print(L["Position of '%s' restored to its default."], key)
+    FGPS:Print(L["Position of '%s' restored to its default."], name)
+    return true
 end
 
 function Actions.ResetPositions()
@@ -397,6 +425,8 @@ end
 
 
 
+
+
 function UISettings.GameHasVoices()
     local Voice = FGPS.UI.Voice
     return Voice ~= nil and Voice.HasSystemVoice ~= nil and Voice:HasSystemVoice() == true
@@ -410,25 +440,35 @@ local function onlyWithGameVoices(initializer)
 end
 
 
+local function playSample()
+    local Voice = FGPS.UI.Voice
+    if Voice and Voice.PlaySample then Voice:PlaySample() end
+end
 
-local function addNoVoicesLine(category)
-    local initializer = headerInitializer(L["The game reports no text-to-speech voices on this computer"],
-        L["Cabbie's recorded voice speaks; it needs nothing installed. The game voice settings below stay greyed out until the game reports a voice."])
+
+
+local function addSampleRow(category, name, tooltip, shownWhen)
+    local initializer = buttonInitializer(name, "Play a sample", playSample, tooltip)
     if not initializer then return nil end
     if initializer.AddShownPredicate then
-        initializer:AddShownPredicate(function() return not UISettings.GameHasVoices() end)
-    elseif UISettings.GameHasVoices() then
+        initializer:AddShownPredicate(shownWhen)
+    elseif not shownWhen() then
         return nil
     end
     Settings.RegisterInitializer(category, initializer)
-    UISettings.noVoicesLine = initializer
     return initializer
 end
 
 local function registerVoice(category)
     checkbox(category, "voice.enabled", "Voice guidance", "Speak turn instructions out loud.")
+
+
+    UISettings.noVoicesLine = addSampleRow(category, "Speaking with Cabbie's recorded voice",
+        "The game reports no text-to-speech voice on this computer, so the game voice settings below are greyed out. Cabbie's recorded voice needs nothing installed. Play a sample says one short sentence in it.",
+        function() return not UISettings.GameHasVoices() end)
+    UISettings.sampleLine = addSampleRow(category, "Voice sample",
+        "Says one short sentence in the voice chosen on this page, with voice guidance on or off.", UISettings.GameHasVoices)
     onlyWithGameVoices(checkbox(category, "voice.systemVoice", "Use the game's text-to-speech voice", "Off (the default): Cabbie's own recorded voice, the same on every computer. On: the voice chosen in the game's text-to-speech settings, which also says place names. Greyed out while the game reports no text-to-speech voice; the recorded one speaks then."))
-    addNoVoicesLine(category)
     local Voice = FGPS.UI.Voice
     local defaultVoice = Voice and Voice.GetVoiceID and Voice:GetVoiceID() or 0
     local setting = proxy(category, "voice.voiceID", "number", L["Voice"], {
@@ -642,11 +682,6 @@ local function slashStart()
     if waitOut then waitOut() end
 end
 
-local function slashCancel()
-    local Navigator = navigator()
-    if Navigator and Navigator.Cancel then Navigator:Cancel("user") end
-end
-
 local function slashPause()
     local Navigator = navigator()
     if Navigator and Navigator.Pause then Navigator:Pause() end
@@ -671,7 +706,7 @@ local function slashLegend(args)
         if current == nil then current = true end
         on = not current
     else
-        FGPS:Print(L["Usage: /cabbie legend on|off"])
+        FGPS:Print(FGPS.Util.EscapeBars(L["Usage: /cabbie legend on|off"]))
         return
     end
     DB:Set("worldMapLegend", on)
@@ -698,9 +733,11 @@ local function slashReset(args)
     elseif word == "routing" then
         Actions.ResetRouting()
     elseif word ~= "" then
-        Actions.ResetElement(word)
+        if not Actions.ResetElement(word) then
+            FGPS:Print(FGPS.Util.EscapeBars(L["Usage: /cabbie reset settings|positions|routing|all|<element> (search, preview, favorites, stops, quests)"]))
+        end
     else
-        FGPS:Print(L["Usage: /cabbie reset settings|positions|routing|all|<element> (search, preview, favorites, stops)"])
+        FGPS:Print(FGPS.Util.EscapeBars(L["Usage: /cabbie reset settings|positions|routing|all|<element> (search, preview, favorites, stops, quests)"]))
     end
 end
 
@@ -735,8 +772,6 @@ local SLASH_WORDS = {
     { "start", slashStart, "Start (or resume) navigation for the previewed route" },
     { "pause", slashPause, "Pause guidance" },
     { "resume", slashResume, "Resume guidance" },
-    { "cancel", slashCancel, "Cancel the current route" },
-    { "stop", slashCancel, "Same as cancel" },
     { "legend", slashLegend, "Map legend: on|off" },
     { "debug", slashDebug, "Toggle debug output: on|off" },
     { "reset", slashReset, "Reset settings|positions|routing|all|<element>" },

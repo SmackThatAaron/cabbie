@@ -45,6 +45,12 @@ Personal.SPELL_NAMES = {
     [3561] = "Teleport: Stormwind", [3562] = "Teleport: Ironforge", [3565] = "Teleport: Darnassus", [3563] = "Teleport: Undercity",
     [3566] = "Teleport: Thunder Bluff", [3567] = "Teleport: Orgrimmar", [18960] = "Teleport: Moonglade", [556] = "Astral Recall",
 }
+
+
+
+Personal.RUNE_OF_TELEPORTATION = 17031
+Personal.RUNE_SPELLS = {}
+for _, id in ipairs(Personal.CLASS_SPELLS.MAGE) do Personal.RUNE_SPELLS[id] = true end
 Personal.CAST_SECONDS = { [556] = 10, [3561] = 10, [3562] = 10, [3565] = 10, [3563] = 10, [3566] = 10, [3567] = 10, [18960] = 10 }
 
 local POI_INN, POI_TOWN, POI_CAPITAL, POI_GRAVEYARD, POI_PORTAL = 7, 1, 5, 16, 17
@@ -203,6 +209,31 @@ local function spellArrival(spellID)
 end
 Personal.SpellArrival = spellArrival
 
+
+
+
+
+local function areaRows(P)
+    if Personal.areaRowsSource == P and Personal.areaRows then return Personal.areaRows end
+    local out, named = {}, false
+    local areaName = FGPS.Coords and FGPS.Coords.AreaName
+    if areaName then
+        local function add(areaID, row)
+            local name = areaName(areaID)
+            if name then
+                local key = lower(name)
+                out[key] = out[key] or {}
+                out[key][#out[key] + 1] = row
+                named = true
+            end
+        end
+        for row, areaID in pairs(P.area or {}) do add(areaID, row) end
+        for areaID, row in pairs(P.areaAlias or {}) do add(areaID, row) end
+    end
+    if named then Personal.areaRows, Personal.areaRowsSource = out, P end
+    return out
+end
+
 local function zoneIndexByName(name)
     local names = FGPS.Data and FGPS.Data.zoneNames
     if not names then return nil end
@@ -226,10 +257,18 @@ function Personal.ResolveBind(bindName)
     if cached ~= nil then return cached or nil end
     if not P then return nil end
     local q = lower(Util.Trim(bindName))
-    if Personal.BIND_ALIASES[q] then q = lower(Personal.BIND_ALIASES[q]) end
     local innExact, townExact, graveyardExact, innContains
     local names, types = P.name, P.type
-    for i = 1, P.n do
+
+
+    for _, i in ipairs(areaRows(P)[q] or {}) do
+        local t = types[i]
+        if (t == POI_TOWN or t == POI_CAPITAL) and (not townExact or i < townExact) then townExact = i
+        elseif t == POI_INN and (not innExact or i < innExact) then innExact = i end
+    end
+    if townExact then innExact = nil end
+    if Personal.BIND_ALIASES[q] then q = lower(Personal.BIND_ALIASES[q]) end
+    for i = 1, (innExact or townExact) and 0 or P.n do
         local t = types[i]
         if t == POI_INN or t == POI_TOWN or t == POI_CAPITAL or t == POI_GRAVEYARD then
             local key = lower(names[i])
@@ -653,6 +692,13 @@ function Personal.Options()
                 opt.zoneName, opt.poiIndex, opt.targetName = pos.zoneName, pos.poiIndex, pos.poiName
                 opt.routable = opt.known
                 if not opt.known then opt.note = L["Spell not known yet."] end
+
+                local runes = Personal.RUNE_SPELLS[spellID] and C_Item and C_Item.GetItemCount
+                    and plain(C_Item.GetItemCount(Personal.RUNE_OF_TELEPORTATION)) or nil
+                if opt.routable and runes == 0 then
+                    opt.routable = false
+                    opt.note = L["No Rune of Teleportation in your bags; the teleport is not used for routing."]
+                end
             else
                 opt.routable = false
                 opt.note = L["No arrival position is known for this spell."]
@@ -680,6 +726,7 @@ end
 
 function Personal.InvalidateBind()
     wipe(Personal.bindCache)
+    Personal.areaRows = nil
 end
 
 

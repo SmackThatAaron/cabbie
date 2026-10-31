@@ -108,6 +108,11 @@ function Setup:Show()
     win.Follow:SetChecked(follows())
     self:MarkDone()
     win:Show()
+
+
+    local follow = win.Follow
+    Look().NoteOnce("welcome", "Welcome window: ground %s, check box %s, words %s", tostring(win.fgpsGround),
+        tostring(follow.fgpsLook), (follow.Text or follow.text) == follow.Label and "template Text" or "own")
     return true
 end
 

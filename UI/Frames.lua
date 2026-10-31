@@ -869,11 +869,6 @@ function Frames.CreateScrollList(parent, rowHeight, renderFn, opts)
         end
     end
 
-    function list:GetSelected()
-        if self.selected then return self.items[self.selected], self.selected end
-        return nil
-    end
-
     function list:OnRowClick(row, button)
         if row.fgpsIndex == nil then return end
         self.selected = row.fgpsIndex
@@ -950,6 +945,21 @@ local function windowKeyDown(self, key)
         pcall(self.SetPropagateKeyboardInput, self, not handled)
     end
     if key == "ESCAPE" then self:Hide() end
+end
+
+-- The edit box inside `frame` that has the keyboard lets go of it. Only an edit box answers
+-- HasFocus, and the client gives the keyboard to one box at a time. True when one let go.
+local function releaseKeyboard(frame)
+    if frame.HasFocus and frame.ClearFocus and frame:HasFocus() then
+        frame:ClearFocus()
+        return true
+    end
+    if not frame.GetChildren then return false end
+    local children = { frame:GetChildren() }
+    for i = 1, #children do
+        if releaseKeyboard(children[i]) then return true end
+    end
+    return false
 end
 
 local function windowKeyboard(win, enabled)
@@ -1093,14 +1103,30 @@ function Frames.CreateWindow(key, opts)
         if self.RaiseCloseButton then self.RaiseCloseButton() end
         if opts.onShow then pcall(opts.onShow, self) end
     end)
-    win:SetScript("OnHide", function(self)
-        windowKeyboard(self, false)
-        closeOpenMenu()
+    local function close(self)
         if opts.onClose then
             local ok, err = pcall(opts.onClose, self)
             if not ok and FGPS.Log then FGPS.Log:Error("Window %s onClose failed: %s", key, tostring(err)) end
         end
+    end
+    win:SetScript("OnHide", function(self)
+        windowKeyboard(self, false)
+        closeOpenMenu()
+        -- Still shown by its own flag: a parent hid it (Alt-Z, a cinematic hides UIParent) and it
+        -- comes back with the interface, so this is no close. Its box lets go of the keys anyway.
+        if self:IsShown() then
+            releaseKeyboard(self)
+        else
+            close(self)
+        end
     end)
+    -- Hidden while a parent already hides it, the window runs no OnHide; it is closed all the same.
+    local hide = win.Hide
+    function win:Hide()
+        local unseen = self:IsShown() and not self:IsVisible()
+        hide(self)
+        if unseen then close(self) end
+    end
 
     function win:SetTitle(text) self.Title:SetText(text or "") end
     function win:Toggle() if self:IsShown() then self:Hide() else self:Show() end end
@@ -1136,11 +1162,6 @@ function Frames.GetWindow(key)
     return Frames.windows[key]
 end
 
--- Hides every window (used by tests and "/cabbie reset").
-function Frames.HideAllWindows()
-    for _, win in pairs(Frames.windows) do win:Hide() end
-end
-
 -------------------------------------------------------------------------------
 -- Init
 -------------------------------------------------------------------------------
@@ -1148,7 +1169,10 @@ local function onCombatState(_, inCombat)
     for _, win in pairs(Frames.windows) do
         if inCombat then
             windowKeyboard(win, false)
-        elseif win:IsShown() then
+            -- A player attacked while typing needs the keys at once, as on the "Go to:" line
+            -- (UI/SearchLine.lua). A box clicked into during the fight keeps them.
+            releaseKeyboard(win)
+        elseif win:IsVisible() then
             windowKeyboard(win, true)
         end
     end

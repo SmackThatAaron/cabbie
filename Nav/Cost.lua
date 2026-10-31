@@ -199,6 +199,18 @@ Cost.ExpectedWait = expectedWait
 
 
 
+function Cost.AboardWait(rec, stopIndex)
+    local stop = type(rec) == "table" and type(rec.stops) == "table" and rec.stops[stopIndex] or nil
+    local dwell = type(stop) == "table" and tonumber(stop.wait) or 0
+    local cap = expectedWait(type(rec) == "table" and rec.period or nil)
+    if dwell > cap then return cap end
+    if dwell < 0 then return 0 end
+    return dwell
+end
+
+
+
+
 
 function Cost.EdgeSeconds(kind, yards, access, edgeSeconds, extra, shaped)
     yards = yards or 0
@@ -509,6 +521,91 @@ end
 
 
 
+
+local BLOCKED_CELL_DEFAULT = 10
+local BLOCKED_BLOCK = 16
+
+
+
+
+local function blockedBlocks(b)
+    local hot = b._hot
+    if hot then return hot, b._bw end
+    hot = {}
+    local w, grid = b.w or 0, b.c
+    local bw = ceil(w / BLOCKED_BLOCK) + 2
+    if w > 0 and type(grid) == "table" then
+        for idx in pairs(grid) do
+            local i = idx - 1
+            local row = floor(i / w)
+            local br, bc = floor(row / BLOCKED_BLOCK) + 1, floor((i - row * w) / BLOCKED_BLOCK) + 1
+            for r = br - 1, br + 1 do
+                for c = bc - 1, bc + 1 do hot[r * bw + c] = true end
+            end
+        end
+    end
+    b._hot, b._bw = hot, bw
+    return hot, bw
+end
+
+
+local blockX1, blockY1, blockX2, blockY2, blockGrid, blockHit = {}, {}, {}, {}, {}, {}
+
+
+function Cost.OverBlocked(inst, x1, y1, x2, y2)
+    local data = FGPS.Data
+    local layer = data and data.water and data.water[inst]
+    local b = layer and layer.b
+    if not b or type(b.c) ~= "table" or x1 == nil or x2 == nil then return false end
+    local slot = swimSlot(inst, x1, y1, x2, y2)
+    if blockGrid[slot] == b and blockX1[slot] == x1 and blockY1[slot] == y1 and blockX2[slot] == x2 and blockY2[slot] == y2 then
+        return blockHit[slot]
+    end
+    local cell = b.cell or BLOCKED_CELL_DEFAULT
+    local w, h, grid = b.w or 0, b.h or 0, b.c
+    local ox, oy = layer.ox, layer.oy
+    local dx, dy = x2 - x1, y2 - y1
+    local d = sqrt(dx * dx + dy * dy)
+    local steps = ceil(2 * d / cell)
+    local hit = false
+    if steps >= 2 then
+        local ac, ar = floor((x1 - ox) / cell), floor((y1 - oy) / cell)
+        local zc, zr = floor((x2 - ox) / cell), floor((y2 - oy) / cell)
+        local hot, bw = blockedBlocks(b)
+        local coarse = ceil(4 * d / (BLOCKED_BLOCK * cell))
+        local done = 0
+        for j = 0, coarse do
+            local t = j / coarse
+            local col = floor((x1 + dx * t - ox) / cell)
+            local row = floor((y1 + dy * t - oy) / cell)
+            local bc = floor(col / BLOCKED_BLOCK) + 1
+            if bc >= 0 and bc < bw and hot[(floor(row / BLOCKED_BLOCK) + 1) * bw + bc] then
+                local first = floor((j - 1) * steps / coarse)
+                if first <= done then first = done + 1 end
+                local last = ceil((j + 1) * steps / coarse)
+                if last > steps - 1 then last = steps - 1 end
+                for i = first, last do
+                    local s = i / steps
+                    local c = floor((x1 + dx * s - ox) / cell)
+                    local r = floor((y1 + dy * s - oy) / cell)
+                    if c >= 0 and r >= 0 and c < w and r < h and grid[r * w + c + 1]
+                        and not (c == ac and r == ar) and not (c == zc and r == zr) then
+                        hit = true
+                        break
+                    end
+                end
+                if last > done then done = last end
+                if hit then break end
+            end
+        end
+    end
+    blockGrid[slot], blockX1[slot], blockY1[slot], blockX2[slot], blockY2[slot], blockHit[slot] = b, x1, y1, x2, y2, hit
+    return hit
+end
+
+
+
+
 function Cost.WaterFactor(kind, inst, x1, y1, x2, y2, access)
     if kind ~= 3 and kind ~= 14 then return 1.0 end
     local share = Cost.WaterShare(inst, x1, y1, x2, y2)
@@ -551,6 +648,14 @@ end
 
 
 
+
+local HAZARD_LIQUIDS = { "fel", "slime", "lava" }
+local HAZARD_EXPLAIN = {
+    fel = L["%s cross fel read from the game's own world: it hurts, but there is no dry way."],
+    slime = L["%s cross slime read from the game's own world: it hurts, but there is no dry way."],
+    lava = L["%s cross lava read from the game's own world: it hurts, but there is no dry way."],
+}
+
 function Cost.Explain(route)
 
 
@@ -580,11 +685,17 @@ function Cost.Explain(route)
 
 
 
-    local road = route and route.roadYards or 0
-    if road > 0 then
+
+    local shaped = route and route.roadShapedYards or 0
+    local road = (route and route.roadYards or 0) - shaped
+    if road >= 0.5 then
         add(string.format(
             L["%s follow roads known from the game's signposts; the line is drawn straight between junctions, so it cuts corners."],
             FGPS.Util.FormatDistance(road, units)))
+    end
+    if shaped >= 0.5 then
+        add(string.format(L["%s follow roads known from the game's signposts, drawn along the road's bends."],
+            FGPS.Util.FormatDistance(shaped, units)))
     end
 
 
@@ -612,10 +723,19 @@ function Cost.Explain(route)
         add(string.format(L["%s follow ground, floors and halls read from the game's own world."],
             FGPS.Util.FormatDistance(surface, units)))
     end
+
+
+    local hazard = route and route.hazardYards or {}
     local swim = route and route.surfaceSwimYards or 0
+    for _, liquid in ipairs(HAZARD_LIQUIDS) do swim = swim - (hazard[liquid] or 0) end
     if swim >= 0.5 then
         add(string.format(L["%s swim across water read from the game's own world."],
             FGPS.Util.FormatDistance(swim, units)))
+    end
+    for _, liquid in ipairs(HAZARD_LIQUIDS) do
+        if (hazard[liquid] or 0) >= 0.5 then
+            add(string.format(HAZARD_EXPLAIN[liquid], FGPS.Util.FormatDistance(hazard[liquid], units)))
+        end
     end
     return text
 end

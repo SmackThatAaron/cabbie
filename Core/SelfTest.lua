@@ -42,6 +42,7 @@ local SelfTest = {
     last = nil,
     lastRoute = nil,
     sessionStart = nil,
+    foundRecord = nil,
 }
 FGPS.SelfTest = SelfTest
 
@@ -368,15 +369,20 @@ local function checkVoice()
     local Voice = FGPS.UI and FGPS.UI.Voice
     if not Voice then return "skip", "UI/Voice.lua is not installed" end
     if not Voice:IsEnabled() then return "skip", "voice is turned off in the settings" end
+
+
+    if Voice:UsesClips() then
+        if not Voice:IsAvailable() then return "fail", "voice is on, but the client has no PlaySoundFile for the recorded voice" end
+        local s = Voice.stats or {}
+        if (s.clipsFailed or 0) > 0 and (s.clipsPlayed or 0) == 0 then
+            return "fail", format("the game refused all %d recorded clip(s) this session (last %s: %s)", s.clipsFailed,
+                tostring(s.lastFailedClip), tostring(s.lastFailure))
+        end
+        return "pass", format("Cabbie's recorded voice speaks: %d clip(s) played, %d refused this session", s.clipsPlayed or 0, s.clipsFailed or 0)
+    end
     local voices = Voice:GetVoices() or {}
-    if #voices == 0 then
-        return "fail", "voice is on but the client reports no text-to-speech voice; install a system voice or turn voice off"
-    end
-    if not Voice:IsAvailable() then
-        return "fail", "voice is on and voices exist, but the client has no SpeakText function"
-    end
     local id = Voice:GetVoiceID()
-    return "pass", format("%d voice(s) available, using %s", #voices, tostring(Voice:GetVoiceName(id) or id))
+    return "pass", format("the game's text-to-speech speaks: %d voice(s) available, using %s", #voices, tostring(Voice:GetVoiceName(id) or id))
 end
 
 
@@ -386,10 +392,13 @@ end
 
 
 
+
 function SelfTest.CountSession()
+    if not FGPS:IsOwnerInstall() then return nil end
     local account = FGPS.DB and FGPS.DB.account
     if type(account) ~= "table" then return nil end
     local record = account.selftest
+    SelfTest.foundRecord = type(record) == "table" and (tonumber(record.sessions) or 0) >= 1
     if type(record) ~= "table" then
         record = { sessions = 0, firstSeen = stamp() }
         account.selftest = record
@@ -413,6 +422,11 @@ end
 
 
 
+
+
+
+
+
 local function onWorldEntered(_, isInitialLogin, isReloadingUi)
     if SelfTest.sessionStart then return end
     if isReloadingUi then
@@ -421,6 +435,16 @@ local function onWorldEntered(_, isInitialLogin, isReloadingUi)
         SelfTest.sessionStart = "login"
     else
         return
+    end
+    if not FGPS:IsOwnerInstall() then return end
+    local _, record = savedSessions()
+    if type(record) == "table" then
+        if SelfTest.sessionStart == "login" then
+            record.logins = (tonumber(record.logins) or 0) + 1
+            record.loginsKept = (tonumber(record.loginsKept) or 0) + (SelfTest.foundRecord and 1 or 0)
+        else
+            record.reloads = (tonumber(record.reloads) or 0) + 1
+        end
     end
     if SelfTest.sessionStart == "reload" and savedSessions() <= 1 and FGPS.Log then
         FGPS.Log:Info("The interface was reloaded and the saved data came back empty: the client did not keep SavedVariables\\Cabbie.lua, unless Cabbie was switched on just before the /reload")
@@ -431,6 +455,7 @@ local function checkSaved()
     local DB = FGPS.DB
     if not (DB and DB.initialized) then return "fail", "Core/DB.lua never initialised the saved variables" end
     if type(DB.settings) ~= "table" then return "fail", "CabbieDB.settings is missing" end
+    if not FGPS:IsOwnerInstall() then return "skip", "not checked: Cabbie keeps no count of its sessions in its saved data" end
     local sessions, record = savedSessions()
     if sessions >= 2 then
         return "pass", format("read back from disk: %d session(s) recorded since %s", sessions, tostring(record.firstSeen))
@@ -680,10 +705,12 @@ local function yardsByKind(route)
     return out
 end
 
+
+
 local function longestStraight(route)
     local best = 0
     for _, leg in ipairs(route.legs or {}) do
-        local pts = leg.points
+        local pts = (leg.kind or "walk") == "walk" and leg.points or nil
         if pts then
             for i = 2, #pts do
                 local a, b = pts[i - 1], pts[i]
@@ -800,10 +827,34 @@ local function settingDiff(current, defaults, prefix, out)
     return out
 end
 
+
+
+local function extraLeaves(current, defaults, prefix, out)
+    if type(current) ~= "table" then return end
+    defaults = type(defaults) == "table" and defaults or {}
+    for key, have in pairs(current) do
+        local path = prefix and (prefix .. "." .. tostring(key)) or tostring(key)
+        if defaults[key] == nil then
+            if type(have) == "table" then
+                extraLeaves(have, nil, path, out)
+            else
+                local fallback = path == "routing.maxStraightYards"
+                    and (FGPS.Router and FGPS.Router.DEFAULT_MAX_STRAIGHT_YARDS or 3000) or nil
+                if have ~= fallback then
+                    out[#out + 1] = format("%s = %s (no default)", path, tostring(have))
+                end
+            end
+        elseif type(have) == "table" and type(defaults[key]) == "table" then
+            extraLeaves(have, defaults[key], path, out)
+        end
+    end
+end
+
 local function nonDefaultSettings()
     local DB = FGPS.DB
     if not (DB and DB.settings and DB.defaults) then return {} end
     local out = settingDiff(DB.settings, DB.defaults.settings, nil, {})
+    extraLeaves(DB.settings, DB.defaults.settings, nil, out)
     sort(out)
     return out
 end
@@ -844,6 +895,16 @@ local function perfCounters()
         frameBudgetMs = report.frameBudgetMs,
         uptimeSeconds = round1(report.uptime),
     }
+end
+
+
+
+local function voiceRecord()
+    local Voice = FGPS.UI and FGPS.UI.Voice
+    if not (Voice and Voice.Report) then return nil end
+    local ok, report = pcall(Voice.Report, Voice)
+    if ok and type(report) == "table" then return report end
+    return nil
 end
 
 local function compactResult(result)
@@ -920,6 +981,8 @@ end
 
 
 
+
+
 SelfTest.CLIENT_NOTICE_LIMIT = 20
 SelfTest.SESSION_LOG_LINES = 60
 
@@ -968,6 +1031,7 @@ end
 
 
 
+
 SelfTest.PLACE_LOG_MAX = 200
 SelfTest.PLACE_EVENTS = { "ZONE_CHANGED", "ZONE_CHANGED_INDOORS", "NEW_WMO_CHUNK", "ZONE_CHANGED_NEW_AREA" }
 SelfTest.places = {}
@@ -980,6 +1044,7 @@ local function clientText(fn)
 end
 
 local function onPlaceChanged(event)
+    if not FGPS:IsOwnerInstall() then return end
     local entry = { t = round1(GetTime and GetTime() or nil), ev = event,
                     sub = clientText(GetSubZoneText), mini = clientText(GetMinimapZoneText), zone = clientText(GetZoneText) }
     if IsIndoors then
@@ -1003,7 +1068,43 @@ local function onPlaceChanged(event)
     while #log > SelfTest.PLACE_LOG_MAX do table.remove(log, 1) end
 end
 
+
+
+
+
+
+
+SelfTest.OFF_ROUTE_LOG_MAX = 100
+SelfTest.offRoutes = {}
+
+local function onOffRoute(_, yards)
+    SelfTest.CountOffRoute()
+    if not FGPS:IsOwnerInstall() then return end
+    local entry = { t = round1(GetTime and GetTime() or nil), yards = round1(tonumber(yards)) }
+    local Coords = FGPS.Coords
+    if Coords and Coords.PlayerPos then
+        local ok, pos = pcall(Coords.PlayerPos)
+        if ok and type(pos) == "table" then entry.inst, entry.x, entry.y = pos.inst, round1(pos.x), round1(pos.y) end
+    end
+    local Navigator = FGPS.Navigator
+    local route = Navigator and Navigator.GetRoute and Navigator:GetRoute()
+    local progress = Navigator and Navigator.GetProgress and Navigator:GetProgress()
+    local leg = type(route) == "table" and type(route.legs) == "table" and type(progress) == "table"
+        and route.legs[progress.legIndex] or nil
+    if type(leg) == "table" then
+        entry.leg = leg.kind or "walk"
+        local point = type(leg.points) == "table" and progress.pointIndex and leg.points[progress.pointIndex]
+        entry.k = type(point) == "table" and point.k or nil
+    end
+    local log = SelfTest.offRoutes
+    log[#log + 1] = entry
+    while #log > SelfTest.OFF_ROUTE_LOG_MAX do table.remove(log, 1) end
+end
+
+
+
 local function onLogout()
+    if not FGPS:IsOwnerInstall() then return end
     local account = FGPS.DB and FGPS.DB.account
     if type(account) ~= "table" then return end
     local boot = FGPS.Boot and FGPS.Boot.report
@@ -1019,7 +1120,17 @@ local function onLogout()
         log = lastLogLines(SelfTest.SESSION_LOG_LINES),
         trips = savedTrips(),
         places = Util.DeepCopy(SelfTest.places) or {},
+        offRoute = Util.DeepCopy(SelfTest.offRoutes) or {},
+
+        inside = Util.DeepCopy(FGPS.Inside and FGPS.Inside.visits) or {},
+
+
+        look = Util.DeepCopy(FGPS.UI and FGPS.UI.Look and FGPS.UI.Look.answers) or {},
         routes = keptRoutes,
+        perf = perfCounters(),
+        voice = voiceRecord(),
+
+        quests = Util.DeepCopy(FGPS.Quests and FGPS.Quests.answers and FGPS.Quests.answers.list) or {},
     }
 end
 
@@ -1050,7 +1161,7 @@ function SelfTest:Init()
         FGPS.Events:Register("ROUTE_STARTED", onRoute, self)
         FGPS.Events:Register("ROUTE_UPDATED", onRoute, self)
         FGPS.Events:Register("ROUTE_PREVIEW", onRoute, self)
-        FGPS.Events:Register("NAV_OFF_ROUTE", function() SelfTest.CountOffRoute() end, self)
+        FGPS.Events:Register("NAV_OFF_ROUTE", onOffRoute, self)
         FGPS.Events:Register("NAV_RECALC_DONE", function() SelfTest.CountRecalc() end, self)
         FGPS.Events:Register("NAV_ARRIVED", onArrived, self)
         FGPS.Events:Register("NAV_CANCELLED", onCancelled, self)

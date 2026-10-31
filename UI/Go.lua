@@ -55,8 +55,10 @@ function Go.WaitOutTheRide()
     local Navigator = FGPS.Navigator
     if not (Navigator and Navigator.pendingReroute) then return false end
     if Navigator.GetState and Navigator:GetState() == "paused" and Navigator.Resume then Navigator:Resume() end
-    -- Asked after the resume, by the navigator's own condition for a ride under way (Reroute).
+    -- Asked after the resume, by the navigator's own condition for a ride under way (Reroute),
+    -- which counts a flight its tick has not seen yet.
     local riding = Navigator.riding or (Navigator.GetState and Navigator:GetState() == "in_transit")
+        or (UnitOnTaxi and UnitOnTaxi("player"))
     local Guide = FGPS.UI.Guide
     if riding and Guide and Guide.Say then Guide.Say(L["The new route starts when this ride ends"], Go.RIDE_HOLD) end
     return true
@@ -86,6 +88,7 @@ local function fromCoordinates(text)
     if err == "range" then return nil, L["Each of the two numbers goes from 0 to 100."] end
     return nil, L["Those numbers are not a place on that map."]
 end
+Go.FromCoordinates = fromCoordinates
 
 -- The best match of a typed name and the words the search labels it with (name, zone, kind), or
 -- nil. A service word ("bank", "inn") is the nearest of its kind; the engine ranks the rest.

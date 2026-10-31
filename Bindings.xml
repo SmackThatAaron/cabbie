@@ -7,7 +7,10 @@
 		protected is ever called from a key press.
 	-->
 	<Binding name="CABBIE_GOTO" runOnUp="true" category="BINDING_HEADER_CABBIE">
-		if Cabbie and Cabbie.UI and Cabbie.UI.Bindings and keystate == "up" then Cabbie.UI.Bindings.Run("goTo") end
+		if Cabbie and Cabbie.UI and Cabbie.UI.Bindings then
+			if Cabbie.UI.Bindings.NoteKeyState then Cabbie.UI.Bindings.NoteKeyState("goTo", keystate) end
+			if keystate == "up" then Cabbie.UI.Bindings.Run("goTo") end
+		end
 	</Binding>
 
 	<Binding name="CABBIE_SEARCH" category="BINDING_HEADER_CABBIE">

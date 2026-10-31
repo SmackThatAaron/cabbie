@@ -56,14 +56,14 @@ end
 
 
 
+
 local function actionSearch()
     local Search = FGPS.UI.Search
     if not Search or not Search.Toggle then
         FGPS:Print(L["The search window is not available in this session."])
         return false
     end
-    Search:Toggle()
-    return true
+    return Search:Toggle() ~= false
 end
 
 
@@ -179,7 +179,7 @@ local function actionMapDestination()
     end
     local ok, dest, err = pcall(Destinations.FromMapClick, mapID, cx, cy)
     if not ok or not dest then
-        FGPS:Print(L["That map position cannot be used as a destination%s"], (ok and err) and (": " .. tostring(err)) or ".")
+        FGPS:Print(L["That map position cannot be used as a destination%s"], (ok and err) and (": " .. FGPS.UI.Compat.ReasonText(err, L["unknown reason"])) or ".")
         return false
     end
     local Compat = FGPS.UI.Compat
@@ -200,7 +200,8 @@ Bindings.ACTIONS = {
     mute = { binding = "CABBIE_MUTE", label = "Mute voice guidance", run = actionMute },
 
 
-    cancel = { binding = "CABBIE_CANCEL", label = "Clear route", run = actionCancel },
+
+    cancel = { binding = "CABBIE_CANCEL", label = "Old key for Clear route", run = actionCancel },
     clear = { binding = "CABBIE_CLEAR", label = "Clear route", run = actionClear },
     mapDestination = { binding = "CABBIE_MAP_DESTINATION", label = "Set a destination at the world map cursor", run = actionMapDestination },
 }
@@ -224,6 +225,14 @@ function Bindings.Run(name)
         return false
     end
     return result and true or false
+end
+
+
+
+
+function Bindings.NoteKeyState(name, keystate)
+    local Look = FGPS.UI.Look
+    if Look and Look.NoteOnce then Look.NoteOnce("key:" .. tostring(name), "%s key: state %s", tostring(name), tostring(keystate)) end
 end
 
 

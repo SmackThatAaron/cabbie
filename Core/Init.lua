@@ -1,22 +1,22 @@
--- Cabbie/Core/Init.lua
--- Addon table setup: identity, build detection, constants, utilities, chat output and the slash
--- command registry. This file loads before every other Core, Nav and UI file and must not depend
--- on any of them at file scope.
+
+
+
+
 local ADDON_NAME, FGPS = ...
 
 FGPS.name = ADDON_NAME
--- The one and only public global (ARCHITECTURE.md section 1).
+
 Cabbie = FGPS
--- Namespaces filled by later files (Data\*.lua and UI\*.lua attach to these).
+
 FGPS.Data = FGPS.Data or {}
 FGPS.UI = FGPS.UI or {}
 
 local L = FGPS.L
 local format, floor, tostring, type, select, pairs, ipairs = string.format, math.floor, tostring, type, select, pairs, ipairs
 
--------------------------------------------------------------------------------
--- Version and client build detection
--------------------------------------------------------------------------------
+
+
+
 local function metadata(field)
     if C_AddOns and C_AddOns.GetAddOnMetadata then
         local ok, value = pcall(C_AddOns.GetAddOnMetadata, ADDON_NAME, field)
@@ -40,59 +40,66 @@ do
         buildNumber = buildNumber,
         date = buildDate,
         interface = interface,
-        -- Forever beta 1.60.1 reports interface 16001; the version prefix covers later 1.60.x builds.
+
         isForever = (interface == 16001) or (type(versionString) == "string" and versionString:sub(1, 4) == "1.60"),
     }
 end
 
--------------------------------------------------------------------------------
--- Constants (Cost.lua may extend this table with routing specific values)
--------------------------------------------------------------------------------
+
+
+
 FGPS.Const = {
-    RUN_SPEED = 7.0,            -- yards per second, base run speed
-    MOUNT_60 = 11.2,            -- apprentice riding
-    MOUNT_100 = 14.0,           -- journeyman riding
+    RUN_SPEED = 7.0,
+    MOUNT_60 = 11.2,
+    MOUNT_100 = 14.0,
     SWIM_SPEED = 4.72,
-    TAXI_SPEED = 32,            -- cmangos TAXI_FLIGHT_SPEED
+    TAXI_SPEED = 32,
     TAXI_BOARD_SECONDS = 5,
-    BOAT_WAIT_CAP = 120,        -- expected wait is period / 2 capped at this value
+    BOAT_WAIT_CAP = 120,
     TRAM_WAIT = 30,
     TRAM_SECONDS = 60,
     ELEVATOR_SECONDS = 20,
     PORTAL_SECONDS = 5,
     HEARTH_CAST_SECONDS = 10,
     HEARTH_LOAD_SECONDS = 5,
-    ARRIVE_YARDS = 10,          -- final stop arrival radius (settings.routing.arrivalRadius overrides)
+    ARRIVE_YARDS = 10,
     INTERMEDIATE_ARRIVE_YARDS = 15,
     OFFROUTE_YARDS = 40,
-    -- A guessed line (a signpost road, a connector, a straight or mesh stretch) is not where the
-    -- road runs: beside one the band is this share of the segment's length, at most the cap.
+
+
     OFFROUTE_GUESS_SHARE = 0.15,
     OFFROUTE_GUESS_MAX_YARDS = 150,
     OFFROUTE_TICKS = 3,
     RECALC_MIN_SECONDS = 5,
-    -- Longest straight-line fallback the Router may offer a recalculation from a real route (it
-    -- reads request.fallbackCapYards): the first attach radius. A longer line means nothing
-    -- attached near the player, and the Navigator keeps the route it has instead.
+
+
+
     RECALC_FALLBACK_CAP_YARDS = 150,
-    -- The stop area of a boat, zeppelin, flight or portal: the ride ends and the leg is reached
-    -- within this radius of its arrival stop (Nav/Transport.lua and Nav/Navigator.lua both).
+
+
     TRANSPORT_ARRIVE_YARDS = 60,
-    POS_HZ = 4,                 -- position tick rate while navigating
+    POS_HZ = 4,
     GRID_CELL_YARDS = 256,
     ORIGIN_CELL_YARDS = 32,
     ATTACH_RADIUS_YARDS = 150,
     ATTACH_VERIFIED_ONLY_YARDS = 25,
-    MAX_EXPANSIONS = 150000,
     YARDS_PER_METER = 1.0936133,
     METERS_PER_YARD = 0.9144,
 }
 
--------------------------------------------------------------------------------
--- Utilities
--------------------------------------------------------------------------------
+
+
+
 local Util = {}
 FGPS.Util = Util
+
+
+
+
+function Util.EscapeBars(text)
+    if type(text) ~= "string" then return text end
+    return (text:gsub("|", "||"))
+end
 
 function Util.Clamp(value, low, high)
     if value < low then return low end
@@ -100,7 +107,7 @@ function Util.Clamp(value, low, high)
     return value
 end
 
--- Rounds half away from zero to the given number of decimals (default 0).
+
 function Util.Round(value, decimals)
     local m = 10 ^ (decimals or 0)
     if value >= 0 then return floor(value * m + 0.5) / m end
@@ -117,8 +124,8 @@ local function withThousands(n)
 end
 Util.WithThousands = withThousands
 
--- Distance for display. "yards" (default) prints yards with thousands separators; "metric"
--- prints metres below one kilometre and kilometres with one decimal above.
+
+
 function Util.FormatDistance(yards, units)
     if type(yards) ~= "number" then return L.UNKNOWN_VALUE end
     if yards < 0 then yards = -yards end
@@ -130,7 +137,7 @@ function Util.FormatDistance(yards, units)
     return format("%s %s", withThousands(yards), L.UNIT_YARDS)
 end
 
--- Duration for display: "45s", "2m 5s", "1h 2m".
+
 function Util.FormatTime(seconds)
     if type(seconds) ~= "number" then return L.UNKNOWN_VALUE end
     seconds = floor(seconds + 0.5)
@@ -140,8 +147,8 @@ function Util.FormatTime(seconds)
     return format(L.TIME_HOURS, floor(seconds / 3600), floor((seconds % 3600) / 60))
 end
 
--- Deterministic serialisation used by Hash: keys are visited in sorted order so two tables with
--- the same content produce the same digest regardless of insertion order. Cycles are marked.
+
+
 local function keyLess(a, b)
     local ta, tb = type(a), type(b)
     if ta ~= tb then return ta < tb end
@@ -176,15 +183,15 @@ local function serialize(value, out, seen)
     end
 end
 
--- Returns the canonical string form of a value (what Hash digests). Useful for cache keys.
+
 function Util.Serialize(value)
     local out = {}
     serialize(value, out, {})
     return table.concat(out)
 end
 
--- 32-bit djb2 over the serialised form, rendered as 8 hex digits. Kept within double precision
--- (33 * 2^32 < 2^53) and formatted as two 16-bit halves so it is safe on 32-bit "long" builds.
+
+
 local function hashString(s)
     local h = 5381
     for i = 1, #s do
@@ -217,8 +224,8 @@ function Util.DeepCopy(t)
     return deepCopy(t, {})
 end
 
--- Deep merge of src into dst. Nested tables are merged recursively, other values are copied.
--- With keepExisting = true, values already present in dst are left untouched (default filling).
+
+
 function Util.Merge(dst, src, keepExisting)
     for k, v in pairs(src) do
         local cur = dst[k]
@@ -243,14 +250,14 @@ function Util.Trim(s)
 end
 
 local function asciiLower(c) return string.char(c:byte() + 32) end
--- ASCII-only lower casing that does not depend on the C locale.
+
 function Util.Lower(s)
     if type(s) ~= "string" then return "" end
     local r = s:gsub("[A-Z]", asciiLower)
     return r
 end
 
--- Splits on a single-character separator into a list of trimmed, non-empty pieces.
+
 function Util.Split(s, sep)
     local out = {}
     if type(s) ~= "string" then return out end
@@ -260,7 +267,7 @@ function Util.Split(s, sep)
     return out
 end
 
--- Copies a Blizzard Vector2D (or any {x, y} table) into a fresh Vector2D when available.
+
 function Util.CopyVector(v)
     if not v then return nil end
     local x, y
@@ -275,7 +282,7 @@ function Util.Count(t)
     return n
 end
 
--- string.format that never raises: on a bad format string the arguments are appended instead.
+
 function Util.SafeFormat(fmt, ...)
     local n = select("#", ...)
     if n == 0 then return tostring(fmt) end
@@ -286,9 +293,9 @@ function Util.SafeFormat(fmt, ...)
     return table.concat(parts, " ")
 end
 
--------------------------------------------------------------------------------
--- Chat output
--------------------------------------------------------------------------------
+
+
+
 local PREFIX = "|cff4fc3f7Cabbie|r: "
 
 local function emit(text)
@@ -309,7 +316,7 @@ function FGPS:IsDebug()
     return db ~= nil and db.settings ~= nil and db.settings.debug == true
 end
 
--- Debug output goes to chat and the log buffer only while settings.debug is on.
+
 function FGPS:Debug(fmt, ...)
     if not self:IsDebug() then return end
     local text = Util.SafeFormat(fmt, ...)
@@ -317,13 +324,13 @@ function FGPS:Debug(fmt, ...)
     if self.Log then self.Log:Debug("%s", text) end
 end
 
--------------------------------------------------------------------------------
--- Slash command registry ("/cabbie <word> [args]", "/gps ...")
--------------------------------------------------------------------------------
+
+
+
 local Slash = { commands = {}, order = {} }
 FGPS.Slash = Slash
 
--- handler(argsString, word) is called with the remainder of the line. help is shown by "/cabbie help".
+
 function Slash.Register(word, handler, help)
     assert(type(word) == "string" and word ~= "", "Slash.Register: word must be a non-empty string")
     assert(type(handler) == "function", "Slash.Register: handler must be a function")
@@ -349,15 +356,15 @@ function Slash.Help()
     FGPS:Print(L.HELP_HEADER, FGPS.version)
     for _, word in ipairs(Slash.order) do
         local cmd = Slash.commands[word]
-        if cmd and cmd.help then emit(format(L.HELP_LINE, word, cmd.help)) end
+        if cmd and cmd.help then emit(format(L.HELP_LINE, word, Util.EscapeBars(cmd.help))) end
     end
 end
 
 function Slash.Dispatch(message)
     message = Util.Trim(message)
     if message == "" then
-        -- "/cabbie" with nothing after it opens the "Go to:" line. Without the line (its file
-        -- failed to load) the old search window, and without that the list of commands.
+
+
         local line = FGPS.UI and FGPS.UI.SearchLine
         if line and line.Open then
             local ok, opened = pcall(line.Open)
@@ -367,8 +374,8 @@ function Slash.Dispatch(message)
         local search = FGPS.UI and FGPS.UI.Search
         local opener = search and (search.Toggle or search.Show or search.Open)
         if opener then
-            -- The old window stands on UIParent: while the game hides its interface (Alt-Z) it
-            -- would open unseen and take every key, so nothing opens then.
+
+
             if UIParent and UIParent.IsVisible and not UIParent:IsVisible() then return end
             local ok, err = pcall(opener, search)
             if not ok and FGPS.Log then FGPS.Log:Error("Search window failed to open: %s", tostring(err)) end
@@ -381,9 +388,9 @@ function Slash.Dispatch(message)
     word = Util.Lower(word)
     local cmd = Slash.commands[word]
     if not cmd then
-        -- Not a command, so it may be a place ("/cabbie goldshire", "/cabbie sentinel hill") or a
-        -- command mistyped. UI/Go.lua tells them apart and starts a route only for a place that
-        -- is named plainly; an error in there is answered like a failed "/cabbie go".
+
+
+
         local Go = FGPS.UI and FGPS.UI.Go
         if Go and Go.FromUnknownCommand then
             local ok, err = pcall(Go.FromUnknownCommand, message)
@@ -403,8 +410,8 @@ function Slash.Dispatch(message)
     end
 end
 
--- "help" opens the "Go to:" line, whose empty state shows how to use Cabbie, and lists the
--- commands in chat as it always did.
+
+
 Slash.Register("help", function()
     local line = FGPS.UI and FGPS.UI.SearchLine
     if line and line.Open then
@@ -419,20 +426,20 @@ Slash.Register("version", function()
         b.isForever and "" or L.NOT_FOREVER)
 end, L.HELP_VERSION)
 
--- "clear" is the one word for "nothing set any more", and "stop" and "cancel" mean the same thing:
--- all three go through Navigator:Clear, so there is a single meaning whichever word the player
--- remembers. They are registered here, before every other module, for two reasons: they are listed
--- near the top of "/cabbie help", where somebody looking for a way out finds them, and UI/Settings.lua
--- only registers "cancel" and "stop" when the words are still free, so its older handler (a bare
--- Navigator:Cancel, which says nothing and leaves a failed preview's window and stops that were
--- never started behind) steps aside. The navigator loads later; it is looked up when the word is used.
+
+
+
+
+
+
+
 local function slashClear()
     local Navigator = FGPS.Navigator
     if not (Navigator and Navigator.Clear) then
         FGPS:Print(L["Navigation is not available right now."])
         return
     end
-    -- Clear says "Cleared" itself, and only when there was something to clear.
+
     Navigator:Clear("user")
 end
 Slash.Register("clear", slashClear, L["Clear everything Cabbie has set: the route, the preview, every stop and the map markers"])
@@ -445,3 +452,16 @@ SLASH_CABBIE3 = "/cab"
 if SlashCmdList then
     SlashCmdList["CABBIE"] = function(message) Slash.Dispatch(message) end
 end
+
+
+
+
+
+
+
+
+
+function FGPS.IsOwnerInstall()
+    return FGPS.ownerInstall == true
+end
+

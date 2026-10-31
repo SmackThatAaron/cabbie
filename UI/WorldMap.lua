@@ -24,6 +24,9 @@
 
 
 
+
+
+
 local ADDON_NAME, FGPS = ...
 
 local L = FGPS.L
@@ -51,6 +54,10 @@ local WorldMap = {
 
 
     DISTANCE_POLL_SECONDS = 5,
+
+
+    DISTANCE_POLL_STILL_YARDS = 5,
+    pollPos = nil,
     distanceTicker = nil,
     route = nil,
     routeIsPreview = false,
@@ -66,11 +73,20 @@ local WorldMap = {
     OTHER_LEVEL_YARDS = 6,
 
 
-    LEVEL_REDRAW_SECONDS = 1,
+    PROGRESS_REDRAW_SECONDS = 1,
+
+
+    PROGRESS_MOVE_YARDS = 10,
+    progressRedrawAt = nil,
+    progress = nil,
+    drawnFromLeg = nil,
+    drawnFromPoint = nil,
+    drawnFromInst = nil,
+    drawnFromX = nil,
+    drawnFromY = nil,
     drawnLevelZ = nil,
     levelBandLow = nil,
     levelBandHigh = nil,
-    levelRedrawAt = nil,
 }
 FGPS.UI.WorldMap = WorldMap
 
@@ -192,6 +208,9 @@ local function continentMap(inst)
 end
 
 
+local zoneCrop
+
+
 
 
 
@@ -211,8 +230,18 @@ local function fromContinent(inst, x, y, mapID)
     if not (Coords and Coords.WorldToMap) then return nil end
     local _, cx, cy = Coords.WorldToMap(inst, x, y, continent)
     if not cx or not cy then return nil end
-    local ok, minX, maxX, minY, maxY = pcall(C_Map.GetMapRectOnMap, mapID, continent)
-    if not ok or type(minX) ~= "number" or type(maxX) ~= "number" or type(minY) ~= "number" or type(maxY) ~= "number" then
+    local minX, maxX, minY, maxY
+    local crop = zoneCrop
+
+
+    if crop and crop.mapID == mapID then
+        minX, maxX, minY, maxY = crop.minX, crop.maxX, crop.minY, crop.maxY
+    else
+        local ok
+        ok, minX, maxX, minY, maxY = pcall(C_Map.GetMapRectOnMap, mapID, continent)
+        if not ok then return nil end
+    end
+    if type(minX) ~= "number" or type(maxX) ~= "number" or type(minY) ~= "number" or type(maxY) ~= "number" then
         return nil
     end
     if maxX <= minX or maxY <= minY then return nil end
@@ -364,6 +393,55 @@ end
 
 
 
+local function keptIndices(leg, kept, points)
+    if leg._fgpsKeptFor == kept and type(leg._fgpsKept) == "table" then return leg._fgpsKept end
+    local indices, i, n = {}, 1, #points
+    for j = 1, #kept do
+        while i <= n and points[i] ~= kept[j] do i = i + 1 end
+        indices[j] = i
+        i = i + 1
+    end
+    leg._fgpsKept, leg._fgpsKeptFor = indices, kept
+    return indices
+end
+
+
+
+
+
+local function remainingPoints(leg, points, pts, jump, from, pos)
+    local out, frame = {}, nil
+    if jump and from > jump then
+
+        if leg.toInst ~= nil and leg.toInst ~= leg.inst then frame = leg.toInst end
+        jump = nil
+    end
+    local frameInst = frame or leg.inst
+    if type(pos) == "table" and pos.x and pos.y and (frameInst == nil or pos.inst == nil or pos.inst == frameInst) then
+
+        local behind = points[from - 1]
+        out[1] = { x = pos.x, y = pos.y, z = behind and behind.z, stacked = behind and behind.stacked }
+    end
+    local lead = #out
+    if pts == points then
+        for i = from, #points do out[#out + 1] = points[i] end
+    else
+        local kept = keptIndices(leg, pts, points)
+        for j = 1, #pts do
+            if kept[j] >= from then out[#out + 1] = pts[j] end
+        end
+    end
+
+    if jump then jump = lead + jump - from + 1 end
+    return out, jump, frame
+end
+
+
+
+
+
+
+
 
 
 
@@ -428,12 +506,16 @@ function WorldMap.ComputeSegments(route, mapID, opts)
     local mapW, mapH
     local continent = continentMap(inst)
     local row = mapRow(mapID)
+    zoneCrop = nil
     if row and row.kind == 3 and continent and continent ~= mapID and C_Map and C_Map.GetMapRectOnMap then
         local c = mapRow(continent)
         local ok, minX, maxX, minY, maxY = pcall(C_Map.GetMapRectOnMap, mapID, continent)
-        if ok and c and c.minX and type(maxX) == "number" and maxX > minX and maxY > minY then
-            mapW = (maxX - minX) * math.abs(c.maxX - c.minX)
-            mapH = (maxY - minY) * math.abs(c.maxY - c.minY)
+        if ok and type(minX) == "number" and type(maxX) == "number" and type(minY) == "number" and type(maxY) == "number" then
+            zoneCrop = { mapID = mapID, minX = minX, maxX = maxX, minY = minY, maxY = maxY }
+            if c and c.minX and maxX > minX and maxY > minY then
+                mapW = (maxX - minX) * math.abs(c.maxX - c.minX)
+                mapH = (maxY - minY) * math.abs(c.maxY - c.minY)
+            end
         end
     end
     if not mapW and row and row.minX and row.maxX and row.minY and row.maxY then
@@ -442,20 +524,32 @@ function WorldMap.ComputeSegments(route, mapID, opts)
     end
 
 
+
+    local startLeg = type(opts.startLeg) == "number" and opts.startLeg or nil
+    local startPoint = startLeg and type(opts.startPoint) == "number" and opts.startPoint or nil
+
+
     local prepared, candidates = {}, 0
     for legIndex, leg in ipairs(route.legs) do
         local points = type(leg) == "table" and leg.points or nil
         if type(points) == "table" and #points >= 2 and not TELEPORT_KINDS[leg.kind or ""]
             and not TRACKLESS_KINDS[leg.kind or ""]
-            and (inst == nil or leg.inst == nil or leg.inst == inst or leg.toInst == inst) then
+            and (inst == nil or leg.inst == nil or leg.inst == inst or leg.toInst == inst)
+            and not (startLeg and legIndex < startLeg) then
             local jump = jumpIndex(leg, points)
             local pts, thinned = points, false
 
 
             if not jump then pts, thinned = simplify(leg, points, tolerance) end
             if thinned then info.truncated = true end
-            prepared[#prepared + 1] = { leg = leg, index = legIndex, points = pts, jump = jump }
-            candidates = candidates + (#pts - 1)
+            local frame
+            if legIndex == startLeg and startPoint then
+                pts, jump, frame = remainingPoints(leg, points, pts, jump, startPoint, opts.startPos)
+            end
+            if #pts >= 2 then
+                prepared[#prepared + 1] = { leg = leg, index = legIndex, points = pts, jump = jump, inst = frame }
+                candidates = candidates + (#pts - 1)
+            end
         end
     end
     info.legs = #prepared
@@ -483,7 +577,7 @@ function WorldMap.ComputeSegments(route, mapID, opts)
         local leg = entry.leg
         local jump = entry.jump
         local pts = jump and entry.points or decimate(entry.points, stride)
-        local legInst = leg.inst or inst
+        local legInst = entry.inst or leg.inst or inst
         local crossesInstances = jump ~= nil and leg.toInst ~= nil and leg.toInst ~= leg.inst
         local legUnverified = leg.unverified == true
         local transport = TRANSPORT_KINDS[leg.kind or ""] == true
@@ -528,6 +622,7 @@ function WorldMap.ComputeSegments(route, mapID, opts)
                     segments[#segments + 1] = seg
                     if #segments >= maxSegments then
                         info.truncated = true
+                        zoneCrop = nil
                         return segments, info
                     end
                 end
@@ -544,6 +639,7 @@ function WorldMap.ComputeSegments(route, mapID, opts)
                         segments[#segments + 1] = seg
                         if #segments >= maxSegments then
                             info.truncated = true
+                            zoneCrop = nil
                             return segments, info
                         end
                     end
@@ -560,6 +656,7 @@ function WorldMap.ComputeSegments(route, mapID, opts)
             end
         end
     end
+    zoneCrop = nil
     return segments, info
 end
 
@@ -604,7 +701,9 @@ end
 
 
 
-function WorldMap.ComputeTransportLabels(route, mapID)
+
+
+function WorldMap.ComputeTransportLabels(route, mapID, startLeg)
     local labels = {}
     if type(route) ~= "table" or type(route.legs) ~= "table" or type(mapID) ~= "number" then return labels end
     local inst = mapInstance(mapID)
@@ -612,7 +711,8 @@ function WorldMap.ComputeTransportLabels(route, mapID)
     for legIndex, leg in ipairs(route.legs) do
         local points = type(leg) == "table" and leg.points or nil
         if type(points) == "table" and #points >= 2 and TRANSPORT_KINDS[leg.kind or ""] and leg.inst ~= nil
-            and ((leg.toInst ~= nil and leg.toInst ~= leg.inst) or TRACKLESS_KINDS[leg.kind]) then
+            and ((leg.toInst ~= nil and leg.toInst ~= leg.inst) or TRACKLESS_KINDS[leg.kind])
+            and not (type(startLeg) == "number" and legIndex < startLeg) then
             local vehicle = Route and Route.LegLabel and Route.LegLabel(leg.kind) or leg.kind
             local first, last = points[1], points[#points]
             local arrivalInst = leg.toInst or leg.inst
@@ -871,6 +971,24 @@ local function placeLabel(label, canvas, w, h, scale, entry)
 end
 
 
+
+
+local function lineStart(route, progress)
+    if type(route) ~= "table" or type(route.legs) ~= "table" or type(progress) ~= "table" then return nil end
+    local legIndex, pos = progress.legIndex, progress.pos
+    local leg = type(legIndex) == "number" and route.legs[legIndex] or nil
+    if type(leg) ~= "table" or type(leg.points) ~= "table" or #leg.points < 1 then return nil end
+    if type(pos) ~= "table" or type(pos.x) ~= "number" or type(pos.y) ~= "number" then return nil end
+    local Minimap = FGPS.UI.Minimap
+    if not (Minimap and Minimap.PointAhead) then return nil end
+
+    local ok, from = pcall(Minimap.PointAhead, leg, progress.pointIndex, progress.alongYards, pos)
+    if not ok or type(from) ~= "number" then return nil end
+    return legIndex, from, pos
+end
+
+
+
 function WorldMap:Redraw()
     local map = WorldMapFrame
     if not map or not self.overlay then return end
@@ -912,8 +1030,36 @@ function WorldMap:Redraw()
         local ok, z = pcall(Navigator.LevelZ, Navigator)
         if ok and type(z) == "number" then levelZ = z end
     end
+
+    local fromLeg, fromPoint, fromPos
+    if drawRoute and not self.routeIsPreview then fromLeg, fromPoint, fromPos = lineStart(self.route, self.progress) end
+    self.drawnFromLeg, self.drawnFromPoint = fromLeg, fromPoint
+    self.drawnFromInst, self.drawnFromX, self.drawnFromY = nil, nil, nil
+    if fromPos then self.drawnFromInst, self.drawnFromX, self.drawnFromY = fromPos.inst, fromPos.x, fromPos.y end
     local segments, segInfo = {}, nil
-    if drawRoute then segments, segInfo = WorldMap.ComputeSegments(self.route, mapID, { levelZ = levelZ }) end
+    if drawRoute then
+
+
+
+        local cache = self.segmentCache
+        local posInst = fromPos and fromPos.inst or nil
+        local posX = fromPos and fromPos.x or nil
+        local posY = fromPos and fromPos.y or nil
+        if cache and cache.route == self.route and cache.mapID == mapID and cache.levelZ == levelZ
+            and cache.startLeg == fromLeg and cache.startPoint == fromPoint
+            and cache.inst == posInst and cache.x == posX and cache.y == posY then
+            segments, segInfo = cache.segments, cache.info
+        else
+            segments, segInfo = WorldMap.ComputeSegments(self.route, mapID,
+                { levelZ = levelZ, startLeg = fromLeg, startPoint = fromPoint, startPos = fromPos })
+            self.segmentCache = {
+                route = self.route, mapID = mapID, levelZ = levelZ,
+                startLeg = fromLeg, startPoint = fromPoint,
+                inst = posInst, x = posX, y = posY,
+                segments = segments, info = segInfo,
+            }
+        end
+    end
     self.drawnLevelZ = levelZ
     self.levelBandLow = segInfo and segInfo.levelLow
     self.levelBandHigh = segInfo and segInfo.levelHigh
@@ -1006,7 +1152,7 @@ function WorldMap:Redraw()
         setupPin(pin)
         placePin(pin, canvas, w, h, scale, entry)
     end
-    for _, entry in ipairs(drawRoute and WorldMap.ComputeTransportLabels(self.route, mapID) or {}) do
+    for _, entry in ipairs(drawRoute and WorldMap.ComputeTransportLabels(self.route, mapID, fromLeg) or {}) do
         local label = self.labelPool:Acquire()
         setupLabel(label)
         placeLabel(label, canvas, w, h, scale, entry)
@@ -1060,7 +1206,12 @@ local function createProvider()
     end
     function provider:RemoveAllData() WorldMap:ClearDrawing() end
     function provider:RefreshAllData() WorldMap:Redraw() end
-    function provider:OnMapChanged() WorldMap:Redraw() end
+    function provider:OnMapChanged()
+        WorldMap:Redraw()
+
+        local SearchLine = FGPS.UI.SearchLine
+        if SearchLine and SearchLine.PlaceField then SearchLine.PlaceField() end
+    end
     function provider:OnShow()
         WorldMap:Redraw()
         WorldMap:UpdateClearButton()
@@ -1103,17 +1254,20 @@ function WorldMap.GoTo(dest, opts)
     if not dest or not Navigator or not Navigator.SetDestination then return false end
     local addStop = opts and opts.addStop or false
     local startNow = opts and opts.start == true
+
+
+    local quiet = opts and opts.quiet == true
     local Search = FGPS.UI.Search
     if Search and Search.GoTo then
         local mode = addStop and "addStop" or (startNow and "start" or nil)
-        return Search.GoTo(dest, mode)
+        return Search.GoTo(dest, mode, { quiet = quiet })
     end
     if addStop and Navigator.AddStop then
-        Navigator:AddStop(dest)
+        Navigator:AddStop(dest, { quiet = quiet })
         return true
     end
     if startNow then
-        Navigator:SetDestination(dest, { start = true })
+        Navigator:SetDestination(dest, { start = true, quiet = quiet })
         return true
     end
     local Preview = FGPS.UI.Preview
@@ -1121,7 +1275,7 @@ function WorldMap.GoTo(dest, opts)
 
     local journey = Navigator.IsJourney and Navigator:IsJourney()
     if journey and Preview and Preview.ShowCalculating then Preview:ShowCalculating(dest) end
-    Navigator:SetDestination(dest, { start = false })
+    Navigator:SetDestination(dest, { start = false, quiet = quiet })
     if journey then return true end
     if Preview and Preview.ShowCalculating then Preview:ShowCalculating(dest) end
     if Navigator.Preview then Navigator:Preview() end
@@ -1166,7 +1320,7 @@ function WorldMap:OnCanvasClick(mapCanvas, button, cursorX, cursorY)
 
             local Guide = FGPS.UI and FGPS.UI.Guide
             if Guide and Guide.Say then
-                Guide.Say((L["That map position cannot be used as a destination%s"]):format(err and (": " .. tostring(err)) or "."),
+                Guide.Say((L["That map position cannot be used as a destination%s"]):format(err and (": " .. FGPS.UI.Compat.ReasonText(err, L["unknown reason"])) or "."),
                     WorldMap.GO_REFUSED_SECONDS)
             end
         end
@@ -1346,6 +1500,12 @@ function WorldMap.LegendWanted()
 end
 
 function WorldMap:UpdateLegend()
+
+
+    if FGPS.MapShot and FGPS.MapShot.IsRunning and FGPS.MapShot.IsRunning() then
+        if WorldMap.legend then WorldMap.legend:Hide() end
+        return false
+    end
     local wanted = WorldMap.LegendWanted()
     local legend = WorldMap.legend
     if not wanted then
@@ -1564,14 +1724,42 @@ function WorldMap:OnMapHidden()
 end
 
 
+local function pollPosition()
+    local Coords = FGPS.Coords
+    if not (Coords and Coords.PlayerPos) then return nil end
+    local ok, pos = pcall(Coords.PlayerPos)
+    if not ok or type(pos) ~= "table" or pos.inst == nil or not pos.x or not pos.y then return nil end
+    return pos
+end
+
+local function stoodStill()
+    local prev = WorldMap.pollPos
+    local pos = pollPosition()
+    local Coords = FGPS.Coords
+    if not prev or not pos or not (Coords and Coords.WorldDistance) then return false end
+    local yards = Coords.WorldDistance(prev.inst, prev.x, prev.y, pos.inst, pos.x, pos.y)
+    local limit = WorldMap.DISTANCE_POLL_STILL_YARDS or 5
+    return type(yards) == "number" and yards < limit
+end
+
+
+
 function WorldMap:PollDistances()
+    if stoodStill() then return end
+    self.pollPos = pollPosition()
     local Search = FGPS.UI.Search
     if Search and Search.IsShown and Search:IsShown() and Search.RefreshDistances then
         pcall(Search.RefreshDistances, Search)
     end
     local QuestPanel = FGPS.UI.QuestPanel
-    if QuestPanel and QuestPanel.IsShown and QuestPanel:IsShown() and QuestPanel.Refresh then
-        pcall(QuestPanel.Refresh, QuestPanel)
+    if QuestPanel and QuestPanel.IsShown and QuestPanel:IsShown() then
+
+
+        if QuestPanel.tab == "search" and QuestPanel.RefreshSearchDistances then
+            pcall(QuestPanel.RefreshSearchDistances, QuestPanel)
+        elseif QuestPanel.Refresh then
+            pcall(QuestPanel.Refresh, QuestPanel)
+        end
     end
     local MapPlaces = FGPS.UI.MapPlaces
     if MapPlaces and MapPlaces.RefreshOpenTooltip then
@@ -1582,6 +1770,9 @@ end
 function WorldMap:StartDistancePoll()
     if self.distanceTicker then return end
     if not (C_Timer and C_Timer.NewTicker) then return end
+
+
+    self.pollPos = pollPosition()
     local seconds = self.DISTANCE_POLL_SECONDS or 5
     self.distanceTicker = C_Timer.NewTicker(seconds, function()
         WorldMap:PollDistances()
@@ -1591,6 +1782,7 @@ end
 function WorldMap:StopDistancePoll()
     local ticker = self.distanceTicker
     self.distanceTicker = nil
+    self.pollPos = nil
     if ticker and ticker.Cancel then pcall(ticker.Cancel, ticker) end
 end
 
@@ -1641,18 +1833,35 @@ function WorldMap:SyncWithNavigator()
     self:UpdateClearButton()
 end
 
+
+local function followedRoute()
+    local Navigator = FGPS.Navigator
+    if not (Navigator and Navigator.IsJourney and Navigator.GetRoute) then return nil end
+    local ok, journey = pcall(Navigator.IsJourney, Navigator)
+    if not (ok and journey) then return nil end
+    local okRoute, route = pcall(Navigator.GetRoute, Navigator)
+    return okRoute and type(route) == "table" and route or nil
+end
+
 local function onRouteEvent(event, route)
+
+
+    WorldMap.segmentCache = nil
     if event == "ROUTE_PREVIEW" then
 
-        WorldMap.route = route
+
+        WorldMap.route = route or followedRoute()
         WorldMap.routeIsPreview = route ~= nil
     elseif event == "ROUTE_STARTED" or event == "ROUTE_UPDATED" then
         WorldMap.route = route or WorldMap.route
         WorldMap.routeIsPreview = false
+
+        WorldMap.progress = nil
     elseif event == "NAV_CANCELLED" then
         WorldMap.route = nil
         WorldMap.routeIsPreview = false
         WorldMap.markers = nil
+        WorldMap.progress = nil
     end
     WorldMap:Redraw()
     WorldMap:UpdateClearButton()
@@ -1677,30 +1886,53 @@ end
 
 
 
-
-function WorldMap:OnRouteProgress()
-    local route = self.route
-    if not route or self.routeIsPreview then return end
-    if self.levelsRoute ~= route then self.levelsRoute, self.routeHasLevels = route, hasLevels(route) end
-    if not self.routeHasLevels then return end
-    local map = WorldMapFrame
-
-    if not (map and map.IsShown and map:IsShown()) then return end
+local function levelChanged(route)
+    if WorldMap.levelsRoute ~= route then WorldMap.levelsRoute, WorldMap.routeHasLevels = route, hasLevels(route) end
+    if not WorldMap.routeHasLevels then return false end
     local Navigator = FGPS.Navigator
     local z
     if Navigator and Navigator.LevelZ then
         local ok, got = pcall(Navigator.LevelZ, Navigator)
         if ok and type(got) == "number" then z = got end
     end
-    local drawn = self.drawnLevelZ
-    if z == nil and drawn == nil then return end
+    local drawn = WorldMap.drawnLevelZ
+    if z == nil and drawn == nil then return false end
     if z and drawn then
-        local low, high = self.levelBandLow, self.levelBandHigh
-        if (low == nil or z > low) and (high == nil or z < high) then return end
+        local low, high = WorldMap.levelBandLow, WorldMap.levelBandHigh
+        if (low == nil or z > low) and (high == nil or z < high) then return false end
     end
+    return true
+end
+
+
+local function movedOn(pos)
+    local x, y = WorldMap.drawnFromX, WorldMap.drawnFromY
+    if not pos or not x or pos.inst ~= WorldMap.drawnFromInst then return false end
+    local dx, dy, yards = pos.x - x, pos.y - y, WorldMap.PROGRESS_MOVE_YARDS
+    return dx * dx + dy * dy >= yards * yards
+end
+
+
+
+
+
+
+
+
+
+function WorldMap:OnRouteProgress(progress)
+    if progress ~= nil then self.progress = progress end
+    local route = self.route
+    if not route or self.routeIsPreview then return end
+    local map = WorldMapFrame
+    if not (map and map.IsShown and map:IsShown()) then return end
+    local s = settings()
+    if (s and s.worldMapLine == false) or (FGPS.Perf and FGPS.Perf.guidanceEnabled == false) then return end
+    local leg, point, pos = lineStart(route, self.progress)
+    if leg == self.drawnFromLeg and point == self.drawnFromPoint and not movedOn(pos) and not levelChanged(route) then return end
     local t = GetTime and GetTime() or 0
-    if self.levelRedrawAt and t - self.levelRedrawAt < self.LEVEL_REDRAW_SECONDS then return end
-    self.levelRedrawAt = t
+    if self.progressRedrawAt and t - self.progressRedrawAt < self.PROGRESS_REDRAW_SECONDS then return end
+    self.progressRedrawAt = t
     self:Redraw()
 end
 
@@ -1709,6 +1941,7 @@ local function onArrived(_, stopIndex, isFinal)
         WorldMap.route = nil
         WorldMap.routeIsPreview = false
         WorldMap.markers = nil
+        WorldMap.progress = nil
         WorldMap:Redraw()
     end
     WorldMap:UpdateClearButton()
@@ -1730,7 +1963,7 @@ local function onNavState(_, state)
             if ok then held = route end
         end
         if held == nil then
-            WorldMap.route, WorldMap.routeIsPreview = nil, false
+            WorldMap.route, WorldMap.routeIsPreview, WorldMap.progress = nil, false, nil
             WorldMap:Redraw()
         end
     end
@@ -1762,6 +1995,7 @@ end
 local function onSettingsChanged(_, key)
     if key == "worldMapLine" or key == "worldMapLegend" or key == "*" or key == "perf.guidanceEnabled"
         or key == "preset" or key == "accessibility.colorScheme" then
+        WorldMap.segmentCache = nil
         WorldMap:Redraw()
     end
 end
@@ -1775,7 +2009,7 @@ function WorldMap:Init()
         Events:Register("ROUTE_UPDATED", onRouteEvent, self)
         Events:Register("NAV_CANCELLED", onRouteEvent, self)
         Events:Register("NAV_ARRIVED", onArrived, self)
-        Events:Register("ROUTE_PROGRESS", function() WorldMap:OnRouteProgress() end, self)
+        Events:Register("ROUTE_PROGRESS", function(_, progress) WorldMap:OnRouteProgress(progress) end, self)
         Events:Register("NAV_STATE", onNavState, self)
         Events:Register("ITINERARY_CHANGED", onItineraryChanged, self)
         Events:Register("SETTINGS_CHANGED", onSettingsChanged, self)

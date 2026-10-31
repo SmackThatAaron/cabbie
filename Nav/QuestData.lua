@@ -25,6 +25,7 @@
 
 
 
+
 local ADDON_NAME, FGPS = ...
 
 local L = FGPS.L
@@ -38,6 +39,9 @@ local QuestData = {
 
     LOOKUP_SESSION_BUDGET = 60,
     LOOKUP_MIN_SECONDS = 2,
+
+
+    LOOKUP_TIMEOUT_SECONDS = 10,
     SWEEP_CHUNK = 100,
     SEARCH_LIMIT = 100,
     initialised = false,
@@ -150,14 +154,6 @@ local function kindName(kind)
 end
 QuestData.KindName = kindName
 
-local function sourceName(code)
-    local _, _, _, index = dataset()
-    local names = index and index.srcNames
-    local name = names and names[code or 1]
-    return name and L[name] or nil
-end
-QuestData.SourceName = sourceName
-
 
 
 
@@ -236,13 +232,16 @@ local function positionAt(i)
     local map = givers.map[i]
     if map == 0 then map = nil end
     local src = givers.src and givers.src[i] or 1
+
+
+    local side = type(givers.side) == "string" and tonumber(givers.side:sub(i, i)) or nil
     return {
         index = i, inst = givers.inst[i], x = givers.x[i], y = givers.y[i], map = map,
         interior = map == nil,
-        wander = givers.r and givers.r[i] or nil,
 
 
         src = src, later = src == 9 or nil,
+        side = (side == 1 or side == 2) and side or nil,
     }
 end
 QuestData.PositionAt = positionAt
@@ -297,13 +296,28 @@ local function otherSidesCapital(position, playerSide)
     return side ~= nil and side ~= playerSide
 end
 
+
+
+
+local function otherSidesNPC(position, playerSide)
+    return position.side ~= nil and (playerSide == 1 or playerSide == 2) and position.side ~= playerSide
+end
+
+local function otherSidesPlace(position, playerSide)
+    return otherSidesNPC(position, playerSide) or otherSidesCapital(position, playerSide)
+end
+
+local function playerSideCode()
+    local D = FGPS.Destinations
+    return D and D.PlayerFactionCode and D.PlayerFactionCode() or 3
+end
+
 local function nearest(list)
     if #list < 2 then return list[1] end
-    local D = FGPS.Destinations
-    local playerSide = D and D.PlayerFactionCode and D.PlayerFactionCode() or 3
+    local playerSide = playerSideCode()
     local welcome = {}
     for _, position in ipairs(list) do
-        if not otherSidesCapital(position, playerSide) then welcome[#welcome + 1] = position end
+        if not otherSidesPlace(position, playerSide) then welcome[#welcome + 1] = position end
     end
     if #welcome > 0 then list = welcome end
     if #list < 2 then return list[1] end
@@ -383,11 +397,14 @@ end
 
 
 
+
+
 function QuestData.GiversOnMap(uiMapID)
     local quests, _, _, _, forever = dataset()
     local bucket = quests and giversIndex()[tonumber(uiMapID)] or nil
     local out = {}
     if not bucket then return out end
+    local playerSide = playerSideCode()
     for k = 1, #bucket do
         local ref = bucket[k]
         local packed = ref < 0 and -ref or ref
@@ -395,7 +412,10 @@ function QuestData.GiversOnMap(uiMapID)
         local id = (packed - at) / GIVER_REF_BASE
         if ref > 0 then
             local row = binarySearch(quests, id)
-            out[#out + 1] = { id = id, position = positionAt(at), giver = at - quests.p0[row] + 1 }
+            local position = positionAt(at)
+            if not otherSidesNPC(position, playerSide) then
+                out[#out + 1] = { id = id, position = position, giver = at - quests.p0[row] + 1 }
+            end
         else
             out[#out + 1] = { id = id, giver = 1, position = {
                 inst = forever.sinst[at], x = forever.sx[at], y = forever.sy[at], map = forever.smap[at], interior = false,
@@ -868,6 +888,8 @@ local CAN_TAKE_TEXT = {
     skill = "needs %s at %d",
     skill_unknown = "needs a skill, and whether you have it cannot be told",
     reputation = "needs a standing with a faction, and how much is not known",
+    reputation_low = "needs a better standing with %s",
+    reputation_high = "is for characters of a lower standing with %s",
     season = "is given during a holiday only",
     forever_incomplete = "the source for Forever's own quests may not list every condition",
 }
@@ -931,6 +953,25 @@ local function groupIndex()
 end
 
 
+
+local function newerIndex()
+    if QuestData.newerIndexBuilt then return QuestData.newerIndexBuilt end
+    local quests = dataset()
+    local index = {}
+    if quests and type(quests.alias) == "table" then
+        for newer, olds in pairs(quests.alias) do
+            for _, old in ipairs(type(olds) == "table" and olds or {}) do
+                local bucket = index[old]
+                if not bucket then bucket = {} index[old] = bucket end
+                bucket[#bucket + 1] = newer
+            end
+        end
+    end
+    QuestData.newerIndexBuilt = index
+    return index
+end
+
+
 local function skillAtLeast(skill, value)
     if not (C_SkillInfo and C_SkillInfo.GetSkillLineInfoByID) then return nil end
     local ok, info = pcall(C_SkillInfo.GetSkillLineInfoByID, skill)
@@ -944,13 +985,55 @@ end
 
 
 
+
+local function standingWith(faction)
+    if not (C_Reputation and C_Reputation.GetFactionDataByID) then return nil end
+    local ok, data = pcall(C_Reputation.GetFactionDataByID, faction)
+    if not ok or type(data) ~= "table" then return nil end
+    local standing = data.currentStanding
+    if (issecretvalue and issecretvalue(standing)) or type(standing) ~= "number" then return nil end
+    local name = data.name
+    if (issecretvalue and issecretvalue(name)) or type(name) ~= "string" or name == "" then name = nil end
+    return standing, name
+end
+
+
+
+
+
+local function standingFacts(rp, minValue, maxValue)
+    local minFaction, maxFaction = floor(rp / 10000), rp % 10000
+    local unknown = false
+    if minFaction > 0 then
+        local standing, name = standingWith(minFaction)
+        if standing == nil or minValue == nil then unknown = true
+        elseif standing < minValue then return "no", "reputation_low", name or L["a faction"] end
+    end
+    if maxFaction > 0 then
+        local standing, name = standingWith(maxFaction)
+        if standing == nil or maxValue == nil then unknown = true
+        elseif standing >= maxValue then return "no", "reputation_high", name or L["a faction"] end
+    end
+    if unknown then return "unknown" end
+    return nil
+end
+
+
+
 local function commonFacts(questID)
     local done = isDone(questID)
     if done then return "no", "done" end
     if inLog(questID) then return "no", "in_log" end
+
+
+    for _, newer in ipairs(newerIndex()[questID] or {}) do
+        if inLog(newer) then return "no", "in_log" end
+    end
     if done == nil then return "unknown", "done_unknown" end
     return nil
 end
+
+
 
 
 
@@ -960,7 +1043,7 @@ local function giversSide(questID)
     if not (D and D.CapitalFaction and D.MapName and D.PlayerFactionCode) then return nil, true end
     local side
     for _, giver in ipairs(QuestData.Givers(questID)) do
-        local here = giver.map and D.CapitalFaction(D.MapName(giver.map)) or nil
+        local here = giver.side or (giver.map and D.CapitalFaction(D.MapName(giver.map))) or nil
         if not here or (side and here ~= side) then return nil end
         side = here
     end
@@ -993,7 +1076,6 @@ local function vanillaFacts(questID, info)
         elseif not hasBit(info.classes, class) then return "no", "class" end
     end
     if (info.races or 0) == 0 then
-
 
 
         local side, cannot = giversSide(questID)
@@ -1052,7 +1134,12 @@ local function vanillaFacts(questID, info)
         if has == false then return "no", "skill", tostring(name), value end
         if has == nil then maybe("skill_unknown") end
     end
-    if quests.rp and quests.rp[row] then maybe("reputation") end
+    local rp = quests.rp and quests.rp[row]
+    if type(rp) == "number" then
+        local verdict, code, name = standingFacts(rp, quests.rpn and quests.rpn[row], quests.rpx and quests.rpx[row])
+        if verdict == "no" then return "no", code, name end
+        if verdict == "unknown" then maybe("reputation") end
+    end
     if quests.ev and quests.ev[row] then maybe("season") end
     if unknown then return "unknown", unknown end
     return nil
@@ -1251,10 +1338,13 @@ end
 
 
 
-function QuestData.EntranceFor(inst)
+
+
+
+function QuestData.EntranceFor(inst, insideX, insideY)
     if inst == nil then return nil end
     local pos = playerPos()
-    local best, bestD
+    local best, bestWing, bestD
     local D = FGPS.Data
     local index = D and D.questIndex
     for _, list in ipairs({ D and D.interiors or {}, type(index) == "table" and index.doors or {} }) do
@@ -1262,8 +1352,14 @@ function QuestData.EntranceFor(inst)
             for _, record in ipairs(list) do
                 local entrance = type(record) == "table" and record.instanceMap == inst and record.entrance or nil
                 if type(entrance) == "table" and entrance.inst and entrance.x and entrance.y then
+                    local landing, wing = record.inside, 1e9
+                    if insideX and insideY and type(landing) == "table" and landing.x and landing.y then
+                        wing = distanceTo({ inst = inst, x = insideX, y = insideY }, inst, landing.x, landing.y)
+                    end
                     local d = distanceTo(pos, entrance.inst, entrance.x, entrance.y) or 1e9
-                    if not bestD or d < bestD then best, bestD = record, d end
+                    if not best or wing < bestWing or (wing == bestWing and d < bestD) then
+                        best, bestWing, bestD = record, wing, d
+                    end
                 end
             end
         end
@@ -1274,11 +1370,30 @@ end
 
 
 
+function QuestData.LeadsInside(position)
+    if type(position) ~= "table" or not position.interior then return false end
+    local D = FGPS.Destinations
+    return D ~= nil and D.EnteredByDoor ~= nil and D.EnteredByDoor(position.inst) == true
+end
+
+
+
+
+
+
+
+
 function QuestData.ReachedAt(position)
     if type(position) ~= "table" or not position.inst or not position.x then return nil end
     if not position.interior then return position end
-    local record = QuestData.EntranceFor(position.inst)
-    return record and record.entrance or nil
+    local inside = QuestData.LeadsInside(position)
+    if inside then
+        local pos = playerPos()
+        if pos and pos.inst == position.inst then return position end
+    end
+    local record = QuestData.EntranceFor(position.inst, position.x, position.y)
+    if record and record.entrance then return record.entrance end
+    return inside and position or nil
 end
 
 function QuestData.Routable(position)
@@ -1290,9 +1405,13 @@ local function destFrom(questID, position, what, label, mark)
 
 
 
+
+
     local entrance, inside
-    if position.interior then
-        local record = QuestData.EntranceFor(position.inst)
+    if QuestData.LeadsInside(position) then
+        label = format(L["%s, in %s"], label, FGPS.Data.insideMaps[position.inst].name)
+    elseif position.interior then
+        local record = QuestData.EntranceFor(position.inst, position.x, position.y)
         if not record then return nil, "interior" end
         local door = record.entrance
         inside = { inst = position.inst, x = position.x, y = position.y }
@@ -1309,7 +1428,6 @@ local function destFrom(questID, position, what, label, mark)
         name = label, inst = position.inst, x = position.x, y = position.y, map = position.map,
         unverified = mark <= 0,
         mark = mark,
-        wander = position.wander,
         source = "bundled",
         entrance = entrance, interior = inside,
         olderVersion = older,
@@ -1378,7 +1496,10 @@ function QuestData.DestinationFor(questID, what, index, exact)
         local area = areas[tonumber(index) or 1]
         if not area then return nil, "no_location" end
         local x, y = area.x, area.y
-        if area.points and not area.interior then
+
+
+        local leadsIn = QuestData.LeadsInside(area)
+        if area.points and (not area.interior or leadsIn) then
             local pos = playerPos()
             local fromX, fromY = area.x, area.y
             if pos and pos.inst == area.inst and pos.x and pos.y then fromX, fromY = pos.x, pos.y end
@@ -1409,9 +1530,8 @@ function QuestData.DestinationFor(questID, what, index, exact)
         if dest then
 
 
-            if not area.interior then
+            if not area.interior or leadsIn then
                 dest.areaRadius = area.r68
-                dest.areaReach = area.r
             end
             dest.objectiveIndex = area.objective
 
@@ -1487,8 +1607,6 @@ function QuestData.Title(questID)
 
         titleStore()[questID] = nil
     end
-    local info = QuestData.ForeverInfo(questID)
-    if info and info.title then return info.title end
     if C_QuestLog and C_QuestLog.GetTitleForQuestID then
         local ok, title = pcall(C_QuestLog.GetTitleForQuestID, questID)
         if ok and type(title) == "string" and title ~= "" and not (issecretvalue and issecretvalue(title)) then
@@ -1496,6 +1614,10 @@ function QuestData.Title(questID)
             return title
         end
     end
+
+
+    local info = englishClient() and QuestData.ForeverInfo(questID)
+    if info and info.title then return info.title end
     return QuestData.BundledTitle(questID)
 end
 
@@ -1516,16 +1638,14 @@ function QuestData.RememberTitle(questID, title)
     return true
 end
 
+
+
 function QuestData.KnownTitleCount()
-    local n = 0
-    for _ in pairs(titleStore()) do n = n + 1 end
-    local _, _, _, _, forever = dataset()
-    if forever and type(forever.title) == "table" then
-        local store = titleStore()
-        for i, title in pairs(forever.title) do
-            local id = forever.id[i]
-            if id and store[id] == nil and type(title) == "string" then n = n + 1 end
-        end
+    local quests = dataset()
+    if not quests then return 0 end
+    local store, n = titleStore(), 0
+    for row = 1, quests.n do
+        if store[quests.id[row]] then n = n + 1 end
     end
     return n
 end
@@ -1618,11 +1738,18 @@ end
 
 
 
+
 function QuestData.CanLookup()
     if not (C_QuestLog and C_QuestLog.RequestLoadQuestByID) then return false, "no_api" end
     local s = FGPS.DB and FGPS.DB.settings
     if s and s.quests and s.quests.serverLookup == false then return false, "disabled" end
     if QuestData.LookupsLeft() <= 0 then return false, "budget" end
+    local pending = QuestData.lookups.inFlight
+    if pending and now() - (pending.at or 0) >= QuestData.LOOKUP_TIMEOUT_SECONDS then
+        QuestData.lookups.inFlight = nil
+        QuestData.lookups.failed = QuestData.lookups.failed + 1
+        QuestData.lookups.refused[pending.id] = true
+    end
     if QuestData.lookups.inFlight then return false, "in_flight" end
     if InCombatLockdown and InCombatLockdown() then return false, "combat" end
     if now() - QuestData.lookups.lastAt < QuestData.LOOKUP_MIN_SECONDS then return false, "too_soon" end
@@ -1707,6 +1834,26 @@ QuestData.ZoneIndex = zoneIndex
 
 
 
+
+
+local LEADING_FILLER = { "^level%s+", "^quests?%s+", "^in%s+" }
+local TRAILING_FILLER = "%s+quests?$"
+
+local function dropFiller(text)
+
+    local lowered = Util.Lower(text)
+    for _, pattern in ipairs(LEADING_FILLER) do
+        local _, last = lowered:find(pattern)
+        if last then text, lowered = text:sub(last + 1), lowered:sub(last + 1) end
+    end
+    local first = lowered:find(TRAILING_FILLER)
+    if first then text = text:sub(1, first - 1) end
+    return text
+end
+
+
+
+
 function QuestData.ParseQuery(text)
     local out = { text = "" }
     text = Util.Trim(tostring(text or ""))
@@ -1724,7 +1871,7 @@ function QuestData.ParseQuery(text)
             rest = ""
         end
     end
-    rest = Util.Trim((rest:gsub("^%s*level%s+", " "):gsub("%s*quests?%s*", " "):gsub("%s*in%s+", " ")))
+    rest = dropFiller(Util.Trim(rest))
     if rest ~= "" then
         local D = FGPS.Destinations
         if D and D.ResolveZoneName then
@@ -1818,10 +1965,24 @@ function QuestData.Search(text, opts)
         rows[#rows + 1] = row
     end
 
+
+
+
+
+
+    local picked = {}
+    local function pick(row)
+        if not opts.ignoreEligibility and not masksAllow(quests, row) then refused = refused + 1 return end
+        if not levelMatches(query, quests.lvl[row], quests.min[row]) then return end
+        local questID = quests.id[row]
+        local start = QuestData.Start(questID)
+        picked[#picked + 1] = { questID = questID, yards = start and distanceTo(pos, start.inst, start.x, start.y) or nil }
+    end
+
     if query.zone then
 
 
-        for _, row in ipairs(zoneIndex()[query.zone] or {}) do consider(quests.id[row], "vanilla") end
+        for _, row in ipairs(zoneIndex()[query.zone] or {}) do pick(row) end
     elseif query.text ~= "" then
 
 
@@ -1833,7 +1994,14 @@ function QuestData.Search(text, opts)
             end
         end
     elseif query.minLevel then
-        for row = 1, quests.n do consider(quests.id[row], "vanilla") end
+        for row = 1, quests.n do pick(row) end
+    end
+
+    sortRows(picked)
+    for _, candidate in ipairs(picked) do
+        if #rows >= limit then break end
+        local row = searchRow(candidate.questID, pos, "vanilla")
+        if row then rows[#rows + 1] = row end
     end
 
     sortRows(rows)
@@ -1865,6 +2033,11 @@ function QuestData.Search(text, opts)
         if refused > 0 then
             status = status .. " " .. format(L["%d more start with another race or class."], refused)
         end
+    elseif query.text ~= "" and englishClient() then
+
+
+        status = format(L["No quest name matches that. Search by zone or by level. A classic quest is found by its 1.12 name until Cabbie has seen the game's own name for it, then by that name. Names known so far from the game itself: %d of %d."],
+            QuestData.KnownTitleCount(), quests.n)
     elseif query.text ~= "" then
         status = format(L["No quest name matches that. Search by zone or by level, or open a quest once and Cabbie will remember its name. Names known so far: %d of %d."],
             QuestData.KnownTitleCount(), quests.n)
@@ -1954,21 +2127,12 @@ function QuestData:Init()
     self.available = QuestData.Available()
 
     self.zoneIndexBuilt, self.areaIndexBuilt, self.foreverIndexBuilt, self.titleIndexBuilt = nil, nil, nil, nil
-    self.groupIndexBuilt, self.giversOnMapBuilt = nil, nil
+    self.groupIndexBuilt, self.giversOnMapBuilt, self.newerIndexBuilt = nil, nil, nil
     local Events = FGPS.Events
     Events:RegisterWoW("QUEST_DATA_LOAD_RESULT", onQuestDataLoaded, self)
 
 
-    Events:Register("QUESTS_UPDATED", function()
-        local Quests = FGPS.Quests
-        if not (Quests and Quests.List) then return end
-        local ok, list = pcall(Quests.List)
-        if not ok then return end
-        for _, q in ipairs(list or {}) do
 
-            if q.title and q.questID and q.titleKnown ~= false then QuestData.RememberTitle(q.questID, q.title) end
-        end
-    end, self)
     if not self.available then
         FGPS.Log:Info("Quest data files are not installed; the quest panel reports the feature as unavailable")
     end

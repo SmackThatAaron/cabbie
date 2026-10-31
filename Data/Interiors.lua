@@ -10,6 +10,15 @@ local ADDON_NAME, FGPS = ...
 
 
 
+
+
+
+
+
+
+
+
+
 FGPS.Data = FGPS.Data or {}
 
 FGPS.Data.interiors = {
@@ -22,6 +31,8 @@ FGPS.Data.interiors = {
     source = "cmangos:areatrigger_teleport:259 (exit target)",
     levelMin = 20,
     levelMax = 34,
+    aliases = { "BFD" },
+    inside = { x = 106.6, y = -150.2 },
   },
   {
     name = "Blackrock Depths",
@@ -32,6 +43,8 @@ FGPS.Data.interiors = {
     source = "cmangos:areatrigger_teleport:1472 (exit target)",
     levelMin = 48,
     levelMax = 60,
+    aliases = { "BRD" },
+    inside = { x = 34.1, y = 456.9 },
   },
   {
     name = "Blackrock Spire",
@@ -41,6 +54,28 @@ FGPS.Data.interiors = {
     status = "entrance-only",
     source = "cmangos:areatrigger_teleport:1470 (exit target)",
     levelMin = 55,
+    aliases = { "BRS", "LBRS", "UBRS", "Lower Blackrock Spire", "Upper Blackrock Spire" },
+    inside = { x = -226.8, y = 78.4 },
+  },
+  {
+    name = "City of Dalaran",
+    kind = "dungeon",
+    entrance = { inst = 0, x = 176.4, y = 224.2, map = 1416, z = 42.7 },
+    instanceMap = 2959,
+    status = "entrance-only",
+    source = "bake:instance_doors:2959:portal:176.4:224.2",
+    confidence = "medium",
+    inside = { x = 176.4, y = 224.2, z = 42.7 },
+  },
+  {
+    name = "City of Dalaran",
+    kind = "dungeon",
+    entrance = { inst = 0, x = 524.8, y = 376.9, map = 1416, z = 43.6 },
+    instanceMap = 2959,
+    status = "entrance-only",
+    source = "bake:instance_doors:2959:portal:524.8:376.9",
+    confidence = "medium",
+    inside = { x = 524.8, y = 376.9, z = 43.6 },
   },
   {
     name = "Deadmines",
@@ -51,34 +86,19 @@ FGPS.Data.interiors = {
     source = "cmangos:areatrigger_teleport:119 (exit target)",
     levelMin = 17,
     levelMax = 26,
-  },
-  { name = "Dire Maul", kind = "dungeon", entrance = { inst = 1, x = 777.8, y = -3981, map = 1444 }, instanceMap = 429, status = "entrance-only", source = "cmangos:areatrigger_teleport:3195 (exit target)", levelMin = 55 },
-  {
-    name = "Dire Maul",
-    kind = "dungeon",
-    entrance = { inst = 1, x = 1078.4, y = -3520.2, map = 1444 },
-    instanceMap = 429,
-    status = "entrance-only",
-    source = "cmangos:areatrigger_teleport:3193 (exit target)",
-    levelMin = 55,
+    aliases = { "The Deadmines", "VC", "DM" },
+    inside = { x = -385.5, y = -14.6 },
   },
   {
     name = "Dire Maul",
     kind = "dungeon",
-    entrance = { inst = 1, x = 1249.2, y = -3749.4, map = 1444 },
+    entrance = { inst = 1, x = 777.8, y = -3981, map = 1444 },
     instanceMap = 429,
     status = "entrance-only",
-    source = "cmangos:areatrigger_teleport:3191 (exit target)",
+    source = "cmangos:areatrigger_teleport:3195 (exit target)",
     levelMin = 55,
-  },
-  {
-    name = "Dire Maul",
-    kind = "dungeon",
-    entrance = { inst = 1, x = 1250.5, y = -3829.7, map = 1444 },
-    instanceMap = 429,
-    status = "entrance-only",
-    source = "cmangos:areatrigger_teleport:3190 (exit target)",
-    levelMin = 55,
+    aliases = { "DM" },
+    inside = { x = -323, y = -203.2 },
   },
   {
     name = "Dire Maul (East Back Door)",
@@ -88,6 +108,8 @@ FGPS.Data.interiors = {
     status = "entrance-only",
     source = "cmangos:areatrigger_teleport:3196 (exit target)",
     levelMin = 55,
+    aliases = { "Dire Maul", "DM", "DM East Back Door" },
+    inside = { x = -837, y = 10.6 },
   },
   {
     name = "Dire Maul (East)",
@@ -97,6 +119,51 @@ FGPS.Data.interiors = {
     status = "entrance-only",
     source = "cmangos:areatrigger_teleport:3194 (exit target)",
     levelMin = 55,
+    aliases = { "Dire Maul", "DM", "DM East" },
+    inside = { x = -153.7, y = 47.5 },
+  },
+  {
+    name = "Dire Maul (North)",
+    kind = "dungeon",
+    entrance = { inst = 1, x = 1078.4, y = -3520.2, map = 1444 },
+    instanceMap = 429,
+    status = "entrance-only",
+    source = "cmangos:areatrigger_teleport:3193 (exit target)",
+    levelMin = 55,
+    aliases = { "Dire Maul", "DM", "DM North" },
+    inside = { x = -19.5, y = 254.9 },
+  },
+  {
+    name = "Dire Maul (West Side Door)",
+    kind = "dungeon",
+    entrance = { inst = 1, x = 1249.2, y = -3749.4, map = 1444 },
+    instanceMap = 429,
+    status = "entrance-only",
+    source = "cmangos:areatrigger_teleport:3191 (exit target)",
+    levelMin = 55,
+    aliases = { "Dire Maul", "DM", "DM West Side Door" },
+    inside = { x = 159, y = 33.1 },
+  },
+  {
+    name = "Dire Maul (West)",
+    kind = "dungeon",
+    entrance = { inst = 1, x = 1250.5, y = -3829.7, map = 1444 },
+    instanceMap = 429,
+    status = "entrance-only",
+    source = "cmangos:areatrigger_teleport:3190 (exit target)",
+    levelMin = 55,
+    aliases = { "Dire Maul", "DM", "DM West" },
+    inside = { x = 159.6, y = -65.7 },
+  },
+  {
+    name = "Excavation Site: Wetlands",
+    kind = "dungeon",
+    entrance = { inst = 0, x = -2371.2, y = -3704.1, map = 1437, z = 170.7 },
+    instanceMap = 2998,
+    status = "entrance-only",
+    source = "bake:instance_doors:2998:named-area:-2371.2:-3704.1",
+    confidence = "medium",
+    inside = { x = -2371.2, y = -3704.1, z = 170.7 },
   },
   {
     name = "Gnomeregan",
@@ -107,6 +174,8 @@ FGPS.Data.interiors = {
     source = "cmangos:areatrigger_teleport:322 (exit target)",
     levelMin = 24,
     levelMax = 40,
+    aliases = { "Gnomer" },
+    inside = { x = -3.2, y = -329.1 },
   },
   {
     name = "Gnomeregan (Train Depot)",
@@ -117,6 +186,8 @@ FGPS.Data.interiors = {
     source = "cmangos:areatrigger_teleport:525 (exit target)",
     levelMin = 24,
     levelMax = 40,
+    aliases = { "Gnomeregan", "Gnomer", "Gnomer Train Depot" },
+    inside = { x = 1.9, y = -733.6 },
   },
   {
     name = "Maraudon (Orange)",
@@ -127,6 +198,8 @@ FGPS.Data.interiors = {
     source = "cmangos:areatrigger_teleport:3131 (exit target)",
     levelMin = 40,
     levelMax = 58,
+    aliases = { "Maraudon", "Mara", "Mara Orange" },
+    inside = { x = -458.5, y = 1016.8 },
   },
   {
     name = "Maraudon (Purple)",
@@ -137,6 +210,8 @@ FGPS.Data.interiors = {
     source = "cmangos:areatrigger_teleport:3126 (exit target)",
     levelMin = 40,
     levelMax = 58,
+    aliases = { "Maraudon", "Mara", "Mara Purple" },
+    inside = { x = -617.7, y = 755.1 },
   },
   {
     name = "Ragefire Chasm",
@@ -147,6 +222,8 @@ FGPS.Data.interiors = {
     source = "cmangos:areatrigger_teleport:2226 (exit target)",
     levelMin = 13,
     levelMax = 22,
+    aliases = { "RFC" },
+    inside = { x = -8.2, y = 0.8 },
   },
   {
     name = "Razorfen Downs",
@@ -157,6 +234,8 @@ FGPS.Data.interiors = {
     source = "cmangos:areatrigger_teleport:444 (exit target)",
     levelMin = 33,
     levelMax = 47,
+    aliases = { "RFD" },
+    inside = { x = 1111.2, y = 2593.7 },
   },
   {
     name = "Razorfen Kraul",
@@ -167,6 +246,18 @@ FGPS.Data.interiors = {
     source = "cmangos:areatrigger_teleport:242 (exit target)",
     levelMin = 24,
     levelMax = 40,
+    aliases = { "RFK" },
+    inside = { x = 1544.2, y = 1942.3 },
+  },
+  {
+    name = "Ruins of Lordaeron",
+    kind = "dungeon",
+    entrance = { inst = 0, x = 175, y = 1804.2, map = 1458, z = 73 },
+    instanceMap = 2999,
+    status = "entrance-only",
+    source = "bake:instance_doors:2999:portal:175.0:1804.2",
+    confidence = "high",
+    inside = { x = 159.1, y = 1804, z = 71.5 },
   },
   {
     name = "Scarlet Monastery (Armory)",
@@ -177,6 +268,8 @@ FGPS.Data.interiors = {
     source = "cmangos:areatrigger_teleport:606 (exit target)",
     levelMin = 29,
     levelMax = 48,
+    aliases = { "Scarlet Monastery", "SM", "SM Armory", "SM Arm" },
+    inside = { x = -318.9, y = 1608.1 },
   },
   {
     name = "Scarlet Monastery (Cathedral)",
@@ -187,6 +280,8 @@ FGPS.Data.interiors = {
     source = "cmangos:areatrigger_teleport:604 (exit target)",
     levelMin = 29,
     levelMax = 48,
+    aliases = { "Scarlet Monastery", "SM", "SM Cathedral", "SM Cath" },
+    inside = { x = 1319.2, y = 853.2 },
   },
   {
     name = "Scarlet Monastery (Graveyard)",
@@ -197,6 +292,8 @@ FGPS.Data.interiors = {
     source = "cmangos:areatrigger_teleport:602 (exit target)",
     levelMin = 29,
     levelMax = 48,
+    aliases = { "Scarlet Monastery", "SM", "SM Graveyard", "SM GY" },
+    inside = { x = 1050.1, y = 1687.3 },
   },
   {
     name = "Scarlet Monastery (Library)",
@@ -207,6 +304,8 @@ FGPS.Data.interiors = {
     source = "cmangos:areatrigger_teleport:608 (exit target)",
     levelMin = 29,
     levelMax = 48,
+    aliases = { "Scarlet Monastery", "SM", "SM Library", "SM Lib" },
+    inside = { x = -206.6, y = 253.7 },
   },
   {
     name = "Scholomance",
@@ -216,6 +315,8 @@ FGPS.Data.interiors = {
     status = "entrance-only",
     source = "cmangos:areatrigger_teleport:2568 (exit target)",
     levelMin = 58,
+    aliases = { "Scholo" },
+    inside = { x = 126.3, y = 190.8 },
   },
   {
     name = "Shadowfang Keep",
@@ -226,6 +327,8 @@ FGPS.Data.interiors = {
     source = "cmangos:areatrigger_teleport:194 (exit target)",
     levelMin = 20,
     levelMax = 26,
+    aliases = { "SFK" },
+    inside = { x = 2111.4, y = -228.2 },
   },
   {
     name = "Stormwind Stockade",
@@ -236,8 +339,20 @@ FGPS.Data.interiors = {
     source = "cmangos:areatrigger_teleport:503 (exit target)",
     levelMin = 22,
     levelMax = 34,
+    aliases = { "The Stockade", "Stockade", "Stocks" },
+    inside = { x = 0.5, y = 49 },
   },
-  { name = "Stratholme", kind = "dungeon", entrance = { inst = 0, x = -3378.5, y = 3392.3, map = 1423 }, instanceMap = 329, status = "entrance-only", source = "cmangos:instance_template:329 ghostEntrance", levelMin = 58 },
+  {
+    name = "Stratholme",
+    kind = "dungeon",
+    entrance = { inst = 0, x = -3378.5, y = 3392.3, map = 1423 },
+    instanceMap = 329,
+    status = "entrance-only",
+    source = "cmangos:instance_template:329 ghostEntrance",
+    levelMin = 58,
+    aliases = { "Strat" },
+    inside = { x = -3379.7, y = 3392.9 },
+  },
   {
     name = "Stratholme (Back Door)",
     kind = "dungeon",
@@ -246,6 +361,8 @@ FGPS.Data.interiors = {
     status = "entrance-only",
     source = "cmangos:areatrigger_teleport:2221 (exit target)",
     levelMin = 58,
+    aliases = { "Stratholme", "Strat", "Strat Back Door" },
+    inside = { x = -3643.2, y = 3590.9 },
   },
   {
     name = "Sunken Temple",
@@ -255,6 +372,8 @@ FGPS.Data.interiors = {
     status = "entrance-only",
     source = "cmangos:areatrigger_teleport:448 (exit target)",
     levelMin = 50,
+    aliases = { "ST", "Temple of Atal'Hakkar" },
+    inside = { x = 100.2, y = -315.9 },
   },
   {
     name = "Uldaman",
@@ -265,6 +384,7 @@ FGPS.Data.interiors = {
     source = "cmangos:areatrigger_teleport:288 (exit target)",
     levelMin = 41,
     levelMax = 51,
+    inside = { x = 46.1, y = -228.9 },
   },
   {
     name = "Wailing Caverns",
@@ -275,6 +395,8 @@ FGPS.Data.interiors = {
     source = "cmangos:areatrigger_teleport:226 (exit target)",
     levelMin = 17,
     levelMax = 24,
+    aliases = { "WC" },
+    inside = { x = 131.6, y = -158.4 },
   },
   {
     name = "Zul'Farrak",
@@ -285,6 +407,8 @@ FGPS.Data.interiors = {
     source = "cmangos:areatrigger_teleport:922 (exit target)",
     levelMin = 43,
     levelMax = 54,
+    aliases = { "ZF" },
+    inside = { x = 842, y = 1212.7 },
   },
   {
     name = "Ahn'Qiraj Temple",
@@ -295,6 +419,8 @@ FGPS.Data.interiors = {
     source = "cmangos:areatrigger_teleport:4010 + areatrigger:4010",
     levelMin = 60,
     levelMax = 60,
+    aliases = { "AQ40", "AQ 40", "Temple of Ahn'Qiraj" },
+    inside = { x = 2014.3, y = -8221.4 },
   },
   {
     name = "Blackwing Lair",
@@ -305,6 +431,8 @@ FGPS.Data.interiors = {
     source = "cmangos:areatrigger_teleport:3728 (exit target)",
     levelMin = 60,
     levelMax = 60,
+    aliases = { "BWL" },
+    inside = { x = -1107, y = -7672.3 },
   },
   {
     name = "Molten Core",
@@ -315,6 +443,8 @@ FGPS.Data.interiors = {
     source = "cmangos:areatrigger_teleport:3528 + areatrigger:3528",
     levelMin = 60,
     levelMax = 60,
+    aliases = { "MC" },
+    inside = { x = -467, y = 1091.9 },
   },
   {
     name = "Naxxramas",
@@ -325,6 +455,8 @@ FGPS.Data.interiors = {
     source = "cmangos:areatrigger_teleport:4055 + areatrigger:4055",
     levelMin = 60,
     levelMax = 60,
+    aliases = { "Naxx" },
+    inside = { x = -3435, y = 3005.9 },
   },
   {
     name = "Onyxia's Lair",
@@ -335,6 +467,8 @@ FGPS.Data.interiors = {
     source = "cmangos:areatrigger_teleport:2848 + areatrigger:2848",
     levelMin = 60,
     levelMax = 60,
+    aliases = { "Ony", "Onyxia" },
+    inside = { x = -54.1, y = 30.9 },
   },
   {
     name = "Ruins of Ahn'Qiraj",
@@ -345,6 +479,8 @@ FGPS.Data.interiors = {
     source = "cmangos:areatrigger_teleport:4008 + areatrigger:4008",
     levelMin = 60,
     levelMax = 60,
+    aliases = { "AQ20", "AQ 20" },
+    inside = { x = 1519.2, y = -8436.5 },
   },
   {
     name = "Zul'Gurub",
@@ -355,5 +491,480 @@ FGPS.Data.interiors = {
     source = "cmangos:areatrigger_teleport:3928 + areatrigger:3928",
     levelMin = 60,
     levelMax = 60,
+    aliases = { "ZG" },
+    inside = { x = -1243.5, y = -11916.6 },
+  },
+}
+FGPS.Data.insideMaps = {
+  [33] = {
+    name = "Shadowfang Keep", kind = "dungeon", build = "1.60.1.70338",
+    rooms = {
+    },
+    bosses = {
+    },
+  },
+  [34] = {
+    name = "Stormwind Stockade", kind = "dungeon", build = "1.60.1.70338",
+    rooms = {
+      { name = "Stormwind Stockade", x = 0, y = 121.9, z = -25.6 },
+    },
+    bosses = {
+    },
+  },
+  [36] = {
+    name = "Deadmines", kind = "dungeon", build = "1.60.1.70338",
+    rooms = {
+      { name = "Goblin Foundry", x = -573.9, y = -210, z = 22.2 },
+      { name = "Ironclad Cove", area = 1582, x = -785.1, y = -73.1, z = 17.6 },
+      { name = "Mast Room", x = -497.8, y = -292.3, z = 50.4 },
+    },
+    bosses = {
+    },
+  },
+  [43] = {
+    name = "Wailing Caverns", kind = "dungeon", build = "1.60.1.70338",
+    rooms = {
+      { name = "Crag of the Everliving", x = 0, y = -218.1, z = -105.5 },
+      { name = "Dreamer's Rock", x = 240, y = 119.6, z = -96 },
+      { name = "Pit of Fangs", x = 437.4, y = -24.3, z = -61.8 },
+      { name = "Screaming Gully", x = 201.8, y = -16.1, z = -99.1 },
+      { name = "Winding Chasm", x = -183.1, y = -138.5, z = -68 },
+    },
+    bosses = {
+    },
+  },
+  [47] = {
+    name = "Razorfen Kraul", kind = "dungeon", build = "1.60.1.70338",
+    rooms = {
+      { name = "Razorfen Kraul", area = 491, x = 1711, y = 2114.5, z = 81.3 },
+    },
+    bosses = {
+    },
+  },
+  [48] = {
+    name = "Blackfathom Deeps", kind = "dungeon", build = "1.60.1.70338",
+    rooms = {
+      { name = "Aku'mai's Lair", x = -363.3, y = -838.7, z = -33.7 },
+      { name = "Blackfathom Deeps", area = 719, x = 36.4, y = -443.9, z = -47.6 },
+      { name = "Moonshrine Ruins", x = -53.3, y = -743.8, z = -30 },
+      { name = "Moonshrine Sanctum", x = -151.6, y = -812.6, z = -25.8 },
+      { name = "The Drowned Sacellum", x = 67.6, y = -311.9, z = -53.9 },
+      { name = "The Pool of Ask'ar", x = 200.1, y = -448.9, z = -52.7 },
+    },
+    bosses = {
+    },
+  },
+  [70] = {
+    name = "Uldaman", kind = "dungeon", build = "1.60.1.70338",
+    rooms = {
+      { name = "Dig Three", x = 404.2, y = 0, z = -47.1 },
+      { name = "Dig Two", x = 111.1, y = -338.8, z = -54.8 },
+      { name = "Echomok Cavern", x = 385.4, y = -153.8, z = -37.5 },
+      { name = "Hall of the Crafters", x = 250.7, y = 77.5, z = -26.5 },
+      { name = "Hall of the Keepers", x = 113.8, y = -235.6, z = -47.5 },
+      { name = "Khaz'goroth's Seat", x = 263.8, y = 123.9, z = -52 },
+      { name = "Map Chamber", x = 243.6, y = -225.3, z = -49.6 },
+      { name = "Temple Hall", x = 236.1, y = -69.7, z = -49.7 },
+      { name = "The Stone Vault", x = 400.4, y = 55.1, z = -37.1 },
+    },
+    bosses = {
+    },
+  },
+  [90] = {
+    name = "Gnomeregan", kind = "dungeon", build = "1.60.1.70338",
+    rooms = {
+      { name = "Engineering Labs", x = 374, y = -832.6, z = -316.8 },
+      { name = "Gnomeregan", area = 721, x = 345.7, y = -641.9, z = -255.6 },
+      { name = "Launch Bay", x = 507, y = -557.9, z = -216.8 },
+      { name = "The Clean Zone", x = 197.4, y = -533.3, z = -193.7 },
+      { name = "The Clockwerk Run", x = 15.3, y = -352.5, z = -152.1 },
+      { name = "The Dormitory", x = 110.2, y = -595.6, z = -198.6 },
+      { name = "The Hall of Gears", x = 106.4, y = -450.8, z = -210.2 },
+      { name = "Tinkers' Court", x = 674.3, y = -533.3, z = -325.2 },
+    },
+    bosses = {
+    },
+  },
+  [109] = {
+    name = "Sunken Temple", kind = "dungeon", build = "1.60.1.70338",
+    rooms = {
+      { name = "Chamber of the Dreamer", x = -22.7, y = -662.1, z = -90.8 },
+      { name = "Hall of Serpents", x = 11.7, y = -495, z = -148.7 },
+      { name = "Hall of the Cursed", x = 64.1, y = -549.1, z = -53.9 },
+      { name = "Lair of the Chosen", x = -88.9, y = -480, z = -90.7 },
+      { name = "Sanctum of the Fallen God", x = 283.2, y = -469.7, z = -90.8 },
+      { name = "The Pit of Refuse", x = 94.8, y = -449.2, z = -189.6 },
+      { name = "The Pit of Sacrifice", x = 99.1, y = -480.6, z = -94.4 },
+    },
+    bosses = {
+    },
+  },
+  [129] = {
+    name = "Razorfen Downs", kind = "dungeon", build = "1.60.1.70338",
+    rooms = {
+      { name = "Spiral of Thorns", x = 984.6, y = 2418.2, z = 49.3 },
+      { name = "The Bone Pile", x = 673.9, y = 2471.2, z = 61.3 },
+      { name = "The Caller's Chamber", x = 865.3, y = 2520.9, z = 47.7 },
+      { name = "The Murder Pens", x = 745.6, y = 2528.6, z = 53.2 },
+    },
+    bosses = {
+    },
+  },
+  [189] = {
+    name = "Scarlet Monastery", kind = "dungeon", build = "1.60.1.70338",
+    rooms = {
+      { name = "Athenaeum", x = -418.7, y = 198.1, z = 19 },
+      { name = "Chamber of Atonement", x = 1125.8, y = 1774, z = 7.6 },
+      { name = "Chapel Gardens", x = 1399.2, y = 987, z = 27.3 },
+      { name = "Crusader's Armory", x = -395.9, y = 1877.4, z = 18.7 },
+      { name = "Crusader's Chapel", x = 1402.1, y = 1128.4, z = 30.5 },
+      { name = "Footman's Armory", x = -393.4, y = 1772.6, z = 8.1 },
+      { name = "Forlorn Cloister", x = 1342.1, y = 1790.9, z = 19 },
+      { name = "Gallery of Treasures", x = -331, y = 251, z = 18.7 },
+      { name = "Hall of Champions", x = -423.6, y = 1970.1, z = 6.2 },
+      { name = "Honor's Tomb", x = 1416.8, y = 1800, z = -7.8 },
+      { name = "Huntsman's Cloister", x = -265.6, y = 187.9, z = 18.7 },
+      { name = "The Grand Vestibule", x = -284.8, y = 1528.9, z = 18.7 },
+      { name = "Training Grounds", x = -364.5, y = 1685.8, z = 18.1 },
+    },
+    bosses = {
+    },
+  },
+  [209] = {
+    name = "Zul'Farrak", kind = "dungeon", build = "1.60.1.70338",
+    rooms = {
+    },
+    bosses = {
+    },
+  },
+  [229] = {
+    name = "Blackrock Spire", kind = "dungeon", build = "1.60.1.70338",
+    rooms = {
+      { name = "Blackrock Stadium", x = -408.9, y = 149.7, z = 111 },
+      { name = "Chamber of Battle", x = -491.5, y = -46.3, z = 90.5 },
+      { name = "Dragonspire Hall", x = -311.1, y = 171.7, z = 71.5 },
+      { name = "Hall of Binding", x = -263.3, y = 141.8, z = 96.1 },
+      { name = "Hall of Blackhand", x = -301.7, y = 157.9, z = 110.8 },
+      { name = "Halycon's Lair", x = -325.8, y = -195, z = 64.5 },
+      { name = "Hordemar City", x = -446.8, y = -31.6, z = 31.8 },
+      { name = "Mok'Doom", x = -331.3, y = -43.7, z = 40.9 },
+      { name = "Skitterweb Tunnels", x = -520.7, y = -122.4, z = 11.8 },
+      { name = "Spire Throne", x = -301.8, y = 3.7, z = 111 },
+      { name = "Tazz'Alaor", x = -515.3, y = -32, z = -18.7 },
+      { name = "The Furnace", x = -533.3, y = 59.3, z = 111 },
+      { name = "The Rookery", x = -276.1, y = 74.4, z = 91.8 },
+      { name = "The Storehouse", x = -467.6, y = -203.4, z = 89.6 },
+    },
+    bosses = {
+    },
+  },
+  [230] = {
+    name = "Blackrock Depths", kind = "dungeon", build = "1.60.1.70338",
+    rooms = {
+      { name = "Chamber of Enchantment", x = -222.5, y = 1029.5, z = -61.8 },
+      { name = "Dark Iron Highway", x = 74.9, y = 651, z = -73.8 },
+      { name = "Detention Block", x = -97.9, y = 424.7, z = -64.8 },
+      { name = "East Garrison", x = -75.6, y = 600.9, z = -46 },
+      { name = "Hall of Crafting", x = -387, y = 960, z = -59.6 },
+      { name = "Halls of the Law", x = -199.4, y = 583.4, z = -84.3 },
+      { name = "Mold Foundry", x = -178.4, y = 1144.7, z = -73.8 },
+      { name = "Ring of the Law", x = -195.1, y = 622.2, z = -52.9 },
+      { name = "Shadowforge City", x = -197.6, y = 801.9, z = -72.9 },
+      { name = "Shrine of Thaurissan", x = -274.1, y = 583.8, z = -43.1 },
+      { name = "Summoners' Tomb", x = -245.7, y = 1264.6, z = -78.2 },
+      { name = "The Black Vault", x = -329.9, y = 846.1, z = -50 },
+      { name = "The Domicile", x = -259.6, y = 790.8, z = -42.9 },
+      { name = "The Grim Guzzler", x = -178.4, y = 863.8, z = -49.7 },
+      { name = "The Imperial Seat", x = -781.4, y = 1373, z = -92.5 },
+      { name = "The Iron Hall", x = -626.6, y = 1372.4, z = -91.9 },
+      { name = "The Lyceum", x = -431.7, y = 1372.3, z = -94.5 },
+      { name = "The Manufactory", x = 6.2, y = 787.1, z = -53.6 },
+      { name = "The Molten Bridge", x = -402, y = 1185.1, z = -91.8 },
+      { name = "West Garrison", x = 13, y = 692.1, z = -45.5 },
+    },
+    bosses = {
+    },
+  },
+  [249] = {
+    name = "Onyxia's Lair", kind = "raid", build = "1.60.1.70338",
+    rooms = {
+    },
+    bosses = {
+      { name = "Onyxia", npc = 10184, x = -217.2, y = -4.9, z = -86.7 },
+    },
+  },
+  [289] = {
+    name = "Scholomance", kind = "dungeon", build = "1.60.1.70338",
+    rooms = {
+      { name = "Barov Family Vault", x = -73.5, y = 183.9, z = 71.2 },
+      { name = "Chamber of Summoning", x = 66.7, y = 265.8, z = 110 },
+      { name = "Hall of Secrets", x = 0, y = 239.9, z = 84.9 },
+      { name = "Hall of the Damned", x = -69.3, y = 173.5, z = 85.3 },
+      { name = "Headmaster's Study", x = 2.9, y = 184.4, z = 76.3 },
+      { name = "The Coven", x = 0, y = 122.3, z = 85.4 },
+      { name = "The Great Ossuary", x = 169.2, y = 116.1, z = 92.5 },
+      { name = "The Laboratory", x = 138.9, y = 0, z = 84 },
+      { name = "The Reliquary", x = 17.8, y = 195.6, z = 115.2 },
+      { name = "The Shadow Vault", x = 0, y = 245.1, z = 72.7 },
+      { name = "The Viewing Room", x = 99.9, y = 122.5, z = 101.2 },
+      { name = "Vault of the Ravenian", x = 0, y = 137.1, z = 75.5 },
+    },
+    bosses = {
+    },
+  },
+  [309] = {
+    name = "Zul'Gurub", kind = "raid", build = "1.60.1.70338",
+    rooms = {
+      { name = "Altar of Hir'eek", area = 3378, x = -1440, y = -12213.3, z = 130.8 },
+      { name = "Altar of the Blood God", area = 3384, x = -1620.3, y = -11785.6, z = 21.2 },
+      { name = "Edge of Madness", area = 3398, x = -1869.3, y = -11896.1, z = 64 },
+      { name = "Hakkari Grounds", area = 3380, x = -1878, y = -12290.1, z = 131.3 },
+      { name = "Mine", x = -1136.1, y = -11077.1, z = 56 },
+      { name = "Naze of Shirvallah", area = 3381, x = -1876.5, y = -11711.2, z = 47.9 },
+      { name = "Pagle's Pointe", area = 3419, x = -1773.6, y = -11707, z = 10.7 },
+      { name = "Shadra'zaar", area = 3379, x = -1634.8, y = -12297.5, z = 132.9 },
+      { name = "Temple of Bethekk", area = 3382, x = -1619.4, y = -11527.9, z = 49.8 },
+      { name = "The Bloodfire Pit", area = 3383, x = -1300.9, y = -11573.3, z = 78.2 },
+      { name = "The Coil", area = 3377, x = -1691.8, y = -12010.9, z = 32.4 },
+      { name = "The Mountain Den", x = -615.7, y = -13060.1, z = 65.9 },
+      { name = "Zanza's Rise", area = 3397, x = -1778.4, y = -12017.3, z = 57.4 },
+    },
+    bosses = {
+      { name = "Jin'do the Hexxer", npc = 11380, x = -1275.5, y = -11515.8, z = 79.7 },
+      { name = "Bloodlord Mandokir", npc = 11382, x = -1927.2, y = -12167.8, z = 153.7 },
+      { name = "High Priest Venoxis", npc = 14507, x = -1707.9, y = -12029.8, z = 39.4 },
+      { name = "High Priest Thekal", npc = 14509, x = -1998.9, y = -11700.8, z = 62.4 },
+      { name = "High Priestess Mar'li", npc = 14510, x = -1577.1, y = -12326.5, z = 133.6 },
+      { name = "High Priestess Jeklik", npc = 14517, x = -1380.1, y = -12291.9, z = 144.9 },
+      { name = "Hakkar", npc = 14834, x = -1649.3, y = -11787.4, z = 54.1 },
+    },
+  },
+  [329] = {
+    name = "Stratholme", kind = "dungeon", build = "1.60.1.70338",
+    rooms = {
+      { name = "Alonsus Chapel", x = -3643.8, y = 3670.9, z = 140 },
+      { name = "Crusaders' Square", x = -3173.1, y = 3662.8, z = 126.7 },
+      { name = "Elders' Square", x = -3611.9, y = 3661.9, z = 137.3 },
+      { name = "Festival Lane", x = -3481.5, y = 3662.4, z = 137.5 },
+      { name = "King's Square", x = -3356.2, y = 3530, z = 132.9 },
+      { name = "Market Row", x = -3313.9, y = 3685.6, z = 127.1 },
+      { name = "Slaughter Square", x = -3403.8, y = 4043.9, z = 115.3 },
+      { name = "The Crimson Throne", x = -3060.2, y = 3426.4, z = 136.8 },
+      { name = "The Gauntlet", x = -3643, y = 3938.9, z = 139.1 },
+      { name = "The Hall of Lights", x = -3099, y = 3626.7, z = 134.2 },
+      { name = "The Hoard", x = -2974.7, y = 3555.4, z = 125.1 },
+      { name = "The Scarlet Bastion", x = -3078.7, y = 3551.9, z = 135.8 },
+      { name = "The Slaughter House", x = -3364, y = 4032.7, z = 115.1 },
+    },
+    bosses = {
+    },
+  },
+  [349] = {
+    name = "Maraudon", kind = "dungeon", build = "1.60.1.70338",
+    rooms = {
+      { name = "Earth Song Falls", x = 0, y = 359.9, z = -130.9 },
+      { name = "Foulspore Cavern", x = -301.2, y = 994.8, z = -45.6 },
+      { name = "Maraudon", area = 2100, x = -122.8, y = 297.3, z = -76.3 },
+      { name = "Poison Falls", x = -133.4, y = 811.4, z = -65.8 },
+      { name = "The Noxious Hollow", x = -234.7, y = 1066.7, z = -72.3 },
+      { name = "The Wicked Grotto", x = -365.2, y = 757, z = -61.4 },
+      { name = "Vyletongue Seat", x = -216.3, y = 672.8, z = -60 },
+      { name = "Zaetar's Grave", x = -45.3, y = 14, z = -127.2 },
+    },
+    bosses = {
+    },
+  },
+  [389] = {
+    name = "Ragefire Chasm", kind = "dungeon", build = "1.60.1.70338",
+    rooms = {
+    },
+    bosses = {
+    },
+  },
+  [409] = {
+    name = "Molten Core", kind = "raid", build = "1.60.1.70338",
+    rooms = {
+      { name = "Magmadar Cavern", x = -991.1, y = 1038.6, z = -181.6 },
+      { name = "Ragnaros' Lair", x = -839, y = 823.5, z = -230 },
+      { name = "The Molten Core", x = -881.7, y = 953.5, z = -173.9 },
+    },
+    bosses = {
+      { name = "Magmadar", npc = 11982, x = -1020.5, y = 1144.6, z = -185.7 },
+      { name = "Golemagg the Incinerator", npc = 11988, x = -998.3, y = 793.2, z = -206.8 },
+      { name = "Baron Geddon", npc = 12056, x = -981.7, y = 747.5, z = -178.4 },
+      { name = "Garr", npc = 12057, x = -498, y = 679.8, z = -213.7 },
+      { name = "Sulfuron Harbinger", npc = 12098, x = -1179.1, y = 601.1, z = -195.9 },
+      { name = "Lucifron", npc = 12118, x = -955.4, y = 1000.2, z = -179.6 },
+      { name = "Gehennas", npc = 12259, x = -545.9, y = 898.1, z = -203.4 },
+      { name = "Shazzrah", npc = 12264, x = -799.8, y = 583.5, z = -205.4 },
+    },
+  },
+  [429] = {
+    name = "Dire Maul", kind = "dungeon", build = "1.60.1.70338",
+    rooms = {
+    },
+    bosses = {
+    },
+  },
+  [469] = {
+    name = "Blackwing Lair", kind = "raid", build = "1.60.1.70338",
+    rooms = {
+      { name = "Dragonmaw Garrison", x = -1048.9, y = -7591.1, z = 408.4 },
+      { name = "Halls of Strife", x = -1009.9, y = -7622.6, z = 440.2 },
+      { name = "Nefarian's Lair", x = -1203.2, y = -7519.2, z = 476.9 },
+      { name = "Shadow Wing Lair", x = -1013.3, y = -7484.4, z = 408.6 },
+    },
+    bosses = {
+      { name = "Flamegor", npc = 11981, x = -1031, y = -7407.9, z = 477.4 },
+      { name = "Firemaw", npc = 11983, x = -923.8, y = -7433.4, z = 465.4 },
+      { name = "Broodlord Lashlayer", npc = 12017, x = -1035.2, y = -7573.9, z = 449.2 },
+      { name = "Razorgore the Untamed", npc = 12435, x = -1088.2, y = -7571.7, z = 413.5 },
+      { name = "Vaelastrasz the Corrupt", npc = 13020, x = -1016, y = -7483.8, z = 408.7 },
+      { name = "Chromaggus", npc = 14020, x = -1029.6, y = -7515.3, z = 476.7 },
+      { name = "Ebonroc", npc = 14601, x = -994.3, y = -7358.2, z = 477.4 },
+    },
+  },
+  [509] = {
+    name = "Ruins of Ahn'Qiraj", kind = "raid", build = "1.60.1.70338",
+    rooms = {
+      { name = "General's Terrace", area = 3449, x = 1559.1, y = -9066.7, z = 22 },
+      { name = "Scarab Terrace", area = 3448, x = 1475.6, y = -8622.2, z = 32 },
+      { name = "The Comb", area = 3452, x = 1564.4, y = -9687.6, z = 21.7 },
+      { name = "The Hatchery", area = 3451, x = 1389.5, y = -9417.6, z = 26.9 },
+      { name = "The Reservoir", area = 3450, x = 2015.7, y = -8929.9, z = 22.9 },
+      { name = "Watchers' Terrace", area = 3453, x = 1918.7, y = -9351.4, z = 85.7 },
+    },
+    bosses = {
+      { name = "Ossirian the Unscarred", npc = 15339, x = 2030.3, y = -9493.6, z = 105.5 },
+      { name = "Moam", npc = 15340, x = 2260.1, y = -8845.5, z = 21.5 },
+      { name = "General Rajaxx", npc = 15341, x = 1602.5, y = -9129.7, z = 26.5 },
+      { name = "Kurinnaxx", npc = 15348, x = 1629.5, y = -8824.5, z = 20.4 },
+      { name = "Ayamiss the Hunter", npc = 15369, x = 1514.8, y = -9719.6, z = 27.6 },
+      { name = "Buru the Gorger", npc = 15370, x = 1234.1, y = -9236, z = -63.7 },
+    },
+  },
+  [531] = {
+    name = "Ahn'Qiraj Temple", kind = "raid", build = "1.60.1.70338",
+    rooms = {
+    },
+    bosses = {
+      { name = "The Prophet Skeram", npc = 15263, x = 2081, y = -8346, z = 125.7 },
+      { name = "Emperor Vek'nilash", npc = 15275, x = 1176.2, y = -9023.7, z = -104.2 },
+      { name = "Viscidus", npc = 15299, x = 928.6, y = -8000.2, z = -51.9 },
+      { name = "Princess Huhuran", npc = 15509, x = 1696.5, y = -8532.1, z = -90.3 },
+      { name = "Fankriss the Unyielding", npc = 15510, x = 1196.7, y = -8085.4, z = -92 },
+      { name = "Battleguard Sartura", npc = 15516, x = 1688.7, y = -8281.9, z = -25.9 },
+      { name = "Vem", npc = 15544, x = 2165, y = -8544.1, z = -3.5 },
+      { name = "C'Thun", npc = 15727, x = 1985.8, y = -8578.6, z = 100.3 },
+    },
+  },
+  [533] = {
+    name = "Naxxramas", kind = "raid", build = "1.60.1.70338",
+    rooms = {
+      { name = "Kel'Thuzad's Chamber", x = -5102.2, y = 3715.6, z = 141.5 },
+      { name = "Sapphiron's Lair", x = -5244.4, y = 3502.2, z = 137.6 },
+      { name = "The Arachnid Quarter", x = -3627.5, y = 3206.9, z = 280.4 },
+      { name = "The Construct Quarter", x = -3322.8, y = 3111.1, z = 293.8 },
+      { name = "The Horsemen's Assembly", x = -2963.9, y = 2523.3, z = 245.7 },
+      { name = "The Military Quarter", x = -3256.4, y = 2794.6, z = 267.7 },
+      { name = "The Necrotic Vault", x = -4000, y = 2897.8, z = 273.7 },
+      { name = "The Outer Ring", x = -3095.8, y = 2645.5, z = 240 },
+      { name = "The Plague Quarter", x = -3612.6, y = 2805.6, z = 256.7 },
+    },
+    bosses = {
+      { name = "Heigan the Unclean", npc = 15936, x = -3708.8, y = 2795.3, z = 276.6 },
+      { name = "Grand Widow Faerlina", npc = 15953, x = -3620.1, y = 3353.2, z = 261.1 },
+      { name = "Noth the Plaguebringer", npc = 15954, x = -3485.1, y = 2678, z = 261.3 },
+      { name = "Anub'Rekhan", npc = 15956, x = -3476.2, y = 3316.5, z = 287.3 },
+      { name = "Kel'Thuzad", npc = 15990, x = -5113.4, y = 3746.4, z = 142 },
+      { name = "Loatheb", npc = 16011, x = -3999.5, y = 2909.4, z = 274.3 },
+      { name = "Gothik the Harvester", npc = 16060, x = -3388.4, y = 2642.2, z = 285.6 },
+      { name = "Instructor Razuvious", npc = 16061, x = -3098, y = 2755.6, z = 267.9 },
+    },
+  },
+  [2959] = {
+    name = "City of Dalaran", kind = "dungeon", build = "1.60.1.70338",
+    rooms = {
+      { name = "A Hero's Welcome", x = 442.1, y = 264, z = 84.1 },
+      { name = "Antonidas' Antiquities", x = 138.9, y = 234.7, z = 109.2 },
+      { name = "Archival Exhibit", x = 127.5, y = 166.4, z = 99 },
+      { name = "Cantrips & Crows", x = 370.7, y = 276.3, z = 67.3 },
+      { name = "Cartier & Co. Fine Jewelry", x = 273.7, y = 343.2, z = 91.8 },
+      { name = "Curiosities & Moore", x = 347.5, y = 223.9, z = 109.9 },
+      { name = "Dalaran", area = 16558, x = 334.7, y = 248.9, z = 96.3 },
+      { name = "Dalaran Exchange", x = 349, y = 214.5, z = 98.9 },
+      { name = "Dalaran Merchant's Bank", x = 480.2, y = 223.7, z = 100.8 },
+      { name = "Dalaran Orphanage", x = 178.5, y = 123.9, z = 90.3 },
+      { name = "Eclipse with Shears", x = 217.8, y = 263.6, z = 98.1 },
+      { name = "First to your Aid", x = 301.5, y = 370.1, z = 90.1 },
+      { name = "Forge of Fate", x = 231.6, y = 340.7, z = 91.3 },
+      { name = "Glorious Goods", x = 414.5, y = 161.9, z = 98.2 },
+      { name = "Hillsbrad", x = 95.6, y = -500, z = 59.1 },
+      { name = "Langrom's Leather", x = 433.1, y = 173.9, z = 96.9 },
+      { name = "Magical Menagerie", x = 232.6, y = 185.3, z = 101.4 },
+      { name = "Magus Commerce Exchange", x = 270.2, y = 328.8, z = 93.7 },
+      { name = "One More Glass", x = 218.4, y = 246.2, z = 99 },
+      { name = "Path of Renewal", x = 190.2, y = 326.7, z = 89.7 },
+      { name = "Presage Plaza", x = 158.2, y = 176.4, z = 99.4 },
+      { name = "Runeweaver Square", x = 302.8, y = 247.3, z = 96.2 },
+      { name = "Sewer", x = 466.4, y = 357.7, z = 47.1 },
+      { name = "Sisters Sorcerous", x = 396.2, y = 318.2, z = 91.8 },
+      { name = "Talismanic Textiles", x = 295.1, y = 383, z = 89.1 },
+      { name = "Tempered Tomes", x = 487.5, y = 322.3, z = 103.9 },
+      { name = "The Agronomical Apothecary", x = 257.2, y = 338.2, z = 92.2 },
+      { name = "The Arsenal Absolute", x = 374.8, y = 172.9, z = 97.4 },
+      { name = "The Atrium of Fortune", x = 433.3, y = 308.2, z = 90.5 },
+      { name = "The Dalaran Charter", x = 167.2, y = 287.4, z = 99.4 },
+      { name = "The Eventide", x = 429.5, y = 199.3, z = 95.8 },
+      { name = "The Linguist's Lounge", x = 341.6, y = 213.3, z = 109.8 },
+      { name = "The Linguists Lounge", x = 279.4, y = 259.1, z = 96.2 },
+      { name = "The Militant Mystic", x = 449.2, y = 187.3, z = 96.8 },
+      { name = "The Scribes' Sacellum", x = 283.1, y = 330.1, z = 92.1 },
+      { name = "The Silver Enclave", x = 410.8, y = 284.4, z = 106.1 },
+      { name = "The Sky Enclave", x = 403.5, y = 452.1, z = 111 },
+      { name = "The Threads of Fate", x = 335.6, y = 278.9, z = 106.8 },
+      { name = "The Underbelly", x = 275.6, y = 249.6, z = 63.4 },
+      { name = "The Violet Citadel", x = 391.8, y = 400.6, z = 114.2 },
+      { name = "The Violet Gate", x = 290.9, y = 202.7, z = 108.9 },
+      { name = "The Violet Hold", x = 345.9, y = 112, z = 101.6 },
+      { name = "Trade District", x = 306.4, y = 343.5, z = 91.6 },
+      { name = "Violet Plates and Framing", x = 220.4, y = 316.7, z = 92.2 },
+      { name = "Wands and Wonder", x = 321.9, y = 296.2, z = 95.8 },
+    },
+    bosses = {
+    },
+  },
+  [2998] = {
+    name = "Excavation Site: Wetlands", kind = "dungeon", build = "1.60.1.70338",
+    rooms = {
+      { name = "Lost Dig Site", area = 16880, x = -1623, y = -3894.8, z = 139.4 },
+      { name = "Lost Marsh", area = 16877, x = -2133.3, y = -3809.1, z = 144.6 },
+      { name = "Site of the Guardian", area = 16879, x = -1865.6, y = -4000, z = 168.8 },
+      { name = "Stalker's Thicket", area = 16878, x = -1850.9, y = -3864.7, z = 137.8 },
+    },
+    bosses = {
+    },
+  },
+  [2999] = {
+    name = "Ruins of Lordaeron", kind = "dungeon", build = "1.60.1.70338",
+    rooms = {
+      { name = "King's Alley", area = 16612, x = 133.9, y = 1561.8, z = 61.7 },
+      { name = "Lordaeron Graveyard", area = 16614, x = 299.8, y = 1565.5, z = 61.7 },
+      { name = "Lordamere Overlook", area = 16615, x = 301.7, y = 1449.8, z = 63.7 },
+      { name = "Market Street", area = 16617, x = 415.6, y = 1623.9, z = 61.7 },
+      { name = "Ruins of Lordaeron", area = 16611, x = 234.5, y = 1682.4, z = 62.7 },
+    },
+    bosses = {
+    },
+  },
+  [3065] = {
+    name = "The Hall of Thanes", kind = "dungeon", build = "1.60.1.70338",
+    rooms = {
+      { name = "Anvilmar's Rest", x = 0, y = 42, z = 501.5 },
+      { name = "Dark Iron Ingress", x = -157.9, y = 157.3, z = 486.1 },
+      { name = "Reliquary of Kings", x = 0, y = 341, z = 500.8 },
+    },
+    bosses = {
+    },
   },
 }

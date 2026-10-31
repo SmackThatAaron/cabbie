@@ -397,6 +397,7 @@ end
 
 
 
+
 local function anchorLine(surface)
     local holder = surface.holder
     holder:ClearAllPoints()
@@ -404,10 +405,39 @@ local function anchorLine(surface)
     if type(chat) == "table" and chat.GetLeft and chat:GetLeft() then
         holder:SetPoint("TOPLEFT", chat, "TOPLEFT", 0, 0)
         holder:SetPoint("BOTTOMRIGHT", chat, "BOTTOMRIGHT", 0, 0)
-    else
-        holder:SetSize(SearchLine.LINE_WIDTH, SearchLine.LINE_HEIGHT)
-        holder:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", SearchLine.LINE_X, SearchLine.LINE_Y)
+        return "chat"
     end
+    holder:SetSize(SearchLine.LINE_WIDTH, SearchLine.LINE_HEIGHT)
+    holder:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", SearchLine.LINE_X, SearchLine.LINE_Y)
+    return "fixed"
+end
+
+
+local function rect(frame)
+    if type(frame) ~= "table" or not (frame.GetLeft and frame.GetBottom and frame.GetWidth and frame.GetHeight) then
+        return "no place"
+    end
+    local left, bottom, width, height = frame:GetLeft(), frame:GetBottom(), frame:GetWidth(), frame:GetHeight()
+    if type(left) ~= "number" or type(bottom) ~= "number" then return "no place" end
+    return format("%.0f,%.0f,%.0f,%.0f", left, bottom, tonumber(width) or 0, tonumber(height) or 0)
+end
+
+
+
+local function noteSurface(surface)
+    FGPS.UI.Look.NoteOnce("surface:" .. surface.key, "Search surface %s: box %s, ground %s", surface.key,
+        surface.template or "plain", tostring(surface.ground))
+end
+
+
+
+local function noteLinePlace(surface, anchored)
+    local Look = FGPS.UI.Look
+    if Look.noted["goto-line"] or not FGPS:IsOwnerInstall() then return end
+    local getCVar = (C_CVar and C_CVar.GetCVar) or GetCVar
+    local ok, style = pcall(getCVar, "chatStyle")
+    Look.NoteOnce("goto-line", "Go-to line: chatStyle %s, chat input %s, line %s, anchored %s",
+        ok and tostring(style) or "unknown", rect(ChatFrame1EditBox), rect(surface.holder), anchored)
 end
 
 local function createLine()
@@ -478,10 +508,12 @@ function SearchLine.Open(text)
         SearchLine.lifeTimer:Cancel()
         SearchLine.lifeTimer = nil
     end
-    anchorLine(surface)
+    local anchored = anchorLine(surface)
     surface.listWanted, surface.passive = true, false
     surface.text, surface.view = text, nil
     surface.holder:Show()
+    noteSurface(surface)
+    noteLinePlace(surface, anchored)
     surface.edit:Show()
     surface.edit:SetText(text)
     if surface.edit.SetCursorPosition then surface.edit:SetCursorPosition(#text) end
@@ -543,6 +575,9 @@ SearchLine.FIELD_STRATA = "FULLSCREEN_DIALOG"
 SearchLine.FIELD_TEMPLATES = { "SearchBoxTemplate", "InputBoxTemplate" }
 
 
+SearchLine.FLOOR_DROP = 34
+
+
 
 
 local function createField()
@@ -559,13 +594,35 @@ local function createField()
     holder:SetFrameStrata(SearchLine.FIELD_STRATA)
     if holder.SetFixedFrameStrata then holder:SetFixedFrameStrata(true) end
     holder:SetSize(SearchLine.FIELD_WIDTH, SearchLine.FIELD_HEIGHT)
-    holder:SetPoint("TOPLEFT", picture, "TOPLEFT", SearchLine.FIELD_X, SearchLine.FIELD_Y)
-    local surface = { key = "map", holder = holder, text = "", selected = 1 }
+    local surface = { key = "map", holder = holder, picture = picture, text = "", selected = 1 }
     local edit = createEdit(surface, holder, SearchLine.FIELD_TEMPLATES)
     edit:SetAllPoints(holder)
     createList(surface, holder)
     surface.list:SetPoint("TOPLEFT", holder, "BOTTOMLEFT", -6, -4)
     return surface
+end
+
+
+
+
+
+function SearchLine.PlaceField()
+    local surface = SearchLine.surfaces.map
+    if not surface then return false end
+    local map = WorldMapFrame
+    local mapID = type(map) == "table" and map.GetMapID and map:GetMapID()
+    local group = mapID ~= nil and C_Map ~= nil and C_Map.GetMapGroupID ~= nil and C_Map.GetMapGroupID(mapID) or nil
+    local floors = group ~= nil
+    local y = SearchLine.FIELD_Y - (floors and SearchLine.FLOOR_DROP or 0)
+    surface.holder:ClearAllPoints()
+    surface.holder:SetPoint("TOPLEFT", surface.picture, "TOPLEFT", SearchLine.FIELD_X, y)
+
+
+    if floors then
+        FGPS.UI.Look.NoteOnce("mapfield:" .. tostring(mapID), "Map field on map %s: floors group %s, field at %d,%d",
+            tostring(mapID), tostring(group), SearchLine.FIELD_X, y)
+    end
+    return true
 end
 
 
@@ -579,7 +636,9 @@ function SearchLine.OnMapShown()
     end
 
     surface.holder:SetFrameStrata(SearchLine.FIELD_STRATA)
+    SearchLine.PlaceField()
     surface.holder:Show()
+    noteSurface(surface)
 
 
 
@@ -600,7 +659,10 @@ end
 
 
 function SearchLine.OnMapHidden()
-    return SearchLine.Dismiss("map")
+    local waiting = SearchLine.firstWaits
+    local dismissed = SearchLine.Dismiss("map")
+    if waiting then SearchLine.FirstLogin() end
+    return dismissed
 end
 
 
@@ -694,6 +756,15 @@ function SearchLine.FirstLogin()
     end
     if UIParent and UIParent.IsVisible and not UIParent:IsVisible() then
         startFirstTimer()
+        return false
+    end
+
+
+    local Setup = FGPS.UI.Setup
+    local map = SearchLine.surfaces and SearchLine.surfaces.map
+    local mapUp = map and map.holder and map.holder.IsVisible and map.holder:IsVisible()
+    if Setup and Setup.Show and mapUp then
+        SearchLine.firstWaits = true
         return false
     end
     SearchLine.firstWaits = false

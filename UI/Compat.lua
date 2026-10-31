@@ -1,33 +1,34 @@
--- Cabbie/UI/Compat.lua
--- Waypoint interoperability.
---
--- Guide authors, quest helpers and web sites all write coordinates in the same few shapes, so
--- Cabbie understands them instead of asking people to retype:
---   /way 42.5 65.1                     the current zone
---   /way 42.5 65.1 Elwynn Forest       a zone named after the numbers (Cabbie's own written form)
---   /way 42.5 65.1 Meet here           a title after the numbers when the words are not a zone
---   /way Elwynn Forest 42.5 65.1       a zone named before the numbers
---   /way Elwynn Forest 42.5 65.1 Inn   ... with a title after them
---   /way |cffffff00|Hworldmap:1429:4250:6510|h[Map Pin]|h|r   a pasted map pin link
---   /way pin                           whatever the client's own map pin is pointing at
---   /way add <any of the above>        add the place as another stop instead of replacing
--- The same words work as "/cabbie way ...", which is always available even when another add-on
--- owns the plain "/way".
---
--- COMPATIBILITY SHIM, NOT AN IMPERSONATION. Cabbie also answers to the function signature that
--- waypoint-providing add-ons made the common dialect, so a guide that already calls
---   TomTom:AddWaypoint(uiMapID, x, y, opts)
--- can drive Cabbie by calling
---   Cabbie:AddWaypoint(uiMapID, x, y, opts)
--- with nothing else changed. That is all this is: a door with a familiar handle. Cabbie does not
--- register itself as, replace, or claim to be TomTom or any other add-on, it defines no global of
--- another add-on's name, and it does not pretend to implement the rest of that add-on's API. Only
--- the arguments listed at AddWaypoint below are honoured; the rest are accepted and ignored so a
--- caller written for the other add-on does not error. If the real add-on is installed it keeps its
--- own name, its own "/way" and its own arrow, and Cabbie stays out of its way.
---
--- A destination arriving through any of these paths never silently replaces a journey in progress:
--- the player is told in chat which destination was dropped, and is told how to add a stop instead.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 local ADDON_NAME, FGPS = ...
 
 local L = FGPS.L
@@ -35,26 +36,26 @@ local Util = FGPS.Util
 local type, tostring, tonumber, pairs, ipairs, format = type, tostring, tonumber, pairs, ipairs, string.format
 
 local Compat = {
-    waypoints = {},          -- uid -> { dest, title, addedAt, source }
+    waypoints = {},
     nextUid = 1,
     waySlashRegistered = false,
 }
 FGPS.UI.Compat = Compat
 
--- Defaults for the preferences this module owns (see UI/Skins.lua AddSettingDefault).
+
 FGPS.UI.AddSettingDefault("compat", { wayCommand = true })
 
--- Name under which the plain "/way" is registered in the client's slash dispatch table. It is
--- deliberately our own name: the dispatch entry says Cabbie, not somebody else's add-on.
+
+
 local WAY_SLASH_NAME = "CABBIEWAY"
 local WAY_WORDS = { "/way", "/cabbieway" }
 
--------------------------------------------------------------------------------
--- Parsing
--------------------------------------------------------------------------------
--- The map pin link the client puts in chat is "|Hworldmap:<uiMapID>:<x>:<y>|h[Map Pin]|h", with x
--- and y as ten-thousandths of the map rectangle.
--- Compat.ParsePinLink(text) -> uiMapID, x100, y100   (percentages, as the other forms use)
+
+
+
+
+
+
 function Compat.ParsePinLink(text)
     if type(text) ~= "string" then return nil end
     local mapID, x, y = text:match("Hworldmap:(%d+):(%d+):(%d+)")
@@ -67,13 +68,13 @@ end
 local NUMBER = "%-?%d+%.?%d*"
 local SEPARATOR = "[%s,;:/]+"
 
--- Compat.ParseWay(text) -> x, y, zone, title    (x and y are 0..100 map percentages)
---   zone is a zone name, a uiMapID (number) or nil for the current zone;
---   title is the label the caller wrote after the coordinates, or nil.
--- The words that follow a "numbers first" form are ambiguous: TomTom-style guides put a title
--- there and Cabbie's own written form puts the zone there. They are returned as BOTH candidates
--- (zone and title are the same string) and Compat.Resolve decides by trying the zone first; only
--- the caller has the destination tables needed to tell a real zone name from a label.
+
+
+
+
+
+
+
 function Compat.ParseWay(text)
     text = Util.Trim(tostring(text or ""))
     if text == "" then return nil end
@@ -81,26 +82,38 @@ function Compat.ParseWay(text)
     local mapID, px, py = Compat.ParsePinLink(text)
     if mapID then return px, py, mapID, L["Map pin"] end
 
-    -- Numbers first, optionally followed by a zone name or a title.
+
+    local Destinations = FGPS.Destinations
+    if Destinations and Destinations.DecimalCommas then text = Destinations.DecimalCommas(text) end
+
+
     local sx, sy, rest = text:match("^(" .. NUMBER .. ")" .. SEPARATOR .. "(" .. NUMBER .. ")%s*(.-)$")
     if sx then
         rest = Util.Trim(rest or "")
         if rest == "" then return tonumber(sx), tonumber(sy), nil, nil end
-        return tonumber(sx), tonumber(sy), tonumber(rest) or rest, rest
+
+        local mapNumber = tonumber(rest)
+        return tonumber(sx), tonumber(sy), mapNumber or rest, (not mapNumber) and rest or nil
     end
 
-    -- Zone name first, then the numbers, then an optional title.
+
     local zone, zx, zy, title = text:match("^(.-)%s+(" .. NUMBER .. ")" .. SEPARATOR .. "(" .. NUMBER .. ")%s*(.-)$")
     if zx then
         zone = Util.Trim(zone or "")
         title = Util.Trim(title or "")
-        if zone == "" then zone = nil else zone = tonumber(zone) or zone end
+        if zone == "" then
+            zone = nil
+        else
+
+            local hashID = zone:match("^#(%d+)$")
+            zone = (hashID and tonumber(hashID)) or tonumber(zone) or zone
+        end
         return tonumber(zx), tonumber(zy), zone, title ~= "" and title or nil
     end
     return nil
 end
 
--- True when both numbers look like map percentages.
+
 local function inRange(x, y)
     return type(x) == "number" and type(y) == "number" and x >= 0 and x <= 100 and y >= 0 and y <= 100
 end
@@ -118,32 +131,52 @@ local function currentMapID()
     return nil
 end
 
--- Sentences for the reason codes Destinations.FromCoords answers with; a raw code is never shown.
-local COORD_REASONS = {
+
+
+
+
+local REASONS = {
     unknown_zone = "no zone of that name is known",
     range = "coordinates must be between 0 and 100",
     no_map = "your current zone is unknown; name a zone after the coordinates",
     no_world = "that place has no world position",
     parse = "that is not a coordinate pair",
+    bad_arguments = "the request was not understood",
+    no_api = "this game client cannot look names up",
+    disabled = "name lookups are switched off in the settings",
+    budget = "the lookups for this session are used up",
+    in_flight = "a lookup is still running",
+    combat = "not during a fight",
+    too_soon = "wait a moment before the next one",
+    no_quest = "no quest is chosen",
+    invalid = "that place cannot be saved",
+    duplicate = "it is already a favorite",
+    full = "the favorites list is full",
+    cancelled = "the search was stopped",
 }
 
-local function reasonText(code)
-    local key = COORD_REASONS[code]
-    if key then return L[key] end
-    return L["those coordinates could not be resolved"]
-end
 
--- Compat.Resolve(x, y, zone, title) -> dest|nil, reason
--- Turns parsed coordinates into a destination.
---
--- A zone the caller named explicitly is binding: a mistyped zone answers with "no zone of that
--- name is known" rather than quietly sending the player to the same numbers in whatever zone they
--- happen to be standing in. Only the genuinely ambiguous case falls back, which is the wording
--- "<numbers> <words>": ParseWay offers those words as both the zone and the title, so they are
--- tried as a zone first and become the destination's name when no such zone exists. There they
--- are a zone only when they are a zone's whole name: a zone name is matched by its start and by
--- letters inside it, so a guide's title "Hill", "Rest" or "A" moved the spot to Hillsbrad
--- Foothills, Silverpine Forest or Alterac Mountains and lost the title.
+
+
+function Compat.ReasonText(code, fallback)
+    local key = REASONS[code]
+    if key then return L[key] end
+    if type(code) == "string" and code:find(" ", 1, true) then return code end
+    return fallback or L["those coordinates could not be resolved"]
+end
+local reasonText = Compat.ReasonText
+
+
+
+
+
+
+
+
+
+
+
+
 function Compat.Resolve(x, y, zone, title)
     local Destinations = FGPS.Destinations
     if not Destinations or not Destinations.FromCoords then
@@ -161,7 +194,7 @@ function Compat.Resolve(x, y, zone, title)
         local ok, result, reason = pcall(Destinations.FromCoords, zone, x, y)
         if ok and result then
             dest = result
-            -- The words were a zone, so they are not a title unless the caller wrote one as well.
+
             if ambiguous then title = nil end
         else
             err = ok and reason or nil
@@ -179,9 +212,9 @@ function Compat.Resolve(x, y, zone, title)
     return dest
 end
 
--------------------------------------------------------------------------------
--- Handing a destination to the navigator
--------------------------------------------------------------------------------
+
+
+
 local function describe(dest)
     local Destinations = FGPS.Destinations
     if Destinations and Destinations.Describe then
@@ -199,17 +232,18 @@ local function journeyRunning()
     return false
 end
 
--- The destination the running journey is heading for, for the "this replaced that" notice.
+
+
 local function currentDestination()
     local Navigator = FGPS.Navigator
     if not Navigator then return nil end
     if Navigator.GetStops then
-        -- The itinerary holds destination tables directly; the unwrap is for a caller that hands
-        -- back route-style records instead.
+
+
         local ok, stops = pcall(Navigator.GetStops, Navigator)
         if ok and type(stops) == "table" and #stops > 0 then
             local last = stops[#stops]
-            if type(last) == "table" then return last.dest or last end
+            if type(last) == "table" then return last.dest or last, #stops end
         end
     end
     if Navigator.GetRoute then
@@ -217,27 +251,28 @@ local function currentDestination()
         local stops = ok and type(route) == "table" and route.stops or nil
         if type(stops) == "table" and #stops > 0 then
             local last = stops[#stops]
-            return last.dest or last
+            return last.dest or last, #stops
         end
     end
     return nil
 end
 
--- Compat.Accept(dest, opts) -> bool
--- The single door every waypoint in this file goes through. opts:
---   addStop = true      add the place as another stop instead of replacing the journey
---   silent = true       do not print the confirmation line (the notice about a replaced journey
---                       is still printed: losing a journey is never silent)
---   source = string     where the waypoint came from, for the log
+
+
+
+
+
+
 function Compat.Accept(dest, opts)
     opts = opts or {}
     local Search = FGPS.UI.Search
     if type(dest) ~= "table" then return false end
     local running = journeyRunning()
-    local previous = running and currentDestination() or nil
+    local previous, stopCount
+    if running then previous, stopCount = currentDestination() end
 
     if opts.addStop then
-        -- quiet: Compat prints the one "Added a stop" line; Navigator must not also say Destination set.
+
         if Search and Search.GoTo then Search.GoTo(dest, "addStop", { quiet = true })
         else
             local Navigator = FGPS.Navigator
@@ -248,12 +283,20 @@ function Compat.Accept(dest, opts)
         return true
     end
 
-    -- A journey in progress is about to be re-routed. Say what is being given up and how to keep
-    -- it, before the navigator acts on the new destination. The same waypoint arriving twice is
-    -- not a replacement and says nothing.
+
+
+
     local Destinations = FGPS.Destinations
     local samePlace = previous ~= nil and Destinations ~= nil and Destinations.Equal ~= nil
         and Destinations.Equal(previous, dest) == true
+    if samePlace and (stopCount or 0) > 1 then
+
+
+
+
+        FGPS.Log:Debug("Waypoint from %s is where the journey already ends: %s", tostring(opts.source or "way"), describe(dest))
+        return true
+    end
     if running and not samePlace then
         if previous then
             FGPS:Print(L["Your route to %s was replaced by %s. Use '/way add <coordinates>' to keep the route and add a stop instead."],
@@ -264,7 +307,7 @@ function Compat.Accept(dest, opts)
         end
     end
 
-    -- quiet: Compat owns the player chat line (Waypoint or the replace notice).
+
     if Search and Search.GoTo then
         Search.GoTo(dest, nil, { quiet = true })
     else
@@ -280,11 +323,11 @@ function Compat.Accept(dest, opts)
     return true
 end
 
--------------------------------------------------------------------------------
--- The client's own map pin
--------------------------------------------------------------------------------
--- True when the user waypoint currently set is the one UI/InWorldPin.lua placed for the running
--- journey. Taking our own marker as a new destination would be a loop, not interoperability.
+
+
+
+
+
 function Compat.PinIsOurs()
     local InWorldPin = FGPS.UI.InWorldPin
     local state = InWorldPin and InWorldPin.state
@@ -302,8 +345,8 @@ function Compat.PinIsOurs()
     return math.abs(px - target.x) <= epsilon and math.abs(py - target.y) <= epsilon
 end
 
--- Compat.FromUserWaypoint() -> dest|nil, reason
--- The place the client's own map pin points at, as a Cabbie destination.
+
+
 function Compat.FromUserWaypoint()
     if type(C_Map) ~= "table" or type(C_Map.GetUserWaypoint) ~= "function" then
         return nil, L["this client has no map pin"]
@@ -322,32 +365,36 @@ function Compat.FromUserWaypoint()
         return nil, L["that part of Cabbie is not ready"]
     end
     local okDest, dest, reason = pcall(Destinations.FromMapClick, point.uiMapID, px, py)
-    if not okDest or not dest then return nil, (okDest and reason) or L["that map position cannot be used as a destination"] end
+    if not okDest or not dest then
+        return nil, (okDest and reason and reasonText(reason, L["that map position cannot be used as a destination"]))
+            or L["that map position cannot be used as a destination"]
+    end
     if not dest.name or dest.name == "" then dest.name = L["Map pin"] end
     return dest
 end
 
--------------------------------------------------------------------------------
--- Compatibility entry point
--------------------------------------------------------------------------------
--- Compat.AddWaypoint(uiMapID, x, y, opts) -> uid|nil, reason
---
--- Deliberately the signature waypoint add-ons made the common dialect, so an existing guide needs
--- no rewriting: x and y are NORMALISED map coordinates (0..1), not percentages. Both call styles
--- work, so "Cabbie:AddWaypoint(...)" and "Cabbie.AddWaypoint(...)" mean the same thing.
---
--- Honoured options: opts.title (the destination's name), opts.silent (no chat line),
--- opts.addStop (add a stop instead of replacing the journey; Cabbie's own extension). Every other
--- option of the original add-on (crazy, persistent, minimap, world, callbacks, cleardistance, ...)
--- is accepted and ignored, because Cabbie answers them with its own Route block, minimap dots and
--- map line rather than with a second set of markers.
---
--- The returned uid is an opaque handle for Compat.RemoveWaypoint; it is not the other add-on's
--- table and nothing should read its fields.
-function Compat.AddWaypoint(uiMapID, x, y, opts)
-    -- Method-call form: Cabbie:AddWaypoint(m, x, y, opts).
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+function Compat.AddWaypoint(uiMapID, x, y, opts, methodOpts)
+
+
     if type(uiMapID) == "table" then
-        uiMapID, x, y, opts = x, y, opts, nil
+        uiMapID, x, y, opts = x, y, opts, methodOpts
     end
     uiMapID, x, y = tonumber(uiMapID), tonumber(x), tonumber(y)
     if not uiMapID or not x or not y then return nil, L["a waypoint needs a map and two coordinates"] end
@@ -366,37 +413,50 @@ function Compat.AddWaypoint(uiMapID, x, y, opts)
     return uid
 end
 
--- The older five-argument form of the same dialect; the second argument was a dungeon floor and no
--- longer means anything, so it is dropped.
-function Compat.AddMFWaypoint(uiMapID, floor, x, y, opts)
+
+
+function Compat.AddMFWaypoint(uiMapID, floor, x, y, opts, methodOpts)
     if type(uiMapID) == "table" then
-        uiMapID, floor, x, y, opts = floor, x, y, opts, nil
+        uiMapID, floor, x, y, opts = floor, x, y, opts, methodOpts
     end
     return Compat.AddWaypoint(uiMapID, x, y, opts)
 end
 
--- Compat.RemoveWaypoint(uid) -> bool
--- Forgets a waypoint this shim handed out. It cancels the journey only when that waypoint is the
--- destination currently being navigated to, and says so.
-function Compat.RemoveWaypoint(uid)
-    if type(uid) == "table" then return false end
+
+
+
+
+
+function Compat.RemoveWaypoint(uid, methodUid)
+    if type(uid) == "table" then uid = methodUid end
     local entry = Compat.waypoints[uid]
     if not entry then return false end
     Compat.waypoints[uid] = nil
-    local Destinations = FGPS.Destinations
-    local current = currentDestination()
-    if current and Destinations and Destinations.Equal and Destinations.Equal(current, entry.dest) then
-        local Navigator = FGPS.Navigator
-        if Navigator and Navigator.Cancel then
-            Navigator:Cancel("waypoint_removed")
-            FGPS:Print(L["The route to %s was cancelled: its waypoint was removed."], describe(entry.dest))
+    local Destinations, Navigator = FGPS.Destinations, FGPS.Navigator
+    if not (Destinations and Destinations.Equal and Navigator and Navigator.GetStops and Navigator.RemoveStop) then
+        return true
+    end
+    local stops = Navigator:GetStops()
+
+
+    for i = #stops, 1, -1 do
+        if Destinations.Equal(stops[i], entry.dest) then
+            local only = #stops == 1
+            if Navigator:RemoveStop(i) then
+                if only then
+                    FGPS:Print(L["The route to %s was cancelled: its waypoint was removed."], describe(entry.dest))
+                else
+                    FGPS:Print(L["Removed the stop %s: its waypoint was removed."], describe(entry.dest))
+                end
+            end
+            break
         end
     end
     return true
 end
 
--- Forgets every waypoint this shim handed out. A running journey is left alone; cancelling it is
--- the player's decision, so they are only reminded how.
+
+
 function Compat.ClearWaypoints()
     local count = 0
     for uid in pairs(Compat.waypoints) do
@@ -409,15 +469,15 @@ function Compat.ClearWaypoints()
     return count
 end
 
--------------------------------------------------------------------------------
--- Slash handling
--------------------------------------------------------------------------------
+
+
+
 local function printWayHelp()
     FGPS:Print(L["Waypoints: /way <x> <y> [zone or title] | /way <zone> <x> <y> [title] | /way <pasted map pin link> | /way pin | /way add <...> | /way clear"])
     FGPS:Print(L["The same words work as /cabbie way ... . Cabbie understands the common waypoint wording so guides need no rewriting; it is not, and does not replace, any other waypoint add-on."])
 end
 
--- Compat.SlashWay(args) -> bool
+
 function Compat.SlashWay(args)
     args = Util.Trim(tostring(args or ""))
     local word = Util.Lower(args:match("^(%S*)") or "")
@@ -462,17 +522,17 @@ function Compat.SlashWay(args)
     return Compat.Accept(dest, { addStop = addStop, source = "slash" }) and true or false
 end
 
--------------------------------------------------------------------------------
--- The plain "/way" word
--------------------------------------------------------------------------------
--- True when the game itself answers this word: an emote, a chat type, or a command it has
--- already resolved. The client looks a typed word up in its commands before its emotes, so an
--- add-on's command of the same name takes the word away from the game.
--- Inferred from the client's chat code as generally known, not read on this client: three global
--- tables keyed by the word in upper case ("/GO"): hash_EmoteTokenList, hash_ChatTypeInfoList and
--- hash_SlashCmdList (the commands resolved so far, which can be the asker's own: `own`). The
--- emote table may be filled only as emotes are used, so the emotes' words themselves are read
--- too: the globals EMOTE<i>_CMD<j>, i up to MAXEMOTEINDEX. Each of these may be missing.
+
+
+
+
+
+
+
+
+
+
+
 local MAX_EMOTES, MAX_WORDS = 2000, 8
 
 local function gameWordTaken(word, own)
@@ -495,10 +555,10 @@ local function gameWordTaken(word, own)
     return false
 end
 
--- True when somebody else already owns this slash word: another add-on, or the game itself. The
--- client keeps an add-on's word in globals named SLASH_<NAME><n>, so the dispatch table's own
--- names are what has to be inspected. own is the handler the asker registers the word with: a
--- word the game has resolved to that handler is the asker's own.
+
+
+
+
 local function slashWordTaken(word, own)
     if gameWordTaken(word, own) then return true end
     if type(SlashCmdList) ~= "table" then return false end
@@ -517,10 +577,10 @@ local function slashWordTaken(word, own)
 end
 Compat.SlashWordTaken = slashWordTaken
 
--- The client keeps every command it has resolved (hash_SlashCmdList, see above) until /reload,
--- so a /way typed after the setting was switched off can still arrive here although the word was
--- given back (UnregisterWaySlash). The game's table is not written to (taint): the handler asks the
--- setting itself, and answers the typed command with one line instead of acting on it.
+
+
+
+
 local function waySlash(message)
     local c = FGPS.DB and FGPS.DB.settings and FGPS.DB.settings.compat
     if type(c) == "table" and c.wayCommand == false then
@@ -530,12 +590,12 @@ local function waySlash(message)
     Compat.SlashWay(message)
 end
 
--- Claims the plain "/way". The word is only taken when nobody else has it: an installed waypoint
--- add-on keeps its own command, and "/cabbie way" stays available either way.
---
--- The client's slash dispatch needs the word itself in a global named after the dispatch entry,
--- which is why these two names are written through _G rather than declared: they are built from
--- the entry name and there is no other way to register a top-level command.
+
+
+
+
+
+
 function Compat.RegisterWaySlash()
     if type(SlashCmdList) ~= "table" then return false end
     local s = FGPS.DB and FGPS.DB.settings
@@ -567,9 +627,9 @@ function Compat.UnregisterWaySlash()
     return true
 end
 
--------------------------------------------------------------------------------
--- Init
--------------------------------------------------------------------------------
+
+
+
 local function onSettingsChanged(_, key)
     if key ~= "compat.wayCommand" and key ~= "*" then return end
     local c = FGPS.DB and FGPS.DB.settings and FGPS.DB.settings.compat
@@ -589,7 +649,7 @@ function Compat:Init()
             L["Use the client's own map pin as the destination"])
         if FGPS.Events then FGPS.Events:Register("SETTINGS_CHANGED", onSettingsChanged, Compat) end
     end
-    -- The compatibility entry point on the addon table, so a guide can call Cabbie:AddWaypoint().
+
     FGPS.AddWaypoint = Compat.AddWaypoint
     FGPS.AddMFWaypoint = Compat.AddMFWaypoint
     FGPS.RemoveWaypoint = Compat.RemoveWaypoint

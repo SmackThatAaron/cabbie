@@ -37,7 +37,7 @@ local ADDON_NAME, FGPS = ...
 
 local L = FGPS.L
 local Util = FGPS.Util
-local type, ipairs, pairs, tostring, tonumber, format = type, ipairs, pairs, tostring, tonumber, string.format
+local type, ipairs, tostring, tonumber, format = type, ipairs, tostring, tonumber, string.format
 local abs, min = math.abs, math.min
 
 local Preview = {
@@ -493,7 +493,6 @@ local function setButtons(window, enabled)
 end
 
 local function clearSummary(window)
-    window.fgpsEta:SetText("")
     window.fgpsDistance:SetText("")
     window.fgpsTransfers:SetText("")
     for _, icon in ipairs(window.fgpsTransports.icons) do icon:Hide() end
@@ -504,23 +503,42 @@ local function clearSummary(window)
     window.fgpsListTitle:SetText("")
 end
 
+
+
+local function explainBesideWarning(text)
+    if type(text) ~= "string" or text == "" then return "" end
+    local rest = text
+    while true do
+        local sentence, tail = rest:match("^([^.]*%.)%s*(.*)$")
+        if not sentence then return rest end
+        if sentence:find("open ground (drawn dashed)", 1, true)
+            or sentence:find("nobody has walked the way between them", 1, true)
+            or sentence:find("the whole route is drawn dashed", 1, true) then
+            rest = tail or ""
+        else
+            return rest
+        end
+    end
+end
+
 function Preview:RenderRoute()
     local window = self.window
     local route = self.route
     if not window or not route then return end
     local summary = Preview.Summarize(route)
     window.fgpsTitle:SetText(summary.title)
-    window.fgpsEta:SetText("")
     window.fgpsDistance:SetText(format(L["Distance %s"], summary.distance))
     window.fgpsTransfers:SetText(format(summary.transfers == 1 and L["%d transfer"] or L["%d transfers"], summary.transfers))
     renderTransports(window, summary.transports)
     if summary.unverifiedText then
         window.fgpsWarning:SetText(summary.unverifiedText)
         window.fgpsWarning:Show()
-
-
-        window.fgpsExplain:SetText(summary.hearthNote or "")
-        if summary.hearthNote then window.fgpsExplain:Show() else window.fgpsExplain:Hide() end
+        local explain = explainBesideWarning(summary.explain)
+        if summary.hearthNote then
+            explain = explain == "" and summary.hearthNote or (explain .. " " .. summary.hearthNote)
+        end
+        window.fgpsExplain:SetText(explain)
+        if explain ~= "" then window.fgpsExplain:Show() else window.fgpsExplain:Hide() end
     else
         window.fgpsWarning:SetText("")
         window.fgpsWarning:Hide()
@@ -568,7 +586,8 @@ Preview.ErrorMessage = errorMessage
 
 function Preview.CanOfferFallback(err)
     if type(err) ~= "table" then return false end
-    if type(err.fallback) == "table" then return true end
+
+
     local s = settings()
     return err.code == "NO_PATH" and s ~= nil and s.routing ~= nil and s.routing.allowUnverified == false
 end
@@ -730,15 +749,6 @@ end
 
 function Preview:UseFallback()
     local Navigator = FGPS.Navigator
-    local err = self.error
-    if type(err) == "table" and type(err.fallback) == "table" then
-        if Navigator and Navigator.Start then
-            self.error = nil
-            Navigator:Start(err.fallback)
-            self:Hide()
-        end
-        return
-    end
     local DB = FGPS.DB
     if DB and DB:Get("routing.allowUnverified") == false then
         DB:Set("routing.allowUnverified", true)
@@ -795,7 +805,6 @@ local function buildWindow()
         return fs
     end
     window.fgpsTitle = line("title", "title")
-    window.fgpsEta = line("normal", "text")
     window.fgpsDistance = line("normal", "text")
     window.fgpsTransfers = line("small", "text")
     local transports = CreateFrame("Frame", nil, content)

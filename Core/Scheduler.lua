@@ -20,6 +20,7 @@ local Scheduler = {
     routeBudget = DEFAULT_BUDGET_MS,
     frameStart = 0,
     current = nil,
+    holdDepth = 0,
     rotation = 0,
     frame = nil,
     stats = { started = 0, completed = 0, failed = 0, cancelled = 0, sliceMs = 0, slices = 0 },
@@ -260,10 +261,23 @@ function Scheduler.Yield()
         slice = Scheduler.routeBudget or slice
         frameCap = slice
     end
-    if now - task.sliceStart >= slice or now - Scheduler.frameStart >= frameCap then
+    if Scheduler.holdDepth == 0 and (now - task.sliceStart >= slice or now - Scheduler.frameStart >= frameCap) then
         coroutine.yield()
     end
     return not task.cancelled
+end
+
+local function release(...)
+    Scheduler.holdDepth = Scheduler.holdDepth - 1
+    return ...
+end
+
+
+
+
+function Scheduler.Protect(fn, ...)
+    Scheduler.holdDepth = Scheduler.holdDepth + 1
+    return release(pcall(fn, ...))
 end
 
 function Scheduler:SetFrameBudget(ms)

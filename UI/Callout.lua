@@ -590,6 +590,7 @@ local function registerEditMode()
         label = FGPS.L["Turn arrow"],
         defaultPosition = Callout.DefaultPosition,
         settings = lookSettings(),
+        available = function() return enabled() and not inFight() end,
         onEditModeEnter = function()
             Callout.editing = true
             repaint()

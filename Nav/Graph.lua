@@ -273,8 +273,9 @@ function Graph:Reset()
         g._mesh, g._ep, g._isolated, g._smallPiece, g._offPiece = nil, nil, nil, nil, nil
         g._isoAt, g._smallAt, g._offAt = nil, nil, nil
         g._tgrid, g._meshLast, g._surf, g._poiAnchor, g._pc, g._roadPieces = nil, nil, nil, nil, nil, nil
+        g._roomNames, g._roomLocal, g._roomKeys, g._roomLocale = nil, nil, nil, nil
         g._xsorted = nil
-        g._lm, g._lmCells = nil, nil
+        g._lm, g._lmCells, g._lmRoads = nil, nil, nil
     end
     self.loaded = {}
     self._links = nil
@@ -777,9 +778,52 @@ end
 
 
 
+
+
+
+local rowStarts = setmetatable({}, { __mode = "k" })
+local function startsOf(rows, values)
+    local starts = rowStarts[rows]
+    if starts ~= nil then return starts end
+    starts = {}
+    for r = 1, ceil(values / VALUE_ROW) do
+        local v = packedAt(rows, (r - 1) * VALUE_ROW)
+        if v == nil then
+            starts = false
+            break
+        end
+        starts[r] = v
+    end
+    rowStarts[rows] = starts
+    return starts
+end
+
+
+
+
+local function rowRange(rows, count, stride, node)
+    if type(rows) ~= "table" or type(node) ~= "number" then return 0, count - 1 end
+    local starts = startsOf(rows, count * stride)
+    if not starts then return 0, count - 1 end
+    local n = #starts
+    if n == 0 or node < starts[1] then return nil end
+    local lo, hi = 1, n
+    while lo < hi do
+        local mid = floor((lo + hi + 1) / 2)
+        if starts[mid] <= node then lo = mid else hi = mid - 1 end
+    end
+    local per = VALUE_ROW / stride
+    local last = lo * per - 1
+    if last > count - 1 then last = count - 1 end
+    return (lo - 1) * per, last
+end
+
+
+
 local function packedHas(rows, count, node)
     if not count or count <= 0 then return false end
-    local lo, hi = 0, count - 1
+    local lo, hi = rowRange(rows, count, 1, node)
+    if not lo then return false end
     while lo <= hi do
         local mid = floor((lo + hi) / 2)
         local v = packedAt(rows, mid)
@@ -793,7 +837,8 @@ end
 
 local function packedPair(rows, pairs, node)
     if not pairs or pairs <= 0 then return nil end
-    local lo, hi = 0, pairs - 1
+    local lo, hi = rowRange(rows, pairs, 2, node)
+    if not lo then return nil end
     while lo <= hi do
         local mid = floor((lo + hi) / 2)
         local v = packedAt(rows, mid * 2)
@@ -1073,6 +1118,67 @@ function Graph:NodePlace(key)
     return placeOf(g, idx)
 end
 
+
+
+
+
+
+
+local function roomTables(g)
+    local C = FGPS.Coords
+    local locale = C and C.ClientLocale and C.ClientLocale() or false
+    if g._roomNames and g._roomLocale == locale then return g._roomNames, g._roomLocal, g._roomKeys end
+    local surf = g._surf
+    local ai = type(surf.ai) == "table" and surf.ai or nil
+    local localName = C and C.LocalRoomName
+    local known, loc, keys = {}, {}, {}
+    for i, n in pairs(surf.names) do
+        if type(n) == "string" then
+            known[n] = true
+            local name = localName and localName(n, ai and ai[i]) or nil
+            if name or loc[n] == nil then loc[n] = name or false end
+            if name and name ~= n then
+                if keys[name] == nil then keys[name] = n elseif keys[name] ~= n then keys[name] = false end
+            end
+        end
+    end
+    g._roomNames, g._roomLocal, g._roomKeys, g._roomLocale = known, loc, keys, locale
+    return known, loc, keys
+end
+
+
+
+
+
+function Graph:RoomKey(inst, clientName)
+    if type(clientName) ~= "string" then return nil end
+    local g = graphFor(inst)
+    if not (g and g._surf) then return nil end
+    local known, _, keys = roomTables(g)
+    if known[clientName] then return clientName end
+    return keys[clientName] or nil
+end
+
+
+
+function Graph:RoomName(inst, english)
+    if type(english) ~= "string" then return nil end
+    local g = graphFor(inst)
+    if g and g._surf then
+        local _, loc = roomTables(g)
+        local name = loc[english]
+        if name ~= nil then return name or nil end
+    end
+    local C = FGPS.Coords
+    return C and C.LocalRoomName and C.LocalRoomName(english, nil) or nil
+end
+
+
+
+function Graph:KnowsRoom(inst, name)
+    return self:RoomKey(inst, name) ~= nil
+end
+
 local CLIMB_FORMS = { "stairs", "ramp", "climb" }
 
 
@@ -1093,6 +1199,29 @@ function Graph:ClimbForm(fromKey, toKey)
         form = e and cl[e]
     end
     return CLIMB_FORMS[form] or nil
+end
+
+local HAZARD_LIQUIDS = { "fel", "slime", "lava" }
+
+
+
+
+
+function Graph:HazardCrossing(fromKey, toKey)
+    if type(fromKey) ~= "number" or type(toKey) ~= "number" or fromKey < 0 or toKey < 0 then return nil end
+    local inst, fromIdx = splitKey(fromKey)
+    local toInst, toIdx = splitKey(toKey)
+    if inst ~= toInst then return nil end
+    local g = graphFor(inst)
+    local hz = g and g.hz
+    if type(hz) ~= "table" then return nil end
+    local e = findEntry(g, fromIdx, toIdx, 23)
+    local code = e and hz[e]
+    if code == nil then
+        e = findEntry(g, toIdx, fromIdx, 23)
+        code = e and hz[e]
+    end
+    return HAZARD_LIQUIDS[code] or nil
 end
 
 
@@ -1347,7 +1476,8 @@ function Graph:Neighbors(key, fn, skip)
             end
 
 
-            local unloaded = not tg and FGPS.DataLoad ~= nil and FGPS.DataLoad:Knows(toInst)
+
+            local unloaded = not tg
             if not unloaded and not (skip and skip[link.toKey]) then fn(link.toKey, link.kind, yards, link.seconds, link.transportID) end
         end
     end
@@ -1412,7 +1542,15 @@ local function cellSpan(g, k, cell, x, x0, radiusSq)
     return first, lo - 1
 end
 
-local function scanCell(g, grid, cx, cy, x, y, radiusSq, filterFn, base, results)
+
+
+
+
+
+local nearPool, nearBusy = {}, false
+local NEAR_POOL_MAX = 4096
+
+local function scanCell(g, grid, cx, cy, x, y, radiusSq, base, found, pool)
     local x0, y0 = cx * CELL, cy * CELL
     local gx, gy = 0, 0
     if x < x0 then gx = x0 - x elseif x > x0 + CELL then gx = x - (x0 + CELL) end
@@ -1425,6 +1563,7 @@ local function scanCell(g, grid, cx, cy, x, y, radiusSq, filterFn, base, results
 
 
     local first, last = cellSpan(g, k, cell, x, x0, radiusSq)
+    local n = #found
     for i = first, last do
         local idx = cell[i]
         local dx = xs[idx] - x
@@ -1433,10 +1572,14 @@ local function scanCell(g, grid, cx, cy, x, y, radiusSq, filterFn, base, results
             local dy = ys[idx] - y
             local dsq = dx2 + dy * dy
             if dsq <= radiusSq then
-                local key = base + idx
-                if not filterFn or filterFn(key, idx, g) then
-                    results[#results + 1] = { key = key, dist = sqrt(dsq) }
+                n = n + 1
+                local entry = pool and pool[n]
+                if not entry then
+                    entry = {}
+                    if pool and n <= NEAR_POOL_MAX then pool[n] = entry end
                 end
+                entry.key, entry.dist, entry.ok = base + idx, sqrt(dsq), nil
+                found[n] = entry
             end
         end
     end
@@ -1445,6 +1588,28 @@ end
 local function byDist(a, b)
     if a.dist ~= b.dist then return a.dist < b.dist end
     return a.key < b.key
+end
+
+
+
+
+local function nearestPassing(found, maxCount, filterFn, base, g)
+    tsort(found, byDist)
+    local got, last = 0, nil
+    for i = 1, #found do
+        local e = found[i]
+        local ok = e.ok
+        if ok == nil then
+            ok = (not filterFn or filterFn(e.key, e.key - base, g)) and true or false
+            e.ok = ok
+        end
+        if ok then
+            got = got + 1
+            last = e.dist
+            if got >= maxCount then break end
+        end
+    end
+    return got, last
 end
 
 
@@ -1502,6 +1667,10 @@ function Graph:_nearestOne(g, inst, x, y, radiusSq, maxRing, filterFn)
 end
 
 
+
+
+
+
 function Graph:Nearest(inst, x, y, radiusYards, maxCount, filterFn)
     local results = {}
     local g = graphFor(inst)
@@ -1514,27 +1683,52 @@ function Graph:Nearest(inst, x, y, radiusYards, maxCount, filterFn)
     local base = inst * KEY_BASE
     local maxRing = ceil(radiusYards / CELL)
     if maxCount == 1 then return self:_nearestOne(g, inst, x, y, radiusSq, maxRing, filterFn) end
+
+
+    local pool
+    if not nearBusy then
+        nearBusy = true
+        pool = nearPool
+    end
+    local found = {}
+    local ordered = -1
     for r = 0, maxRing do
         if r == 0 then
-            scanCell(g, grid, cx0, cy0, x, y, radiusSq, filterFn, base, results)
+            scanCell(g, grid, cx0, cy0, x, y, radiusSq, base, found, pool)
         else
             for i = -r, r do
-                scanCell(g, grid, cx0 + i, cy0 - r, x, y, radiusSq, filterFn, base, results)
-                scanCell(g, grid, cx0 + i, cy0 + r, x, y, radiusSq, filterFn, base, results)
+                scanCell(g, grid, cx0 + i, cy0 - r, x, y, radiusSq, base, found, pool)
+                scanCell(g, grid, cx0 + i, cy0 + r, x, y, radiusSq, base, found, pool)
             end
             for j = -r + 1, r - 1 do
-                scanCell(g, grid, cx0 - r, cy0 + j, x, y, radiusSq, filterFn, base, results)
-                scanCell(g, grid, cx0 + r, cy0 + j, x, y, radiusSq, filterFn, base, results)
+                scanCell(g, grid, cx0 - r, cy0 + j, x, y, radiusSq, base, found, pool)
+                scanCell(g, grid, cx0 + r, cy0 + j, x, y, radiusSq, base, found, pool)
             end
         end
 
-        if #results >= maxCount then
-            tsort(results, byDist)
-            if results[maxCount].dist <= r * CELL then break end
+
+
+        if #found >= maxCount then
+            local limit, within = r * CELL, 0
+            for i = 1, #found do
+                if found[i].dist <= limit then within = within + 1 end
+            end
+            if within >= maxCount then
+                local got, last = nearestPassing(found, maxCount, filterFn, base, g)
+                ordered = #found
+                if got >= maxCount and last <= limit then break end
+            end
         end
     end
-    tsort(results, byDist)
-    for i = #results, maxCount + 1, -1 do results[i] = nil end
+    if ordered ~= #found then nearestPassing(found, maxCount, filterFn, base, g) end
+    for i = 1, #found do
+        local e = found[i]
+        if e.ok then
+            results[#results + 1] = { key = e.key, dist = e.dist }
+            if #results >= maxCount then break end
+        end
+    end
+    if pool then nearBusy = false end
     return results
 end
 
@@ -1837,8 +2031,11 @@ function Graph:AttachCandidates(inst, x, y, opts)
                             attachYards = bestPerp, segYards = total - bestAlong, segKind = kind,
                             fx = bestFx, fy = bestFy, otherKey = base + idx, footZ = footZ, footZg = footZg, shaped = true,
                             segDoubt = doubt })
-                    return
                 end
+
+
+
+                return
             end
         end
         local vx, vy = bx - ax, by - ay
@@ -1992,12 +2189,17 @@ function Graph:AttachCandidates(inst, x, y, opts)
 
 
 
-    if opts.free and not out.inSurface and not (type(opts.place) == "table" and opts.place.indoor) and #out > 0 then
-        local onLargest = false
+
+
+
+    if opts.free and not (type(opts.place) == "table" and opts.place.indoor) and #out > 0 then
+        local onLargest, stacked = false, false
         for i = 1, #out do
-            if not pieceOff(out[i].key - base) then onLargest = true break end
+            local idx = out[i].key - base
+            if not pieceOff(idx) then onLargest = true break end
+            if out.inSurface and not stacked then stacked = select(3, placeOf(g, idx)) end
         end
-        if not onLargest then
+        if not onLargest and (stacked or not out.inSurface) then
             local surf = g._surf
             local hits = self:Nearest(inst, x, y, self.FREE_ATTACH_YARDS, self.FREE_ATTACH_MAX, function(_, idx, graph)
                 if pieceIso(idx) or pieceOff(idx) or not floorMatches(graph, idx, posFloor) then return false end
@@ -2274,6 +2476,27 @@ end
 
 
 
+function Graph:RoadsLandmarks(inst)
+    local lm = self:Landmarks(inst)
+    if not lm then return nil end
+    local g = graphFor(inst)
+    if g._lmRoads ~= nil then return g._lmRoads or nil end
+    local ok = type(lm.rk) == "number" and lm.rk >= 1 and type(lm.rids) == "table" and type(lm.rp) == "table"
+        and type(lm.rlo) == "table" and type(lm.rhi) == "table"
+    if ok then
+        for l = 1, lm.rk do
+            if type(lm.rp[l]) ~= "table" or type(lm.rlo[l]) ~= "table" or type(lm.rhi[l]) ~= "table" then ok = false end
+        end
+    end
+    local view = ok and { k = lm.rk, ids = lm.rids, p = lm.rp, lo = lm.rlo, hi = lm.rhi, row = lm.row, digits = lm.digits,
+                          cell = lm.cell, off = lm.off, speed = lm.speed, nc = lm.nc, c = lm.c, hubs = lm.hubs, roads = true } or false
+    g._lmRoads = view
+    return view or nil
+end
+
+
+
+
 function Graph:LandmarkCells(inst, yieldFn)
     local g = graphFor(inst)
     local lm = self:Landmarks(inst)
@@ -2380,7 +2603,7 @@ function Graph:Init()
         FGPS.Events:Register("DATA_PART_LOADED", function(_, inst)
             Graph._taxiIndex, Graph._transportIndex = nil, nil
             local g = Graph.loaded[inst]
-            if g then g._lm, g._lmCells = nil, nil end
+            if g then g._lm, g._lmCells, g._lmRoads = nil, nil, nil end
         end, self)
     end
 end

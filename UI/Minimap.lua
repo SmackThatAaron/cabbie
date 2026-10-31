@@ -227,6 +227,40 @@ local function pointAhead(points, lo, hi, x, y, skip)
 end
 
 
+
+
+
+
+
+
+
+
+
+
+function Minimap.PointAhead(leg, pointIndex, alongYards, pos)
+    local points = leg.points
+    local n = #points
+    local from = pointIndex or 1
+    local walk = (leg.kind or "walk") == "walk"
+    if not walk then
+        local halfFrom, halfTo = crossingHalf(leg, n, pos.inst)
+        if halfFrom then
+            from = pointAhead(points, halfFrom, halfTo, pos.x, pos.y)
+        else
+            from = pointAhead(points, 1, n, pos.x, pos.y, leg.split)
+        end
+    end
+    if from < 1 then from = 1 end
+    if walk and type(alongYards) == "number" and FGPS.Route and FGPS.Route.Cumulative and n >= 2 then
+        local cum = FGPS.Route.Cumulative(leg)
+        local i = 1
+        while i < n and (cum[i + 1] or 0) <= alongYards do i = i + 1 end
+        if from > i + 1 then from = i + 1 end
+    end
+    return from
+end
+
+
 local TELEPORT_KINDS = { hearth = true, spell = true, portal = true }
 
 
@@ -303,23 +337,9 @@ function Minimap.SampleDots(route, progress, pos, radius, maxDots, out)
             if leg.toInst ~= nil and leg.toInst ~= pos.inst then return dots, count end
         elseif points and #points >= 1 and (leg.inst == nil or leg.inst == pos.inst or halfFrom ~= nil) and not teleportLeg then
             local legUnverified = leg.unverified == true
-            local from = (legIndex == legStart) and pointStart or 1
-            local to = #points
-            if halfFrom then
-                to = halfTo
-                from = first and pointAhead(points, halfFrom, halfTo, px, py) or halfFrom
-            elseif kind ~= "walk" and first then
-                from = pointAhead(points, 1, to, px, py, leg.split)
-            end
-            if from < 1 then from = 1 end
-
-
-            local alongNow = first and progress and progress.alongYards
-            if type(alongNow) == "number" and FGPS.Route and FGPS.Route.Cumulative and #points >= 2 then
-                local cum = FGPS.Route.Cumulative(leg)
-                local i = 1
-                while i < #points and (cum[i + 1] or 0) <= alongNow do i = i + 1 end
-                if from > i + 1 then from = i + 1 end
+            local from, to = halfFrom or 1, halfTo or #points
+            if first then
+                from = Minimap.PointAhead(leg, legIndex == legStart and pointStart or nil, progress and progress.alongYards, pos)
             end
 
             local cx, cy
@@ -540,12 +560,29 @@ local function onRoute(event, route)
         Minimap:Clear()
         return
     end
-    Minimap.route = route or Minimap.route
-    if event ~= "ROUTE_PREVIEW" then
+    if event ~= "ROUTE_PREVIEW" or route ~= Minimap.route then
+
 
         Minimap.progress = nil
     end
+    Minimap.route = route or Minimap.route
     Minimap:Refresh()
+end
+
+
+
+
+
+
+
+local positionOnly = {}
+local function progressFor(route, progress)
+    local Navigator = FGPS.Navigator
+    if type(progress) ~= "table" or not (Navigator and Navigator.GetRoute) then return progress end
+    local ok, held = pcall(Navigator.GetRoute, Navigator)
+    if not ok or held == nil or held == route then return progress end
+    positionOnly.pos = progress.pos
+    return positionOnly
 end
 
 
@@ -565,7 +602,6 @@ local function needsRefresh(progress)
 end
 
 local function onProgress(_, progress)
-    Minimap.progress = progress
     if not Minimap.route then
         local Navigator = FGPS.Navigator
         if Navigator and Navigator.GetRoute then
@@ -573,6 +609,8 @@ local function onProgress(_, progress)
             if ok then Minimap.route = route end
         end
     end
+    progress = progressFor(Minimap.route, progress)
+    Minimap.progress = progress
     if not Minimap:IsAllowed() then
 
         if Minimap.active then Minimap:Clear() end
@@ -633,6 +671,14 @@ function Minimap:Init()
         Events:Register("NAV_ARRIVED", onArrived, self)
         Events:Register("NAV_STATE", onNavState, self)
         Events:Register("COMBAT_STATE", onCombat, self)
+
+
+
+        Events:Register("WORLD_ENTERED", function()
+            if not InCombatLockdown then return end
+            local fighting = InCombatLockdown() and true or false
+            if fighting ~= Minimap.inCombat then onCombat(nil, fighting) end
+        end, self)
         Events:Register("SETTINGS_CHANGED", onSettingsChanged, self)
         Events:Register("UI_PRESET_APPLIED", function() applyColors() end, self)
     end

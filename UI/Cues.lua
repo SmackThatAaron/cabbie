@@ -243,8 +243,9 @@ local function onInstruction(_, step, isNew)
     if isNew == false then return end
     if Cues.CueFor(step) == "transport" then
         local index = stepIndex(step)
-        -- Marked only after the sound plays. A cue that was off, or a fight, must not use the
-        -- announcement up: the next progress or instruction can still play it.
+        -- Marked only after the sound plays. A cue dropped by the gap after a turn, by a fight,
+        -- or because cues were off is not used up. The next progress tries it again. A repeat
+        -- of this same instruction is not a new one, so it does not.
         if not Cues.announced[index] and Cues:Play("transport") then
             Cues.announced[index] = true
         end
@@ -252,17 +253,24 @@ local function onInstruction(_, step, isNew)
 end
 
 -- A turn is announced by distance, so the sound arrives while there is still time to act on it.
+-- The navigator measures a paused route too, for its resume; that route is not followed, and its
+-- turn is played when it goes on.
 local function onProgress(_, progress)
-    if type(progress) ~= "table" then return end
+    if type(progress) ~= "table" or progress.state == "paused" then return end
     local step = progress.currentStep or Cues.currentStep
     if type(step) ~= "table" then return end
     Cues.currentStep = step
-    if Cues.CueFor(step) ~= "turn" then return end
+    local cue = Cues.CueFor(step)
+    -- A transport cue that did not play when the step became current (the gap after a turn,
+    -- a fight, cues switched on late) is tried again on each progress tick until it plays.
+    if cue ~= "turn" and cue ~= "transport" then return end
     local index = stepIndex(step)
     if Cues.announced[index] then return end
-    local dist = distanceToStep(step, progress)
-    if not dist or dist > Cues.TURN_YARDS then return end
-    if Cues:Play("turn") then
+    if cue == "turn" then
+        local dist = distanceToStep(step, progress)
+        if not dist or dist > Cues.TURN_YARDS then return end
+    end
+    if Cues:Play(cue) then
         Cues.announced[index] = true
     end
 end
@@ -316,7 +324,7 @@ local function slashCues(args)
         FGPS:Print(L["Cue volume set to %d."], Cues:GetVolume())
     elseif isCueName(word) then
         if rest ~= "on" and rest ~= "off" then
-            FGPS:Print(L["Usage: /cabbie cues %s on|off"], word)
+            FGPS:Print(FGPS.Util.EscapeBars(L["Usage: /cabbie cues %s on|off"]), word)
             return
         end
         DB:Set("cues." .. word, rest == "on")
@@ -328,7 +336,7 @@ local function slashCues(args)
         end
         if not any then FGPS:Print(L["This client offers none of the sounds the cues use."]) end
     else
-        FGPS:Print(L["Usage: /cabbie cues on|off|volume <n>|turn on|off|transport on|off|arrival on|off|test|status"])
+        FGPS:Print(FGPS.Util.EscapeBars(L["Usage: /cabbie cues on|off|volume <n>|turn on|off|transport on|off|arrival on|off|test|status"]))
     end
 end
 
@@ -348,6 +356,11 @@ function Cues:Init()
         Events:Register("NAV_CANCELLED", resetJourneyState, self)
         Events:Register("NAV_ARRIVED", onArrived, self)
         Events:Register("COMBAT_STATE", onCombat, self)
+        -- A fight can end behind a loading screen with no COMBAT_STATE, and the cues would stay
+        -- silent until the next fight ends: the fight is read again, as the navigator reads it.
+        Events:Register("WORLD_ENTERED", function()
+            if InCombatLockdown then onCombat(nil, InCombatLockdown()) end
+        end, self)
         FGPS.Slash.Register("cues", slashCues,
             L["Audio cues instead of speech: on|off|volume <n>|turn|transport|arrival on|off|test"])
     end

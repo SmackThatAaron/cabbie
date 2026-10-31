@@ -108,7 +108,6 @@ end
 local zoneLists = {}
 local zoneById = {}
 local zoneListsBuilt = false
-local lastZone = {}
 
 local function mapArea(m)
     return (m.maxX - m.minX) * (m.maxY - m.minY)
@@ -121,7 +120,6 @@ end
 local function buildZoneLists()
     zoneLists = {}
     zoneById = {}
-    lastZone = {}
     local maps = FGPS.Data and FGPS.Data.maps
     if type(maps) == "table" then
         for id, m in pairs(maps) do
@@ -169,31 +167,15 @@ function Coords.ZoneAt(inst, x, y)
 
 
         if named and contains(named, x, y) then
-            lastZone[inst] = named
             return named.id, named.name
         end
     end
-    local last = lastZone[inst]
     local list = zoneLists[inst]
     if not list then return nil end
-    if last and contains(last, x, y) then
 
-
-        for i = 1, #list do
-            local m = list[i]
-            if m == last then return last.id, last.name end
-            if contains(m, x, y) then
-                lastZone[inst] = m
-                return m.id, m.name
-            end
-        end
-    end
     for i = 1, #list do
         local m = list[i]
-        if contains(m, x, y) then
-            lastZone[inst] = m
-            return m.id, m.name
-        end
+        if contains(m, x, y) then return m.id, m.name end
     end
     return nil
 end
@@ -216,7 +198,6 @@ function Coords.ResetZoneIndex()
     zoneListsBuilt = false
     zoneLists = {}
     zoneById = {}
-    lastZone = {}
 end
 
 
@@ -431,6 +412,17 @@ local function readText(fn)
     return type(text) == "string" and text or nil
 end
 
+local function trimmed(fn)
+    local text = readText(fn)
+    if text then text = text:match("^%s*(.-)%s*$") end
+    return text ~= "" and text or nil
+end
+
+
+
+
+function Coords.SubZoneText() return trimmed(GetSubZoneText) end
+
 function Coords.PlayerPlace()
     local indoor
     if IsIndoors then
@@ -438,10 +430,49 @@ function Coords.PlayerPlace()
         local ok, v = pcall(IsIndoors)
         if ok and not Coords.IsSecret(v) then indoor = v and true or false end
     end
-    local name = readText(GetSubZoneText)
-    if name then name = name:match("^%s*(.-)%s*$") end
-    if name == "" or (name and name == readText(GetZoneText)) then name = nil end
+    local name = Coords.SubZoneText()
+    if name and name == readText(GetZoneText) then name = nil end
     return { indoor = indoor, name = name }
+end
+
+
+
+
+function Coords.AreaName(areaID)
+    local getInfo = C_Map and C_Map.GetAreaInfo
+    if not getInfo or areaID == nil then return nil end
+    local ok, name = pcall(getInfo, areaID)
+    name = ok and plain(name) or nil
+    if type(name) ~= "string" then return nil end
+
+    name = name:match("^%s*(.-)%s*$")
+    return name ~= "" and name or nil
+end
+
+
+function Coords.ClientLocale()
+    if not GetLocale then return nil end
+    local ok, loc = pcall(GetLocale)
+    loc = ok and plain(loc) or nil
+    return type(loc) == "string" and loc ~= "" and loc or nil
+end
+
+local ENGLISH = { enUS = true, enGB = true }
+
+
+function Coords.EnglishClient()
+    local loc = Coords.ClientLocale()
+    return loc ~= nil and ENGLISH[loc] == true
+end
+
+
+
+
+function Coords.LocalRoomName(english, areaID)
+    local name = Coords.AreaName(areaID)
+    if name then return name end
+    if type(english) == "string" and Coords.EnglishClient() then return english end
+    return nil
 end
 
 

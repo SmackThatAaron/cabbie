@@ -23,8 +23,7 @@
 local ADDON_NAME, FGPS = ...
 
 local L = FGPS.L
-local Util = FGPS.Util
-local floor, type, ipairs, pairs, tostring, format = math.floor, type, ipairs, pairs, tostring, string.format
+local type, ipairs, pairs, tostring, format = type, ipairs, pairs, tostring, string.format
 
 local QuestMap = {
     provider = nil,
@@ -124,7 +123,7 @@ end
 
 
 
-function QuestMap.MarkersFor(questID, accepted)
+function QuestMap.MarkersFor(questID, accepted, opts)
     local QuestData = questData()
     if not QuestData then return {} end
     local _, quests = settings()
@@ -170,7 +169,7 @@ function QuestMap.MarkersFor(questID, accepted)
                           label = format(turnIn.later and L["%s (turn-in, from later records)"] or L["%s (turn-in)"], title), mark = mark,
                           accepted = accepted }
     end
-    if not (quests and quests.objectiveAreas == false) then
+    if not (opts and opts.areas == false) and not (quests and quests.objectiveAreas == false) then
         local drawn = 0
         for _, area in ipairs(areas) do
             if drawn >= MAX_AREAS_PER_QUEST then break end
@@ -189,7 +188,7 @@ function QuestMap.MarkersFor(questID, accepted)
 end
 
 
-function QuestMap.AllMarkers()
+function QuestMap.AllMarkers(opts)
 
 
 
@@ -199,12 +198,14 @@ function QuestMap.AllMarkers()
     if Quests and Quests.byID then
         for id in pairs(Quests.byID) do accepted[id] = true end
     end
-    local out = {}
+    local out, drawn = {}, {}
     for _, questID in ipairs(drawable) do
-        for _, marker in ipairs(QuestMap.MarkersFor(questID, accepted[questID] == true)) do
+        drawn[questID] = true
+        for _, marker in ipairs(QuestMap.MarkersFor(questID, accepted[questID] == true, opts)) do
             out[#out + 1] = marker
         end
     end
+    QuestMap.drawn = drawn
     return out
 end
 
@@ -246,9 +247,6 @@ local function setupPin(pin)
         GameTooltip:AddLine(self.fgpsLabel or L["Quest"])
         if self.fgpsStage and self.fgpsStage ~= "" then
             GameTooltip:AddLine(self.fgpsStage, 1, 1, 1, true)
-        end
-        if self.fgpsProgress and self.fgpsProgress ~= "" then
-            GameTooltip:AddLine(self.fgpsProgress, 0.9, 0.9, 0.9, true)
         end
         if self.fgpsUnverified then
             GameTooltip:AddLine(L["Unconfirmed place"], 1, 0.85, 0.4, true)
@@ -296,14 +294,6 @@ local function stylePin(pin, marker)
         pin.fgpsStage = L["Objective"]
     else
         pin.fgpsStage = nil
-    end
-    local obj = marker.objective
-    if type(obj) == "string" and obj ~= "" then
-        pin.fgpsProgress = obj
-    elseif type(obj) == "table" and obj.text then
-        pin.fgpsProgress = tostring(obj.text)
-    else
-        pin.fgpsProgress = nil
     end
     local unverified = (marker.mark or 0) <= 1
     pin.fgpsUnverified = unverified
@@ -473,7 +463,7 @@ function QuestMap:RefreshMinimap()
         and not (FGPS.Perf and FGPS.Perf.guidanceEnabled == false)
 
 
-    local markers = wanted and QuestMap.AllMarkers() or nil
+    local markers = wanted and QuestMap.AllMarkers({ areas = false }) or nil
     self:ClearMinimap()
     if not markers then return end
     if not self.minimapPool then
@@ -517,6 +507,12 @@ function QuestMap.SetFocus(questID)
     QuestMap.focus = questID
     QuestMap:Redraw()
     QuestMap:RefreshMinimap()
+
+
+
+
+    local Marks = FGPS.UI.QuestMarks
+    if Marks and Marks.live then Marks:RefreshAll() end
 end
 
 
@@ -592,6 +588,31 @@ local function refreshBoth()
     QuestMap:RefreshMinimap()
 end
 
+
+
+local function showsQuests()
+    local _, quests = settings()
+    if quests and quests.enabled == false then return false end
+    if FGPS.Perf and FGPS.Perf.guidanceEnabled == false then return false end
+    local mapPins = not (quests and quests.mapPins == false)
+    local minimapPins = QuestMap.pins ~= nil and not (quests and quests.minimapPins == false)
+    return mapPins or minimapPins
+end
+
+
+
+
+local function listen()
+    local Events = FGPS.Events
+    Events:Unregister("QUESTS_UPDATED", refreshBoth)
+    if showsQuests() then Events:Register("QUESTS_UPDATED", refreshBoth, QuestMap) end
+end
+
+local function settingsApplied()
+    listen()
+    refreshBoth()
+end
+
 function QuestMap:Init()
     if LibStub and not self.pins then
         self.pins = LibStub("HereBeDragons-Pins-2.0", true)
@@ -605,22 +626,32 @@ function QuestMap:Init()
 
 
 
-    Events:Register("ADDON_READY", function() QuestMap:Attach() end, self)
+    Events:Register("ADDON_READY", function()
+        QuestMap:Attach()
+
+
+        if C_Timer and C_Timer.After then
+            C_Timer.After(1, function()
+                local Quests = FGPS.Quests
+                if Quests and Quests.Invalidate then pcall(Quests.Invalidate) end
+            end)
+        end
+    end, self)
     if not WorldMapFrame then
         Events:RegisterWoW("ADDON_LOADED", function(_, name)
             if name == "Blizzard_WorldMap" and FGPS.ready then QuestMap:Attach() end
         end, self)
     end
-    Events:Register("QUESTS_UPDATED", refreshBoth, self)
-    Events:Register("QUEST_TITLE_RESOLVED", refreshBoth, self)
+    listen()
+    Events:Register("QUEST_TITLE_RESOLVED", function(_, questID)
+        if questID and QuestMap.focus ~= questID and not (QuestMap.drawn and QuestMap.drawn[questID]) then return end
+        refreshBoth()
+    end, self)
     Events:Register("SETTINGS_CHANGED", function(_, key)
-        if key == "*" or key == "preset" or key == "accessibility.colorScheme"
+        if key == "*" or key == "preset" or key == "accessibility.colorScheme" or key == "perf.guidanceEnabled"
             or (type(key) == "string" and key:sub(1, 7) == "quests.") then
-            refreshBoth()
+            settingsApplied()
         end
     end, self)
-    Events:Register("UI_PRESET_APPLIED", refreshBoth, self)
-
-    local Quests = FGPS.Quests
-    if Quests and Quests.Invalidate then pcall(Quests.Invalidate) end
+    Events:Register("UI_PRESET_APPLIED", settingsApplied, self)
 end

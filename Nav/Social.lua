@@ -21,6 +21,7 @@
 
 
 
+
 local ADDON_NAME, FGPS = ...
 
 local L = FGPS.L
@@ -34,6 +35,8 @@ local Social = {
     FOLLOW_LOST_TICKS = 5,
     OFFER_TTL = 180,
     GRAVEYARD_TYPE = 16,
+    AT_GRAVEYARD_YARDS = 50,
+    CORPSE_MAP_STEPS = 6,
     NO_CORPSE_HOLD = 4,
     FOLLOW_ENDED_HOLD = 6,
     PREFIX = "CBB",
@@ -122,6 +125,30 @@ function Social.IsGhost()
 end
 
 
+local function corpseOnMap(uiMapID)
+    local ok, vector = pcall(C_DeathInfo.GetCorpseMapPosition, uiMapID)
+    if not ok or type(vector) ~= "table" then return nil end
+    local mx, my = plain(vector.x), plain(vector.y)
+    if type(mx) ~= "number" or type(my) ~= "number" then return nil end
+    if mx == 0 and my == 0 then return nil end
+    return mx, my
+end
+
+
+
+local function parentMap(uiMapID)
+    if not (C_Map and C_Map.GetMapInfo) then return nil end
+    local ok, info = pcall(C_Map.GetMapInfo, uiMapID)
+    if not ok or type(info) ~= "table" or type(info.mapType) ~= "number" or info.mapType <= 2 then return nil end
+    local parent = info.parentMapID
+    if type(parent) ~= "number" or parent == 0 then return nil end
+    return parent
+end
+
+
+
+
+
 
 function Social.CorpsePosition()
     if not (C_DeathInfo and C_DeathInfo.GetCorpseMapPosition) then return nil end
@@ -132,14 +159,22 @@ function Social.CorpsePosition()
         if ok then uiMapID = plain(id) end
     end
     if type(uiMapID) ~= "number" then return nil end
-    local ok, vector = pcall(C_DeathInfo.GetCorpseMapPosition, uiMapID)
-    if not ok or type(vector) ~= "table" then return nil end
-    local mx, my = plain(vector.x), plain(vector.y)
-    if type(mx) ~= "number" or type(my) ~= "number" then return nil end
-    if mx == 0 and my == 0 then return nil end
-    local inst, x, y = mapToWorld(uiMapID, mx, my)
-    if not inst then return nil end
-    return { inst = inst, x = x, y = y, map = uiMapID, mx = mx, my = my }
+    local map = uiMapID
+    for _ = 1, Social.CORPSE_MAP_STEPS do
+        local mx, my = corpseOnMap(map)
+        local inst, x, y
+        if mx then inst, x, y = mapToWorld(map, mx, my) end
+        if inst then
+            if map ~= uiMapID then
+                local zone, zx, zy = worldToMap(inst, x, y)
+                if zone then map, mx, my = zone, zx, zy end
+            end
+            return { inst = inst, x = x, y = y, map = map, mx = mx, my = my }
+        end
+        map = parentMap(map)
+        if not map then break end
+    end
+    return nil
 end
 
 
@@ -162,6 +197,8 @@ function Social.NearestGraveyard(pos)
 end
 
 
+
+
 function Social.CorpseDestination()
     if not Social.IsDead() then return nil, "not_dead" end
     local corpse = Social.CorpsePosition()
@@ -170,13 +207,43 @@ function Social.CorpseDestination()
         return { kind = "custom", name = L["Your corpse"], type = "corpse", inst = corpse.inst, x = corpse.x, y = corpse.y,
                  map = uiMapID, mx = mx, my = my, zoneName = zoneName(uiMapID) }, "corpse"
     end
-    local grave = Social.NearestGraveyard()
+    local grave, graveYards = Social.NearestGraveyard()
     if not grave then return nil, "no_position" end
+    if graveYards and graveYards <= Social.AT_GRAVEYARD_YARDS then return nil, "at_graveyard" end
     local uiMapID, mx, my = worldToMap(grave.inst, grave.x, grave.y)
     return { kind = "custom", name = format(L["%s (graveyard)"], grave.name or L["Graveyard"]), type = "graveyard",
              inst = grave.inst, x = grave.x, y = grave.y, map = uiMapID or grave.map, mx = mx, my = my,
              zoneName = zoneName(uiMapID or grave.map) }, "graveyard"
 end
+
+
+
+
+local function isCorpseStop(stop, corpse)
+    if type(stop) ~= "table" then return false end
+    if stop.kind == "custom" and (stop.type == "corpse" or stop.type == "graveyard") then return true end
+    if not corpse then return false end
+    if stop == corpse then return true end
+    local D = FGPS.Destinations
+    return (D and D.Equal and D.Equal(stop, corpse)) and true or false
+end
+
+
+local function journeyToKeep(Nav)
+    if not (Nav.IsJourney and Nav:IsJourney() and Nav.GetStops and Nav.RemoveStop) then return false end
+    for _, stop in ipairs(Nav:GetStops()) do
+        if not isCorpseStop(stop, Social.corpse) then return true end
+    end
+    return false
+end
+
+
+
+
+
+
+
+
 
 
 
@@ -194,14 +261,27 @@ function Social.GoToCorpse(quiet)
             end
         elseif kind == "not_dead" then
             FGPS:Print(L["You are not dead; there is no corpse to run to."])
+        elseif kind == "at_graveyard" then
+            FGPS:Print(L["Your corpse cannot be found yet"])
         else
             FGPS:Print(L["This client will not say where your corpse is and no graveyard is known nearby."])
         end
         return false, kind
     end
     if not (Nav and Nav.SetDestination) then return false, "no_navigator" end
-    Social.StopFollowing("corpse")
-    Nav:SetDestination(dest, { start = true, quiet = quiet and true or nil })
+    local followed = Social.StopFollowing("corpse")
+    if not followed and journeyToKeep(Nav) then
+
+
+
+        Nav:SetDestination(dest, { addStop = true, first = true, start = true, quiet = quiet and true or nil })
+        local stops = Nav:GetStops()
+        for i = #stops, 2, -1 do
+            if isCorpseStop(stops[i], Social.corpse) then Nav:RemoveStop(i) end
+        end
+    else
+        Nav:SetDestination(dest, { start = true, quiet = quiet and true or nil })
+    end
     Social.corpse = dest
     if kind == "graveyard" and not quiet then
         FGPS:Print(L["The client will not say where your corpse is, so this is the nearest graveyard instead."])
@@ -244,11 +324,6 @@ end
 
 
 
-local function isCorpseStop(stop)
-    return type(stop) == "table" and stop.kind == "custom" and (stop.type == "corpse" or stop.type == "graveyard")
-end
-
-
 
 
 
@@ -259,16 +334,17 @@ function Social.OnAlive()
     local Nav = navigator()
     if not Nav or not Nav.HasAnythingSet or not Nav:HasAnythingSet() then return false end
     local stops = Nav.GetStops and Nav:GetStops() or {}
-    local D = FGPS.Destinations
-    local matches = false
-    for _, stop in ipairs(stops) do
-        if isCorpseStop(stop) or (dest and (stop == dest or (D and D.Equal and D.Equal(stop, dest)))) then
-            matches = true
-            break
-        end
+    local body = {}
+    for i, stop in ipairs(stops) do
+        if isCorpseStop(stop, dest) then body[#body + 1] = i end
     end
-    if not matches then return false end
-    Nav:Cancel("resurrected")
+    if #body == 0 then return false end
+    if #body == #stops or not Nav.RemoveStop then
+        Nav:Cancel("resurrected")
+        return true
+    end
+
+    for k = #body, 1, -1 do Nav:RemoveStop(body[k]) end
     return true
 end
 
@@ -473,6 +549,22 @@ end
 
 
 
+
+
+
+local function dropUnfollowedMemberStops()
+    local Nav = navigator()
+    if Social.following or not (Nav and Nav.GetStops and Nav.RemoveStop and Nav.IsJourney) then return end
+    if Nav:IsJourney() or Nav.inflight ~= nil then return end
+    local stops = Nav:GetStops()
+    for i = #stops, 1, -1 do
+        local stop = stops[i]
+        if type(stop) == "table" and stop.kind == "custom" and stop.type == "player" then Nav:RemoveStop(i) end
+    end
+end
+
+
+
 function Social.FollowTick()
     local following = Social.following
     if not following then updateTicker() return nil end
@@ -501,6 +593,7 @@ function Social.FollowTick()
     local moved = (pos.inst == following.inst) and dist(pos.x, pos.y, following.x, following.y) or math.huge
     if moved < Social.FOLLOW_MOVE_YARDS then return false end
     following.inst, following.x, following.y = pos.inst, pos.x, pos.y
+
 
     Nav:SetDestination(followDestination(following), { start = true, quiet = true, askedBy = "navigator" })
     return true
@@ -710,6 +803,7 @@ function Social:Init()
 
 
     Events:Register("WORLD_ENTERED", function()
+        dropUnfollowedMemberStops()
         if Social.IsGhost() then
             Social.OfferCorpseRun()
         elseif (Social.corpseOffered or Social.corpse) and not Social.IsDead() then

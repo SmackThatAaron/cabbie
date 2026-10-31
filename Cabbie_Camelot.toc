@@ -2,7 +2,7 @@
 ## Title: Cabbie
 ## Notes: Turn-by-turn navigation for World of Warcraft: Forever. Search a destination, preview the fastest route including flights and boats, then follow the route steps beside your quest list, a turn call-out, map lines and optional voice guidance.
 ## Author: Cabbie contributors
-## Version: 1.2.0
+## Version: 1.3.0
 ## SavedVariables: CabbieDB, CabbieQuests
 ## SavedVariablesPerCharacter: CabbieCharDB
 ## X-License: GPL-3.0-or-later
@@ -74,6 +74,7 @@ Nav\QuestBatch.lua
 Nav\Services.lua
 Nav\Social.lua
 Nav\Calibrate.lua
+Nav\Inside.lua
 Nav\Navigator.lua
 
 UI\Look.lua
@@ -106,6 +107,5 @@ UI\Setup.lua
 UI\Cues.lua
 UI\Bindings.lua
 UI\Compat.lua
-UI\MapShot.lua
 
 Core\Boot.lua

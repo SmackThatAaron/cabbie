@@ -1,20 +1,20 @@
--- Cabbie/Core/Perf.lua
--- Lightweight instrumentation: labelled timings (debugprofilestop), memory samples
--- (UpdateAddOnMemoryUsage/GetAddOnMemoryUsage plus the Lua heap), C_AddOnProfiler metrics when the
--- client provides them, per-journey memory deltas, and the "guidance enabled" switch that lets
--- testers compare frame times with all guidance work turned off.
---
--- Two different memory questions live here and must not be confused:
---   * ALLOCATED per journey (Perf.trips, filled by StartTripCounter/EndTrip). Cheap: no collection,
---     so the figure is mostly garbage the collector has not reached yet. It answers "how much does
---     a journey churn", which is a useful pressure signal, and nothing else.
---   * RETAINED across journeys (Perf:MarkRetained/RetainedSince, "/cabbie perf trip"). This is the
---     figure docs/PERFORMANCE_BUDGETS.md budgets ("<= 50 KB retained (after collectgarbage) across
---     20 consecutive journeys"). It needs a full collection, and a full collection is a visible
---     hitch, so it happens only when a tester asks: one collection for the baseline, one to read
---     the growth since. Two collections cover a whole 20-journey run.
--- The Navigator calls EndTrip with no options on every arrival and every cancel, so every recorded
--- trip delta is churn; the report says so in as many words rather than labelling it "retained".
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 local ADDON_NAME, FGPS = ...
 
 local L = FGPS.L
@@ -27,28 +27,28 @@ local PROFILER_METRICS = { "SessionAverageTime", "RecentAverageTime", "LastTime"
 
 
 local Perf = {
-    enabled = true,          -- settings.perf.instrument
-    guidanceEnabled = true,  -- runtime switch consulted by guidance modules (Route block, call-out, lines, voice, pin)
-    labels = {},             -- label -> { count, totalMs, maxMs, lastMs }
-    active = {},             -- label -> start time of an open Begin()
-    samples = {},            -- ring of memory samples, newest last
-    trips = {},              -- ALLOCATED KB per completed journey, newest last (see the file header)
-    tripCount = 0,           -- journeys ever measured; unlike #trips this is not capped or wiped
+    enabled = true,
+    guidanceEnabled = true,
+    labels = {},
+    active = {},
+    samples = {},
+    trips = {},
+    tripCount = 0,
     tripStartKB = nil,
-    retained = nil,          -- { baseKB, baseTrips, time } once a tester took a baseline
+    retained = nil,
     lastSample = nil,
 }
 FGPS.Perf = Perf
 
--------------------------------------------------------------------------------
--- Timing
--------------------------------------------------------------------------------
+
+
+
 function Perf:Begin(label)
     if not self.enabled then return end
     self.active[label] = debugprofilestop()
 end
 
--- Returns the elapsed milliseconds of the matching Begin (nil when disabled or unmatched).
+
 function Perf:End(label)
     local start = self.active[label]
     if not start then return nil end
@@ -56,7 +56,7 @@ function Perf:End(label)
     return self:Record(label, debugprofilestop() - start)
 end
 
--- Adds one timing measured by the caller (a data folder's load, timed around LoadAddOn itself).
+
 function Perf:Record(label, elapsed)
     if not self.enabled then return nil end
     local entry = self.labels[label]
@@ -71,20 +71,11 @@ function Perf:Record(label, elapsed)
     return elapsed
 end
 
--- Times a function call under a label and returns its results.
-function Perf:Time(label, fn, ...)
-    self:Begin(label)
-    local results = { pcall(fn, ...) }
-    self:End(label)
-    if not results[1] then error(results[2], 0) end
-    return unpack(results, 2)
-end
 
--------------------------------------------------------------------------------
--- Memory and profiler samples
--------------------------------------------------------------------------------
--- The client charges memory to the add-on whose code allocated it, so the continents' graphs
--- count against their load-on-demand folders (Core/DataLoad.lua); they are added in.
+
+
+
+
 local function addonMemoryKB(collect)
     if collect then collectgarbage("collect") end
     if UpdateAddOnMemoryUsage then UpdateAddOnMemoryUsage() end
@@ -134,22 +125,32 @@ function Perf:Sample()
     return sample
 end
 
--------------------------------------------------------------------------------
--- Per-journey allocation deltas
--------------------------------------------------------------------------------
+
+
+
 function Perf:StartTripCounter(opts)
+
+
+    self.tripOpen = true
+    local armed = self.retained or (FGPS.DB and FGPS.DB.settings and FGPS.DB.settings.debug == true)
+    if not armed then
+        self.tripStartKB = nil
+        return nil
+    end
     self.tripStartKB = addonMemoryKB(opts and opts.collect)
     return self.tripStartKB
 end
 
--- Records the memory ALLOCATED since StartTripCounter and counts the journey. Without
--- opts.collect (how the Navigator calls it, on every arrival and every cancel) the figure
--- includes garbage the collector has not reached, so it is a churn signal and never an answer to
--- the retained-memory budget: that is what MarkRetained/RetainedSince below are for.
--- opts.collect forces a full collection first, which is accurate but costs a frame hitch.
+
+
+
+
+
 function Perf:EndTrip(opts)
-    if not self.tripStartKB then return nil end
+    if not self.tripOpen then return nil end
+    self.tripOpen = nil
     self.tripCount = self.tripCount + 1
+    if not self.tripStartKB then return nil end
     local delta = addonMemoryKB(opts and opts.collect) - self.tripStartKB
     self.tripStartKB = nil
     self.trips[#self.trips + 1] = delta
@@ -157,18 +158,18 @@ function Perf:EndTrip(opts)
     return delta
 end
 
--------------------------------------------------------------------------------
--- Retained memory across journeys (the docs/PERFORMANCE_BUDGETS.md leak budget)
--------------------------------------------------------------------------------
--- Collects and remembers the addon's memory as the zero point of a measurement.
+
+
+
+
 function Perf:MarkRetained()
     local kb = addonMemoryKB(true)
     self.retained = { baseKB = kb, baseTrips = self.tripCount, time = GetTime and GetTime() or 0 }
     return kb
 end
 
--- Collects and returns how much memory is retained since the baseline, how many journeys have
--- finished since it was taken, and the absolute figure. Returns nil when no baseline exists.
+
+
 function Perf:RetainedSince()
     local base = self.retained
     if not base then return nil end
@@ -176,9 +177,9 @@ function Perf:RetainedSince()
     return kb - base.baseKB, self.tripCount - base.baseTrips, kb
 end
 
--------------------------------------------------------------------------------
--- Guidance switch and settings binding
--------------------------------------------------------------------------------
+
+
+
 function Perf:SetGuidanceEnabled(enabled)
     enabled = enabled and true or false
     if self.guidanceEnabled == enabled then return enabled end
@@ -209,9 +210,9 @@ function Perf:Reset()
     if FGPS.Scheduler and FGPS.Scheduler.ResetStats then FGPS.Scheduler:ResetStats() end
 end
 
--------------------------------------------------------------------------------
--- Report
--------------------------------------------------------------------------------
+
+
+
 function Perf:Report()
     local labels = {}
     for label, e in pairs(self.labels) do
@@ -235,8 +236,8 @@ function Perf:Report()
         frameBudgetMs = FGPS.Scheduler and FGPS.Scheduler.frameBudgetMs or nil,
         labels = labels,
         memory = self.lastSample,
-        -- Allocated, not retained: the names say so because a reader comparing these against the
-        -- 50 KB retained-memory budget would otherwise see a leak that is not there.
+
+
         trips = trips,
         tripsAreAllocated = true,
         tripAllocatedAvgKB = #trips > 0 and tripTotal / #trips or nil,
@@ -286,22 +287,36 @@ function Perf:Print()
     return r
 end
 
--- Last 20 route requests, kept on CabbieDB.lastSession.routes. No positions and no names:
--- continent is the instance id. cpuMs is the sum of the search's slices.
-function Perf:NoteRoute(row)
-    if type(row) ~= "table" then return nil end
+
+
+
+
+
+Perf.sessionRoutes = {}
+
+local function routeRing(create)
+    if not FGPS:IsOwnerInstall() then return Perf.sessionRoutes end
     local account = FGPS.DB and FGPS.DB.account
     if type(account) ~= "table" then return nil end
     local session = account.lastSession
     if type(session) ~= "table" then
+        if not create then return nil end
         session = {}
         account.lastSession = session
     end
     local routes = session.routes
     if type(routes) ~= "table" then
+        if not create then return nil end
         routes = {}
         session.routes = routes
     end
+    return routes
+end
+
+function Perf:NoteRoute(row)
+    if type(row) ~= "table" then return nil end
+    local routes = routeRing(true)
+    if not routes then return nil end
     local entry = {
         cpuMs = tonumber(row.cpuMs) or 0,
         wallMs = tonumber(row.wallMs) or 0,
@@ -310,6 +325,7 @@ function Perf:NoteRoute(row)
         budgetMs = tonumber(row.budgetMs) or 0,
         fps = tonumber(row.fps),
         reason = type(row.reason) == "string" and row.reason or "start",
+        why = type(row.why) == "string" and row.why or nil,
         continent = tonumber(row.continent),
     }
     routes[#routes + 1] = entry
@@ -318,15 +334,12 @@ function Perf:NoteRoute(row)
 end
 
 function Perf:Routes()
-    local account = FGPS.DB and FGPS.DB.account
-    local routes = account and account.lastSession and account.lastSession.routes
-    if type(routes) ~= "table" then return {} end
-    return routes
+    return routeRing(false) or {}
 end
 
--------------------------------------------------------------------------------
--- Initialisation and slash command ("/cabbie perf [toggle|reset|sample|on|off]")
--------------------------------------------------------------------------------
+
+
+
 local function onSettingsChanged(_, key, value)
     if key == "perf.instrument" then
         Perf:SetEnabled(value)
@@ -360,8 +373,8 @@ FGPS.Slash.Register("perf", function(args)
         Perf:Sample()
         FGPS:Print(L.PERF_SAMPLED)
     elseif word == "trip" then
-        -- Two calls make one retained-memory measurement: the first collects and remembers the
-        -- zero point, the second collects again and reports the growth over the journeys between.
+
+
         if Perf.retained then
             local delta, trips = Perf:RetainedSince()
             if trips > 0 then

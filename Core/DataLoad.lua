@@ -19,10 +19,30 @@ local DataLoad = {
         [1] = { graph = "Cabbie_Data_Kalimdor", landmarks = "Cabbie_Landmarks_Kalimdor" },
         [2991] = { graph = "Cabbie_Data_Zephras" },
     },
+
+
+
+    INSIDE = "Cabbie_Data_Dungeons",
     parts = {},
     byInst = {},
 }
 FGPS.DataLoad = DataLoad
+
+
+
+local function addInside(parts, byInst)
+    local entry = { addon = DataLoad.INSIDE, part = "inside", maps = {} }
+    local listed = FGPS.Data and FGPS.Data.insideMaps
+    if type(listed) == "table" then
+        for map in pairs(listed) do
+            if type(map) == "number" and not byInst[map] then
+                entry.maps[map] = true
+                byInst[map] = { graph = entry }
+            end
+        end
+    end
+    parts[DataLoad.INSIDE] = entry
+end
 
 local function buildParts(catalogue)
     local parts, byInst = {}, {}
@@ -37,6 +57,7 @@ local function buildParts(catalogue)
             end
         end
     end
+    addInside(parts, byInst)
     DataLoad.parts, DataLoad.byInst = parts, byInst
 end
 buildParts(DataLoad.CATALOGUE)
@@ -48,6 +69,14 @@ end
 
 local function present(entry)
     local graphs = FGPS.Data and FGPS.Data.graphs
+    if entry.part == "inside" then
+        if type(graphs) ~= "table" or next(entry.maps) == nil then return false end
+        for map in pairs(entry.maps) do
+            local g = graphs[map]
+            if type(g) ~= "table" or type(g.x) ~= "table" or type(g.y) ~= "table" then return false end
+        end
+        return true
+    end
     local g = graphs and graphs[entry.inst]
     if type(g) ~= "table" then return false end
     if entry.part == "graph" then return type(g.x) == "table" and type(g.y) == "table" end
@@ -55,10 +84,28 @@ local function present(entry)
 end
 
 
+
 local function shipped(entry)
+    if entry.part == "inside" then return next(entry.maps) ~= nil end
     local manifest = FGPS.Data and FGPS.Data.manifest
     local instances = manifest and manifest.instances
     return type(instances) ~= "table" or instances[entry.inst] ~= nil
+end
+
+
+local function isInside(inst)
+    local row = inst ~= nil and DataLoad.byInst[inst]
+    return row and row.graph and row.graph.part == "inside" or false
+end
+
+
+
+local function homeOf(inst)
+    if not isInside(inst) then return inst end
+    for _, rec in ipairs(FGPS.Data and FGPS.Data.interiors or {}) do
+        if rec.instanceMap == inst and rec.entrance and rec.entrance.inst then return rec.entrance.inst end
+    end
+    return inst
 end
 
 
@@ -110,6 +157,20 @@ function DataLoad:RegisterData(addonName, dataVersion, data)
     end
     if present(entry) then return true end
     local graphs = type(data) == "table" and type(data.graphs) == "table" and data.graphs or nil
+    if entry.part == "inside" then
+
+
+        if not graphs or next(entry.maps) == nil then return false, "BAD_DATA" end
+        for map in pairs(entry.maps) do
+            local g = graphs[map]
+            if type(g) ~= "table" or type(g.x) ~= "table" or type(g.y) ~= "table" then return false, "BAD_DATA" end
+        end
+        FGPS.Data.graphs = FGPS.Data.graphs or {}
+        for map in pairs(entry.maps) do FGPS.Data.graphs[map] = graphs[map] end
+        entry.state, entry.reason = nil, nil
+        if FGPS.Events then FGPS.Events:Fire("DATA_PART_LOADED", nil, "inside") end
+        return true
+    end
     local g = graphs and graphs[entry.inst]
     if type(g) ~= "table" then return false, "BAD_DATA" end
     FGPS.Data.graphs = FGPS.Data.graphs or {}
@@ -223,10 +284,16 @@ end
 DataLoad.ContinentName = continentName
 
 
+local function whereOf(entry)
+    if entry.part == "inside" then return L["dungeons and raids"] end
+    return continentName(entry.inst)
+end
+
+
 function DataLoad:Message(addon)
     local entry = self.parts[addon]
     if not entry then return nil end
-    local state, where = self:State(addon), continentName(entry.inst)
+    local state, where = self:State(addon), whereOf(entry)
     if state == "missing" then
         return string.format(L["Cabbie cannot route in %s: its map add-on, %s, is not installed. Reinstall Cabbie with all its folders."], where, addon)
     elseif state == "disabled" then
@@ -260,7 +327,8 @@ local combatWaiters = {}
 function DataLoad:LoadPlayerContinent()
     local Coords = FGPS.Coords
     local inst = Coords and Coords.PlayerXY and select(3, Coords.PlayerXY())
-    local addon = inst and self:Folder(inst, "graph")
+
+    local addon = inst and not isInside(inst) and self:Folder(inst, "graph")
     if not addon or self:State(addon) ~= "unloaded" then return end
     if InCombatLockdown and InCombatLockdown() then
         if not self.worldWaiting then
@@ -268,6 +336,31 @@ function DataLoad:LoadPlayerContinent()
             combatWaiters[#combatWaiters + 1] = function()
                 self.worldWaiting = nil
                 self:LoadPlayerContinent()
+            end
+        end
+        return
+    end
+    if not self:Load(addon) then self:Announce(addon) end
+end
+
+
+
+
+
+
+
+function DataLoad:LoadInside(map, wanted)
+    if not isInside(map) then return end
+    local addon = self.INSIDE
+    if self:State(addon) ~= "unloaded" then return end
+    if InCombatLockdown and InCombatLockdown() then
+        local waiting = self.insideWaiting
+        self.insideWaiting = { map = map, wanted = wanted }
+        if not waiting then
+            combatWaiters[#combatWaiters + 1] = function()
+                local last = self.insideWaiting
+                self.insideWaiting = nil
+                if last and (not last.wanted or last.wanted(last.map)) then self:LoadInside(last.map, last.wanted) end
             end
         end
         return
@@ -298,9 +391,13 @@ function DataLoad:PartsFor(handle)
     local ends = { origin }
     for _, stop in ipairs(stops) do ends[#ends + 1] = stop end
     local leaves = false
+    local home = origin and homeOf(origin.inst)
     for _, p in ipairs(ends) do
         add(p.inst)
-        if origin and p.inst ~= origin.inst then leaves = true end
+
+
+        add(homeOf(p.inst))
+        if origin and homeOf(p.inst) ~= home then leaves = true end
     end
     local function joined(inst)
         for _, p in ipairs(ends) do
@@ -327,11 +424,19 @@ function DataLoad:PartsFor(handle)
         for inst in pairs(self.byInst) do all[#all + 1] = inst end
         table.sort(all)
         for _, inst in ipairs(all) do
-            if joined(inst) then add(inst) end
+
+            if joined(inst) and not isInside(inst) then add(inst) end
         end
     end
     local out = {}
-    for _, inst in ipairs(insts) do out[#out + 1] = self.byInst[inst].graph.addon end
+    local listed = {}
+    for _, inst in ipairs(insts) do
+        local addon = self.byInst[inst].graph.addon
+        if not listed[addon] then
+            listed[addon] = true
+            out[#out + 1] = addon
+        end
+    end
     local Router = FGPS.Router
     if Router and Router.UsesLandmarks and Router.UsesLandmarks(access, request.variant) then
         for _, inst in ipairs(insts) do
@@ -350,11 +455,13 @@ end
 local function waitForCombat(handle, addon, resume)
     if handle.waitingForData ~= "combat" then
         handle.waitingForData = "combat"
-        if FGPS.Events then FGPS.Events:Fire("ROUTE_WAITING", handle, "combat") end
         local entry = DataLoad.parts[addon]
         if entry and handle.request and handle.request.reason ~= "alt" then
-            FGPS:Print(L["Loading the map of %s when you leave combat."], continentName(entry.inst))
+
+
+            handle.waitingText = string.format(L["Loading the map of %s when you leave combat."], whereOf(entry))
         end
+        if FGPS.Events then FGPS.Events:Fire("ROUTE_WAITING", handle, "combat") end
     end
     combatWaiters[#combatWaiters + 1] = resume
 end
@@ -384,11 +491,13 @@ function DataLoad:Hold(handle, onReady)
         local addon = table.remove(need, 1)
         local ok = self:Load(addon)
         local entry = self.parts[addon]
-        if not ok and entry.part == "graph" then
+        if not ok and entry.part ~= "landmarks" then
             self:Announce(addon)
-            if ends[entry.inst] then
+            local needed = ends[entry.inst]
+            for map in pairs(entry.maps or {}) do needed = needed or ends[map] end
+            if needed then
                 local message = self:Message(addon) or string.format(L["No navigation data is available for %s."],
-                    continentName(entry.inst))
+                    whereOf(entry))
                 handle.waitingForData = nil
                 return onReady({ code = "NO_DATA", message = message, folder = addon })
             end
@@ -411,6 +520,12 @@ end
 
 
 local function crossingSeconds(link, access, variant)
+
+
+    local G = FGPS.Graph
+    if link.kind == 7 and G and (isInside((G:Split(link.from))) or isInside((G:Split(link.to)))) then
+        return nil
+    end
     local C, A = FGPS.Cost, FGPS.Access
     if link.kind == 9 and variant == "no_boat" then return nil end
     local transports = FGPS.Data and FGPS.Data.transports
@@ -463,7 +578,7 @@ function DataLoad:WantsJoined(handle, route)
     local G = FGPS.Graph
     local waiting = false
     for inst, row in pairs(self.byInst) do
-        if inst ~= origin.inst and row.graph and self:State(row.graph.addon) == "unloaded"
+        if inst ~= origin.inst and not isInside(inst) and row.graph and self:State(row.graph.addon) == "unloaded"
             and G and G:InstancesConnected(origin.inst, inst) then
             waiting = true
         end
@@ -496,6 +611,18 @@ end
 
 
 
+function DataLoad:UseInsideForTest(insideMaps)
+    local saved = FGPS.Data.insideMaps
+    FGPS.Data.insideMaps = insideMaps
+    buildParts(self.CATALOGUE)
+    return function()
+        FGPS.Data.insideMaps = saved
+        buildParts(self.CATALOGUE)
+    end
+end
+
+
+
 
 function DataLoad:ForgetForTest(inst, part)
     local graphs = FGPS.Data and FGPS.Data.graphs
@@ -504,7 +631,7 @@ function DataLoad:ForgetForTest(inst, part)
     local G = FGPS.Graph
     local function drop()
         if G then G._taxiIndex, G._transportIndex = nil, nil end
-        g._lm, g._lmCells = nil, nil
+        g._lm, g._lmCells, g._lmRoads = nil, nil, nil
     end
     if part == "landmarks" then
         local lm = g.lm
@@ -524,13 +651,23 @@ end
 function DataLoad:Init()
     if self.initialized then return end
     self.initialized = true
+
+    addInside(self.parts, self.byInst)
     if FGPS.Events then
-        FGPS.Events:Register("WORLD_ENTERED", function() DataLoad:LoadPlayerContinent() end, self)
-        FGPS.Events:Register("COMBAT_STATE", function(_, inCombat)
-            if inCombat or #combatWaiters == 0 then return end
+        local function fightOver()
+            if #combatWaiters == 0 then return end
             local waiters = combatWaiters
             combatWaiters = {}
             for _, resume in ipairs(waiters) do after(resume) end
+        end
+
+
+        FGPS.Events:Register("WORLD_ENTERED", function()
+            if not (InCombatLockdown and InCombatLockdown()) then fightOver() end
+            DataLoad:LoadPlayerContinent()
+        end, self)
+        FGPS.Events:Register("COMBAT_STATE", function(_, inCombat)
+            if not inCombat then fightOver() end
         end, self)
     end
 end
