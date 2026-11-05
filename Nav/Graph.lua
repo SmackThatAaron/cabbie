@@ -353,6 +353,15 @@ local HEIGHT_ROW, HEIGHT_BASE, HEIGHT_OFFSET = 50, 91, 2000
 local FIRST_CHAR, SKIPPED_CHAR = 35, 92
 
 
+local DEC2, DEC1, DEC0 = {}, {}, {}
+for b = 0, 255 do
+    local v = b
+    if v > SKIPPED_CHAR then v = v - 1 end
+    v = v - FIRST_CHAR
+    DEC2[b], DEC1[b], DEC0[b] = v * HEIGHT_BASE * HEIGHT_BASE, v * HEIGHT_BASE, v
+end
+
+
 
 local function unpackHeight(rows, index)
     if type(rows) ~= "table" or type(index) ~= "number" or index < 1 then return nil end
@@ -1381,17 +1390,13 @@ function Graph:Neighbors(key, fn, skip)
                 if type(row) ~= "string" then break end
                 local b1, b2, b3, b4 = strbyte(row, at + 1, at + EDGE_CHARS)
                 if not b4 then break end
-                if b1 > SKIPPED_CHAR then b1 = b1 - 1 end
-                if b2 > SKIPPED_CHAR then b2 = b2 - 1 end
-                if b3 > SKIPPED_CHAR then b3 = b3 - 1 end
-                if b4 > SKIPPED_CHAR then b4 = b4 - 1 end
-                local nb = ((b1 - FIRST_CHAR) * HEIGHT_BASE + (b2 - FIRST_CHAR)) * HEIGHT_BASE + (b3 - FIRST_CHAR)
+                local nb = DEC2[b1] + DEC1[b2] + DEC0[b3]
                 local nx, ny
                 if not (skip and skip[base + nb]) then nx, ny = xs[nb], ys[nb] end
                 if nx then
                     local dx, dy = nx - x, ny - y
                     local yards = sqrt(dx * dx + dy * dy)
-                    local kind = b4 - FIRST_CHAR
+                    local kind = DEC0[b4]
                     local shapedLen
                     if lens then
                         if e <= lastShaped and type(lrow) == "string" then
@@ -1448,10 +1453,7 @@ function Graph:Neighbors(key, fn, skip)
                 for _ = 1, slots do
                     local b1, b2, b3 = strbyte(row, at + 1, at + 3)
                     if not b3 then break end
-                    if b1 > SKIPPED_CHAR then b1 = b1 - 1 end
-                    if b2 > SKIPPED_CHAR then b2 = b2 - 1 end
-                    if b3 > SKIPPED_CHAR then b3 = b3 - 1 end
-                    local nb = ((b1 - FIRST_CHAR) * HEIGHT_BASE + (b2 - FIRST_CHAR)) * HEIGHT_BASE + (b3 - FIRST_CHAR)
+                    local nb = DEC2[b1] + DEC1[b2] + DEC0[b3]
                     if nb <= 0 then break end
                     local nx, ny = xs[nb], ys[nb]
                     if nx and nb <= n and not (skip and skip[base + nb]) then
@@ -1617,53 +1619,77 @@ end
 
 
 
-function Graph:_nearestOne(g, inst, x, y, radiusSq, maxRing, filterFn)
+local function scanOne(g, grid, xs, ys, cx, cy, x, y, radiusSq, base, filterFn, bestSq, bestIdx)
+    local x0, y0 = cx * CELL, cy * CELL
+    local gx, gy = 0, 0
+    if x < x0 then gx = x0 - x elseif x > x0 + CELL then gx = x - (x0 + CELL) end
+    if y < y0 then gy = y0 - y elseif y > y0 + CELL then gy = y - (y0 + CELL) end
+    if gx * gx + gy * gy > radiusSq then return bestSq, bestIdx end
+    local k = cellKey(cx, cy)
+    local cell = grid[k]
+    if not cell then return bestSq, bestIdx end
+
+    local first, last = cellSpan(g, k, cell, x, x0, radiusSq)
+    for i = first, last do
+        local idx = cell[i]
+        local dx = xs[idx] - x
+        local dx2 = dx * dx
+        if dx2 <= (bestSq or radiusSq) then
+            local dy = ys[idx] - y
+            local dsq = dx2 + dy * dy
+            if dsq <= radiusSq and (not bestSq or dsq < bestSq or (dsq == bestSq and idx < bestIdx))
+                and (not filterFn or filterFn(base + idx, idx, g)) then
+                bestSq, bestIdx = dsq, idx
+            end
+        end
+    end
+    return bestSq, bestIdx
+end
+
+
+
+local function nearestKey(g, inst, x, y, radiusSq, maxRing, filterFn)
     local grid, xs, ys = g._grid, g.x, g.y
     local cx0, cy0 = floor(x / CELL), floor(y / CELL)
     local base = inst * KEY_BASE
     local bestSq, bestIdx
-    local function scan(cx, cy)
-        local x0, y0 = cx * CELL, cy * CELL
-        local gx, gy = 0, 0
-        if x < x0 then gx = x0 - x elseif x > x0 + CELL then gx = x - (x0 + CELL) end
-        if y < y0 then gy = y0 - y elseif y > y0 + CELL then gy = y - (y0 + CELL) end
-        if gx * gx + gy * gy > radiusSq then return end
-        local k = cellKey(cx, cy)
-        local cell = grid[k]
-        if not cell then return end
-
-        local first, last = cellSpan(g, k, cell, x, x0, radiusSq)
-        for i = first, last do
-            local idx = cell[i]
-            local dx = xs[idx] - x
-            local dx2 = dx * dx
-            if dx2 <= (bestSq or radiusSq) then
-                local dy = ys[idx] - y
-                local dsq = dx2 + dy * dy
-                if dsq <= radiusSq and (not bestSq or dsq < bestSq or (dsq == bestSq and idx < bestIdx))
-                    and (not filterFn or filterFn(base + idx, idx, g)) then
-                    bestSq, bestIdx = dsq, idx
-                end
-            end
-        end
-    end
     for r = 0, maxRing do
         if r == 0 then
-            scan(cx0, cy0)
+            bestSq, bestIdx = scanOne(g, grid, xs, ys, cx0, cy0, x, y, radiusSq, base, filterFn, bestSq, bestIdx)
         else
             for i = -r, r do
-                scan(cx0 + i, cy0 - r)
-                scan(cx0 + i, cy0 + r)
+                bestSq, bestIdx = scanOne(g, grid, xs, ys, cx0 + i, cy0 - r, x, y, radiusSq, base, filterFn, bestSq, bestIdx)
+                bestSq, bestIdx = scanOne(g, grid, xs, ys, cx0 + i, cy0 + r, x, y, radiusSq, base, filterFn, bestSq, bestIdx)
             end
             for j = -r + 1, r - 1 do
-                scan(cx0 - r, cy0 + j)
-                scan(cx0 + r, cy0 + j)
+                bestSq, bestIdx = scanOne(g, grid, xs, ys, cx0 - r, cy0 + j, x, y, radiusSq, base, filterFn, bestSq, bestIdx)
+                bestSq, bestIdx = scanOne(g, grid, xs, ys, cx0 + r, cy0 + j, x, y, radiusSq, base, filterFn, bestSq, bestIdx)
             end
         end
         if bestSq and sqrt(bestSq) <= r * CELL then break end
     end
-    if not bestSq then return {} end
-    return { { key = base + bestIdx, dist = sqrt(bestSq) } }
+    if not bestSq then return nil end
+    return base + bestIdx, sqrt(bestSq)
+end
+
+
+
+
+
+function Graph:_nearestOne(g, inst, x, y, radiusSq, maxRing, filterFn)
+    local key, d = nearestKey(g, inst, x, y, radiusSq, maxRing, filterFn)
+    if not key then return {} end
+    return { { key = key, dist = d } }
+end
+
+
+
+
+function Graph:NearestKey(inst, x, y, radiusYards, filterFn)
+    local g = graphFor(inst)
+    if not g or x == nil or y == nil then return nil end
+    radiusYards = radiusYards or self.ATTACH_RADIUS
+    return nearestKey(g, inst, x, y, radiusYards * radiusYards, ceil(radiusYards / CELL), filterFn)
 end
 
 
@@ -2142,8 +2168,8 @@ function Graph:AttachCandidates(inst, x, y, opts)
                         out[#out + 1] = { key = base + idx, dist = d, kind = KIND_ATTACH, attachYards = d, segYards = 0, poi = true,
                                           footZ = heightOf(idx), footZg = guessOf(idx) }
                         poiKey = #out
+                        break
                     end
-                    break
                 end
             end
         end
@@ -2327,9 +2353,6 @@ end
 
 
 
-
-
-
 function Graph:HubCells(inst, keep)
     local g = graphFor(inst)
     if not g then return {} end
@@ -2348,6 +2371,10 @@ function Graph:HubCells(inst, keep)
     end
     return out
 end
+
+
+
+
 
 function Graph:HubsNear(inst, x, y, radiusYards, fn, only)
     local g = graphFor(inst)
@@ -2426,9 +2453,9 @@ function Graph:CrossLinks(inst)
     local entry = cache[inst]
     if entry then return entry end
     entry = { out = {}, into = {} }
-    cache[inst] = entry
     local g = graphFor(inst)
     if not g then return entry end
+    cache[inst] = entry
     for fromKey, list in pairs(self._links or ensureLinks()) do
         local fromInst, fromIdx = splitKey(fromKey)
         for i = 1, #list do

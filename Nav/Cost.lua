@@ -293,6 +293,7 @@ end
 
 
 
+
 function Cost.RoadFactor(variant, kind)
 
 
@@ -466,8 +467,9 @@ end
 
 
 
+
 local SWIM_SLOTS = 128
-local swimX1, swimY1, swimX2, swimY2, swimInst, swimHit = {}, {}, {}, {}, {}, {}
+local swimX1, swimY1, swimX2, swimY2, swimInst, swimGrid, swimHit = {}, {}, {}, {}, {}, {}, {}
 
 local function swimSlot(inst, x1, y1, x2, y2)
     local n = floor(x1) * 3 + floor(y1) * 5 + floor(x2) * 7 + floor(y2) * 11 + inst * 13
@@ -491,7 +493,7 @@ function Cost.OverSwim(inst, x1, y1, x2, y2)
     local d = sqrt(dx * dx + dy * dy)
     if d <= 2 * cell then return false end
     local slot = swimSlot(inst, x1, y1, x2, y2)
-    if swimInst[slot] == inst and swimX1[slot] == x1 and swimY1[slot] == y1 and swimX2[slot] == x2 and swimY2[slot] == y2 then
+    if swimGrid[slot] == s and swimInst[slot] == inst and swimX1[slot] == x1 and swimY1[slot] == y1 and swimX2[slot] == x2 and swimY2[slot] == y2 then
         return swimHit[slot]
     end
     local w, h, grid = s.w or 0, s.h or 0, s.c
@@ -514,7 +516,7 @@ function Cost.OverSwim(inst, x1, y1, x2, y2)
             end
         end
     end
-    swimInst[slot], swimX1[slot], swimY1[slot], swimX2[slot], swimY2[slot], swimHit[slot] = inst, x1, y1, x2, y2, hit
+    swimInst[slot], swimGrid[slot], swimX1[slot], swimY1[slot], swimX2[slot], swimY2[slot], swimHit[slot] = inst, s, x1, y1, x2, y2, hit
     return hit
 end
 

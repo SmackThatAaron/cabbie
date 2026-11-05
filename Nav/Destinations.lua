@@ -59,7 +59,7 @@ local TYPE_LABELS = {
     bank = "Bank", auction = "Auction house", trainer = "Trainer", dock = "Dock", tram = "Tram", graveyard = "Graveyard",
     portal = "Portal", zone = "Zone", battleground = "Battleground", stable = "Stable master", subzone = "Area",
     taxi = "Flight master", quest = "Quest", coord = "Coordinates", custom = "Custom", service = "Service",
-    room = "Room", boss = "Boss",
+    room = "Room", boss = "Boss", lift = "Elevator",
 }
 
 
@@ -106,6 +106,10 @@ local function lower(s) return Util.Lower(s) end
 
 
 local function fold(s) return (lower(s):gsub("'", "")) end
+
+
+
+local function typed(s) return (Util.Trim(fold(s)):gsub("%s+", " ")) end
 
 local function maps() return FGPS.Data and FGPS.Data.maps or nil end
 local function poi() return FGPS.Data and FGPS.Data.poi or nil end
@@ -235,6 +239,26 @@ local function typeText(typeName, moreTypes, side)
     end
     if SIDE_LABELS[side] then text = text .. ", " .. L[SIDE_LABELS[side]] end
     return text
+end
+
+
+
+
+
+
+local function isLiftLanding(i)
+    local P = poi()
+    local src = P and P.src and i and P.src[i]
+    local id = type(src) == "string" and src:match("^transport:(%d+):stop:%d+$")
+    local records = id and FGPS.Data.transports
+    local rec = records and records[tonumber(id)]
+    return type(rec) == "table" and rec.kind == "elevator"
+end
+
+
+local function shownType(dest)
+    if dest.type == "dock" and isLiftLanding(dest.poiIndex) then return "lift" end
+    return dest.type
 end
 
 
@@ -501,7 +525,7 @@ Destinations.ScoreName = scoreName
 function Destinations.ResolveZoneName(name)
     local all = maps()
     if not all or type(name) ~= "string" then return nil end
-    local q = Util.Trim(fold(name))
+    local q = typed(name)
     if q == "" then return nil end
     local bestID, bestScore, bestKind
     for id, m in pairs(all) do
@@ -863,7 +887,7 @@ end
 
 function Destinations.Search(text, opts)
     opts = opts or {}
-    local q = Util.Trim(fold(text or ""))
+    local q = typed(text or "")
     if q == "" then return {} end
     local split = Util.Split(q, " ")
     if #split == 0 then return {} end
@@ -891,7 +915,14 @@ function Destinations.Search(text, opts)
     local pos = Destinations.PlayerPos()
     local static, learned = ensureIndex()
 
-    local hits = {}
+
+
+
+
+
+
+    local hE, hScore, hDist, hSide, hRank = {}, {}, {}, {}, {}
+    local nHits = 0
 
 
 
@@ -921,8 +952,10 @@ function Destinations.Search(text, opts)
             if ITEM_TYPES[typeName] then
                 if side then item = 2 elseif not kindOf and fac ~= 1 and fac ~= 2 then item = 1 end
             end
-            hits[#hits + 1] = { e = e, score = s, tier = tier, dist = d, prio = TYPE_PRIORITY[typeName] or 18,
-                                side = side, other = side ~= nil, item = item }
+            nHits = nHits + 1
+            hE[nHits], hScore[nHits], hDist[nHits], hSide[nHits] = e, s, d, side
+            hRank[nHits] = (((tier * 3 + item) * 128 + (SCORE_EXACT - s)) * 2 + (side ~= nil and 1 or 0)) * 32
+                + (TYPE_PRIORITY[typeName] or 18)
         end
     end
     if static.n > 0 then
@@ -946,14 +979,14 @@ function Destinations.Search(text, opts)
         local e = learned[i]
         consider(e, e.kind, e.type, e.fac, e.key, e.zoneKey, e.learned ~= nil)
     end
+    local hits = {}
+    for i = 1, nHits do hits[i] = i end
     table.sort(hits, function(a, b)
-        if a.tier ~= b.tier then return a.tier < b.tier end
-        if a.item ~= b.item then return a.item < b.item end
-        if a.score ~= b.score then return a.score > b.score end
-        if a.other ~= b.other then return b.other end
-        if a.prio ~= b.prio then return a.prio < b.prio end
-        if a.dist ~= b.dist then return a.dist < b.dist end
-        return entryKey(static, a.e) < entryKey(static, b.e)
+        local ra, rb = hRank[a], hRank[b]
+        if ra ~= rb then return ra < rb end
+        local da, db = hDist[a], hDist[b]
+        if da ~= db then return da < db end
+        return entryKey(static, hE[a]) < entryKey(static, hE[b])
     end)
 
 
@@ -961,9 +994,9 @@ function Destinations.Search(text, opts)
 
 
     local out, byName = {}, {}
-    for i = 1, #hits do
+    for i = 1, nHits do
         local h = hits[i]
-        local e = h.e
+        local e = hE[h]
         local name, inst, x, y, typeName = entryPlace(static, e)
         local kept
         local sameName = byName[name]
@@ -987,14 +1020,14 @@ function Destinations.Search(text, opts)
                     kept.moreTypes = more
                 end
                 more[#more + 1] = typeName
-                kept.label = labelFor(kept.dest.name, kept.dest.zoneName, kept.dest.type, more, kept.side)
+                kept.label = labelFor(kept.dest.name, kept.dest.zoneName, shownType(kept.dest), more, kept.side)
             end
         elseif #out < limit then
             local dest = destFromEntry(e)
             if dest then
-                local row = { dest = dest, score = h.score, label = labelFor(dest.name, dest.zoneName, dest.type, nil, h.side),
-                              distance = h.dist < 1e9 and h.dist or nil, otherFaction = h.other or nil,
-                              x = x, y = y, side = h.side }
+                local row = { dest = dest, score = hScore[h], label = labelFor(dest.name, dest.zoneName, shownType(dest), nil, hSide[h]),
+                              distance = hDist[h] < 1e9 and hDist[h] or nil, otherFaction = hSide[h] ~= nil or nil,
+                              x = x, y = y, side = hSide[h] }
                 out[#out + 1] = row
                 if not sameName then
                     sameName = {}
@@ -1072,7 +1105,7 @@ function Destinations.Browse(opts)
         if dest then
             out[#out + 1] = {
                 dest = dest, score = 0,
-                label = labelFor(dest.name, dest.zoneName, dest.type, nil, h.side),
+                label = labelFor(dest.name, dest.zoneName, shownType(dest), nil, h.side),
                 distance = h.dist < 1e9 and h.dist or nil,
                 otherFaction = h.other or nil,
             }
@@ -1169,7 +1202,7 @@ function Destinations.Describe(dest)
     if dest.zoneName and dest.zoneName ~= name then parts[#parts + 1] = dest.zoneName end
     local text = table.concat(parts, " - ")
     if dest.type and dest.type ~= "coord" and dest.type ~= "custom" then
-        text = format("%s (%s)", text, typeText(dest.type, nil, otherSide(dest.faction)))
+        text = format("%s (%s)", text, typeText(shownType(dest), nil, otherSide(dest.faction)))
     end
     if dest.reachable == "adjusted" and dest.adjustedYards then
         text = format("%s %s", text, format(L["(adjusted %d yd)"], dest.adjustedYards))
@@ -1238,11 +1271,41 @@ end
 
 local rekeyed = setmetatable({}, { __mode = "k" })
 
+local checked = setmetatable({}, { __mode = "k" })
+
+
+
+
+
+local SPOT_FIELDS = { "x", "y", "originalX", "originalY", "mx", "my" }
+local function spotBroken(spot)
+    if type(spot) ~= "table" then return false end
+    for _, field in ipairs(SPOT_FIELDS) do
+        local v = spot[field]
+        if v ~= nil and type(v) ~= "number" then return true end
+    end
+    return false
+end
+local function savedEntryBroken(saved)
+    return type(saved) == "table" and (spotBroken(saved) or spotBroken(saved.entrance) or spotBroken(saved.interior))
+end
+
 local function accountList(key)
     local DB = FGPS.DB
     if not DB or not DB.account then return {} end
     if type(DB.account[key]) ~= "table" then DB.account[key] = {} end
     local list = DB.account[key]
+    if not checked[list] then
+        local dropped = 0
+        for i = #list, 1, -1 do
+            if savedEntryBroken(list[i]) then
+                table.remove(list, i)
+                dropped = dropped + 1
+            end
+        end
+        if dropped > 0 then FGPS.Log:Warn("Dropped %d saved %s with a damaged position", dropped, key) end
+        checked[list] = true
+    end
     if rekeyed[list] ~= poi() then
         for i = 1, #list do Destinations.Rekey(list[i]) end
         rekeyed[list] = poi()

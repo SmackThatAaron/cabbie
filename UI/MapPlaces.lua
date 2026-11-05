@@ -29,12 +29,45 @@ local MEDIA = "Interface\\AddOns\\Cabbie\\Media\\"
 
 
 
+
+
+local TAXI_ICON = {
+
+
+
+    file = "Interface\\TaxiFrame\\UI-Taxi-Icon-White",
+}
+local CORPSE_ICON = {
+    file = "Interface\\Minimap\\POIIcons",
+
+
+
+
+    coords = { 0.56640625, 0.6328125, 0.001953125, 0.03515625 },
+}
+local function tracking(name)
+    return { file = "Interface\\Minimap\\Tracking\\" .. name, probe = true }
+end
+
+
+
 local function dockTexture(index, P)
     local name = P and P.name and P.name[index]
     if type(name) == "string" and name:lower():find("zeppelin", 1, true) then
         return MEDIA .. "place_zeppelin"
     end
     return MEDIA .. "place_boat"
+end
+
+
+
+
+local function isLiftLanding(index, P)
+    local src = P and P.src and P.src[index]
+    local id = type(src) == "string" and src:match("^transport:(%d+):stop:%d+$")
+    local records = id and FGPS.Data and FGPS.Data.transports
+    local rec = records and records[tonumber(id)]
+    return type(rec) == "table" and rec.kind == "elevator"
 end
 
 local MapPlaces = {
@@ -58,6 +91,14 @@ local MapPlaces = {
 
     LAYER_GAP = 100,
 
+    RING = MEDIA .. "place_ring",
+
+
+    BADGE_SHARE = 0.8,
+    GAME_ICON_SHARE = 0.72,
+
+
+
 
 
 
@@ -68,40 +109,43 @@ local MapPlaces = {
           textures = { [1] = MEDIA .. "place_town", [5] = MEDIA .. "place_city" },
           label = "Show towns on the world map (click one to route there)",
           tooltip = "Every town of the zone you are looking at gets a small icon on the world map. Left-click one to route there. Towns of the other faction are dimmed." },
-        { key = "flight", types = { 6 }, texture = MEDIA .. "place_flight", default = false,
+        { key = "flight", types = { 6 }, texture = MEDIA .. "place_flight", game = TAXI_ICON, default = false,
           label = "Show flight masters on the world map",
           tooltip = "Flight masters of the zone you are looking at get a small icon on the world map. Left-click one to route there." },
-        { key = "inns", types = { 7 }, texture = MEDIA .. "place_inn", default = false,
+        { key = "inns", types = { 7 }, texture = MEDIA .. "place_inn", game = tracking("Innkeeper"), default = false,
           label = "Show inns on the world map",
           tooltip = "Inns of the zone you are looking at get a small icon on the world map. Left-click one to route there." },
         { key = "dungeons", types = { 3, 4 }, texture = MEDIA .. "place_dungeon", default = false,
           label = "Show dungeon and raid entrances on the world map",
           tooltip = "Dungeon and raid entrances of the zone you are looking at get a small icon on the world map. Left-click one to route there." },
-        { key = "banks", types = { 11 }, texture = MEDIA .. "place_bank", default = false,
+        { key = "banks", types = { 11 }, texture = MEDIA .. "place_bank", game = tracking("Banker"), default = false,
           label = "Show banks on the world map",
           tooltip = "Banks of the zone you are looking at get a small icon on the world map. Left-click one to route there." },
-        { key = "auction", types = { 12 }, texture = MEDIA .. "place_auction", default = false,
+        { key = "auction", types = { 12 }, texture = MEDIA .. "place_auction", game = tracking("Auctioneer"),
+          default = false,
           label = "Show auction houses on the world map",
           tooltip = "Auction houses of the zone you are looking at get a small icon on the world map. Left-click one to route there." },
-        { key = "mailbox", types = { 10 }, texture = MEDIA .. "place_mailbox", default = false,
+        { key = "mailbox", types = { 10 }, texture = MEDIA .. "place_mailbox", game = tracking("Mailbox"), default = false,
           label = "Show mailboxes on the world map",
           tooltip = "Mailboxes of the zone you are looking at get a small icon on the world map. Left-click one to route there." },
         { key = "vendors", types = { 8 }, texture = MEDIA .. "place_vendor", default = false,
           label = "Show vendors on the world map",
           tooltip = "Vendors of the zone you are looking at get a small icon on the world map. Left-click one to route there. Busy cities have many, so this starts off." },
-        { key = "repair", types = { 9 }, texture = MEDIA .. "place_repair", default = false,
+        { key = "repair", types = { 9 }, texture = MEDIA .. "place_repair", game = tracking("Repair"), default = false,
           label = "Show repair vendors on the world map",
           tooltip = "Repair vendors of the zone you are looking at get a small icon on the world map. Left-click one to route there." },
-        { key = "trainers", types = { 13 }, texture = MEDIA .. "place_trainer", default = false,
+        { key = "trainers", types = { 13 }, texture = MEDIA .. "place_trainer", game = tracking("Class"), default = false,
           label = "Show trainers on the world map",
           tooltip = "Trainers of the zone you are looking at get a small icon on the world map. Left-click one to route there." },
-        { key = "stables", types = { 20 }, texture = MEDIA .. "place_stable", default = false,
+        { key = "stables", types = { 20 }, texture = MEDIA .. "place_stable", game = tracking("StableMaster"),
+          default = false,
           label = "Show stable masters on the world map",
           tooltip = "Stable masters of the zone you are looking at get a small icon on the world map. Left-click one to route there." },
-        { key = "docks", types = { 14 }, texture = MEDIA .. "place_boat", texturePick = dockTexture, default = false,
+        { key = "docks", types = { 14 }, skip = isLiftLanding, texture = MEDIA .. "place_boat", texturePick = dockTexture,
+          default = false,
           label = "Show docks and zeppelin towers on the world map",
           tooltip = "Boat docks and zeppelin towers of the zone you are looking at get a small icon on the world map. Left-click one to route there." },
-        { key = "graveyards", types = { 16 }, texture = MEDIA .. "place_graveyard", default = false,
+        { key = "graveyards", types = { 16 }, texture = MEDIA .. "place_graveyard", game = CORPSE_ICON, default = false,
           label = "Show graveyards on the world map",
           tooltip = "Graveyards of the zone you are looking at get a small icon on the world map. Left-click one to route there." },
     },
@@ -149,6 +193,37 @@ end
 
 
 
+
+
+
+function MapPlaces.GameIconFor(row, index)
+    local game = type(row) == "table" and row.game
+    if type(game) ~= "table" or type(game.file) ~= "string" then return nil end
+    if game.probe then
+        local Look = FGPS.UI.Look
+        local has = Look and Look.TomeHas and Look.TomeHas("file", game.file)
+        if Look and Look.NoteOnce then
+            if has then
+                Look.NoteOnce("mapPlaces:" .. row.key, "MapPlaces: %s uses %s", row.key, game.file)
+            else
+                Look.NoteOnce("mapPlaces:" .. row.key, "MapPlaces: %s: %s missing; Cabbie badge", row.key, game.file)
+            end
+        end
+        if not has then return nil end
+    end
+    return game.file, game.coords
+end
+
+
+
+function MapPlaces.ArtFor(row, index)
+    local file, coords = MapPlaces.GameIconFor(row, index)
+    if file then return file, coords, true end
+    return MapPlaces.TextureFor(row, index), nil, false
+end
+
+
+
 function MapPlaces.CategoryEnabled(row)
     local s = settings()
     local places = s and s.mapPlaces
@@ -190,7 +265,7 @@ local function indicesFor(row)
     for _, code in ipairs(row.types) do wanted[code] = true end
     local list = {}
     for i = 1, P.n or 0 do
-        if wanted[P.type[i]] then list[#list + 1] = i end
+        if wanted[P.type[i]] and not (row.skip and row.skip(i, P)) then list[#list + 1] = i end
     end
     indexCache[row.key] = { source = P, list = list }
     return list
@@ -315,32 +390,39 @@ end
 
 
 
+
+
+
 function MapPlaces.TooltipLines(index)
     local P = poi()
     if not P or not P.name[index] then return {} end
     local Destinations = FGPS.Destinations
-    local lines = { P.name[index] }
     local typeName = Destinations and Destinations.TypeName and Destinations.TypeName(P.type[index]) or nil
     local kind = (Destinations and Destinations.TypeLabel and Destinations.TypeLabel(typeName)) or L["Location"]
     local zoneNames = FGPS.Data and FGPS.Data.zoneNames
     local zone = zoneNames and zoneNames[P.zone and P.zone[index] or 0] or nil
-    lines[#lines + 1] = zone and format(L["%s, %s"], kind, zone) or kind
+    local line = zone and format(L["%s, %s"], kind, zone) or kind
     local fac = factionOf(index)
     if isOtherFaction(fac) and FACTION_SENTENCE[fac] then
-        lines[#lines + 1] = "|cffff6060" .. L[FACTION_SENTENCE[fac]] .. "|r"
-    end
-    local Coords = FGPS.Coords
-    if Coords and Coords.PlayerPos then
-        local ok, pos = pcall(Coords.PlayerPos)
+        line = "|cffff6060" .. L[FACTION_SENTENCE[fac]] .. "|r"
+    else
+        local Coords = FGPS.Coords
+        local ok, pos = false, nil
+        if Coords and Coords.PlayerPos then ok, pos = pcall(Coords.PlayerPos) end
         if ok and type(pos) == "table" and pos.inst == P.inst[index] and pos.x and pos.y then
             local dx, dy = pos.x - P.x[index], pos.y - P.y[index]
             local s = settings()
-            lines[#lines + 1] = format(L["%s away directly"], Util.FormatDistance(sqrt(dx * dx + dy * dy), s and s.units))
+            line = format(L["%s, %s"], line, Util.FormatDistance(sqrt(dx * dx + dy * dy), s and s.units))
         end
     end
-    lines[#lines + 1] = L["Click: guide me here"]
-    lines[#lines + 1] = L["During a route, left-click asks before replacing the route"]
-    return lines
+    return { title = P.name[index], line = line, hint = L["Click to go here"] }
+end
+
+local function showTooltip(icon)
+    local Look = FGPS.UI.Look
+    if not (Look and Look.Tooltip and icon.poiIndex) then return end
+    local tip = MapPlaces.TooltipLines(icon.poiIndex)
+    Look.Tooltip(icon, tip.title, tip.line, tip.hint, "ANCHOR_RIGHT")
 end
 
 
@@ -360,11 +442,12 @@ local function ensureReplacePopup()
     StaticPopupDialogs[REPLACE_POPUP] = {
         text = "%s",
         button1 = L["Replace"],
-        button2 = L["Keep going"],
-        button3 = L["Add as stop"],
+        button2 = L["Keep Going"],
+        button3 = L["Add as a Stop"],
         timeout = 0,
         whileDead = 1,
         hideOnEscape = 1,
+        preferredIndex = 3,
         OnAccept = function(self)
             local dest = self.data
             local WorldMap = FGPS.UI.WorldMap
@@ -434,19 +517,21 @@ local function onClick(icon, button)
     WorldMap.GoTo(dest, { start = true, quiet = true })
 end
 
+
+local function sizeIcon(icon, size)
+    icon:SetSize(size, size)
+    local art = size * (icon.artShare or MapPlaces.BADGE_SHARE)
+    icon.art:SetSize(art, art)
+end
+
 local function onEnter(icon)
-    icon:SetSize(MapPlaces.ICON_SIZE_HOVER, MapPlaces.ICON_SIZE_HOVER)
+    sizeIcon(icon, MapPlaces.ICON_SIZE_HOVER)
     MapPlaces.hoveredIcon = icon
-    if not GameTooltip or not icon.poiIndex then return end
-    GameTooltip:SetOwner(icon, "ANCHOR_RIGHT")
-    for i, line in ipairs(MapPlaces.TooltipLines(icon.poiIndex)) do
-        if i == 1 then GameTooltip:AddLine(line) else GameTooltip:AddLine(line, 1, 1, 1, true) end
-    end
-    GameTooltip:Show()
+    showTooltip(icon)
 end
 
 local function onLeave(icon)
-    icon:SetSize(MapPlaces.ICON_SIZE, MapPlaces.ICON_SIZE)
+    sizeIcon(icon, MapPlaces.ICON_SIZE)
     if MapPlaces.hoveredIcon == icon then MapPlaces.hoveredIcon = nil end
     if GameTooltip and (not GameTooltip.IsOwned or GameTooltip:IsOwned(icon)) then GameTooltip:Hide() end
 end
@@ -457,11 +542,7 @@ function MapPlaces:RefreshOpenTooltip()
     local icon = self.hoveredIcon
     if not icon or not icon.poiIndex or not GameTooltip then return end
     if GameTooltip.IsOwned and not GameTooltip:IsOwned(icon) then return end
-    GameTooltip:ClearLines()
-    for i, line in ipairs(MapPlaces.TooltipLines(icon.poiIndex)) do
-        if i == 1 then GameTooltip:AddLine(line) else GameTooltip:AddLine(line, 1, 1, 1, true) end
-    end
-    GameTooltip:Show()
+    showTooltip(icon)
 end
 
 
@@ -477,9 +558,13 @@ end
 local function setupIcon(icon)
     if icon.fgpsReady then return end
     icon.fgpsReady = true
-    icon:SetSize(MapPlaces.ICON_SIZE, MapPlaces.ICON_SIZE)
-    icon.art = icon:CreateTexture(nil, "ARTWORK")
-    icon.art:SetAllPoints(icon)
+
+    icon.ring = icon:CreateTexture(nil, "ARTWORK")
+    icon.ring:SetAllPoints(icon)
+    icon.ring:SetTexture(MapPlaces.RING)
+    icon.art = icon:CreateTexture(nil, "OVERLAY")
+    icon.art:SetPoint("CENTER", icon, "CENTER")
+    sizeIcon(icon, MapPlaces.ICON_SIZE)
     icon:EnableMouse(true)
 
 
@@ -546,15 +631,30 @@ function MapPlaces:Redraw()
         count = count + 1
         icon.poiIndex = place.index
         icon.normalizedX, icon.normalizedY = place.x, place.y
-        icon.art:SetTexture(MapPlaces.TextureFor(place.category, place.index))
+        local file, coords, isGame = MapPlaces.ArtFor(place.category, place.index)
+        icon.art:SetTexture(file)
 
+        if coords ~= icon.artCoords then
+            if coords then
+                icon.art:SetTexCoord(coords[1], coords[2], coords[3], coords[4])
+            else
+                icon.art:SetTexCoord(0, 1, 0, 1)
+            end
+            icon.artCoords = coords
+        end
+        icon.artShare = isGame and MapPlaces.GAME_ICON_SHARE or MapPlaces.BADGE_SHARE
+
+
+        local alpha = place.otherFaction and DIMMED_ALPHA or 1
+        icon.ring:SetDesaturated(place.otherFaction)
+        icon.ring:SetAlpha(alpha)
         icon.art:SetDesaturated(place.otherFaction)
-        icon:SetAlpha(place.otherFaction and DIMMED_ALPHA or 1)
+        icon.art:SetAlpha(alpha)
         icon.dimmed = place.otherFaction
 
 
         icon:SetFrameLevel(baseLevel + count)
-        icon:SetSize(MapPlaces.ICON_SIZE, MapPlaces.ICON_SIZE)
+        sizeIcon(icon, MapPlaces.ICON_SIZE)
         positionIcon(icon, canvas, w, h, scale)
         icon:Show()
     end
@@ -665,9 +765,15 @@ function MapPlaces:Init()
 
         Events:Register("ADDON_READY", function() MapPlaces:Attach() end, self)
         if not WorldMapFrame then
-            Events:RegisterWoW("ADDON_LOADED", function(_, name)
-                if name == "Blizzard_WorldMap" and FGPS.ready then MapPlaces:Attach() end
-            end, self)
+            local onAddonLoaded
+            onAddonLoaded = function(_, name)
+                if name ~= "Blizzard_WorldMap" then return end
+
+
+                Events:UnregisterWoW("ADDON_LOADED", onAddonLoaded)
+                if FGPS.ready then MapPlaces:Attach() end
+            end
+            Events:RegisterWoW("ADDON_LOADED", onAddonLoaded, self)
         end
     end
     if FGPS.ready then self:Attach() end

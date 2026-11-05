@@ -1,4 +1,4 @@
-# CurseForge's packager: the root is the Cabbie add-on, and the 6 map add-ons move out beside it.
+# CurseForge's packager: the root is the Cabbie add-on, and the 17 map add-ons move out beside it.
 package-as: Cabbie
 
 manual-changelog: CHANGELOG.md
@@ -6,10 +6,21 @@ manual-changelog: CHANGELOG.md
 move-folders:
   Cabbie/Cabbie_Data_Dungeons: Cabbie_Data_Dungeons
   Cabbie/Cabbie_Data_EK: Cabbie_Data_EK
+  Cabbie/Cabbie_Data_EK_2: Cabbie_Data_EK_2
+  Cabbie/Cabbie_Data_EK_3: Cabbie_Data_EK_3
+  Cabbie/Cabbie_Data_EK_4: Cabbie_Data_EK_4
+  Cabbie/Cabbie_Data_EK_5: Cabbie_Data_EK_5
   Cabbie/Cabbie_Data_Kalimdor: Cabbie_Data_Kalimdor
+  Cabbie/Cabbie_Data_Kalimdor_2: Cabbie_Data_Kalimdor_2
+  Cabbie/Cabbie_Data_Kalimdor_3: Cabbie_Data_Kalimdor_3
+  Cabbie/Cabbie_Data_Kalimdor_4: Cabbie_Data_Kalimdor_4
+  Cabbie/Cabbie_Data_Kalimdor_5: Cabbie_Data_Kalimdor_5
+  Cabbie/Cabbie_Data_Kalimdor_6: Cabbie_Data_Kalimdor_6
   Cabbie/Cabbie_Data_Zephras: Cabbie_Data_Zephras
   Cabbie/Cabbie_Landmarks_EK: Cabbie_Landmarks_EK
+  Cabbie/Cabbie_Landmarks_EK_2: Cabbie_Landmarks_EK_2
   Cabbie/Cabbie_Landmarks_Kalimdor: Cabbie_Landmarks_Kalimdor
+  Cabbie/Cabbie_Landmarks_Kalimdor_2: Cabbie_Landmarks_Kalimdor_2
 
 ignore:
   - README.md

@@ -369,6 +369,11 @@ end
 local function skip(reason, key)
     local tag = reason .. "|" .. tostring(key)
     if not Voice.skippedKeys[tag] then
+
+        Voice.skippedCount = (Voice.skippedCount or 0) + 1
+        if Voice.skippedCount > 200 then
+            Voice.skippedKeys, Voice.skippedCount = {}, 1
+        end
         Voice.skippedKeys[tag] = true
         local skipped = Voice.stats.skipped
         skipped[reason] = (skipped[reason] or 0) + 1
@@ -595,16 +600,29 @@ function Voice:ClearQueue()
 end
 
 
+
+
+local function repeatText(step)
+    if ARRIVAL_KINDS[step.kind] then return step.text end
+    return step.voiceText or step.text
+end
+
+local function repeatClips(step)
+    if type(step) == "table" and ARRIVAL_KINDS[step.kind] then return nil end
+    return Voice.ClipsFor(step)
+end
+
+
 function Voice:Repeat()
     local text
     local step = self.currentStep
-    if type(step) == "table" then text = step.voiceText or step.text end
+    if type(step) == "table" then text = repeatText(step) end
     if not text then
         local Navigator = FGPS.Navigator
         local progress = Navigator and Navigator.GetProgress and select(2, pcall(Navigator.GetProgress, Navigator)) or nil
         local cur = type(progress) == "table" and progress.currentStep or nil
         if type(cur) == "table" then
-            text = cur.voiceText or cur.text
+            text = repeatText(cur)
 
 
             step = step or cur
@@ -620,7 +638,7 @@ function Voice:Repeat()
         return false
     end
     local ok, reason = self:Speak(text, { priority = Voice.PRIORITY_ALERT, key = "repeat:" .. tostring(now()), force = true, isStep = true,
-                              clips = Voice.ClipsFor(step) })
+                              clips = repeatClips(step) })
     if not ok and reason == "no clip" then
         FGPS:Print(L["That instruction has no recorded voice."])
     end
@@ -813,10 +831,20 @@ local function onInstruction(_, step, isNew)
     if isNew == false then
 
 
+
+        if ARRIVAL_KINDS[step.kind or "turn"] then return end
+
         local kind = step.kind or "turn"
         if not (DETAILED_KINDS[kind] and Voice:GetVerbosity() ~= "detailed") then
-            Voice:Speak(fullText(step, text), { priority = Voice.PRIORITY_TURN, key = stepKey(step, "reannounce"), isStep = true,
-                                                clips = fullClips(step) })
+            if Voice:Speak(fullText(step, text), { priority = Voice.PRIORITY_TURN, key = stepKey(step, "reannounce"), isStep = true,
+                                                   clips = fullClips(step) }) then
+
+                local dist = distanceToStep(step, Voice.lastProgress)
+                if dist and dist <= TURN_YARDS then
+                    local rec = announcedFor(step)
+                    rec.turn, rec.advance = true, true
+                end
+            end
         end
         return
     end
@@ -865,7 +893,7 @@ local function resetJourneyState()
     Voice.currentStep = nil
     Voice.lastProgress = nil
     Voice.recentKeys = {}
-    Voice.skippedKeys = {}
+    Voice.skippedKeys, Voice.skippedCount = {}, 0
     Voice.lastRecalc = -math.huge
     Voice.lastDepartText = nil
     Voice.rerouted = false
@@ -880,7 +908,7 @@ local function onRouteUpdated(_, route, reason)
     Voice.announced = {}
     Voice.currentStep = nil
     Voice.recentKeys = {}
-    Voice.skippedKeys = {}
+    Voice.skippedKeys, Voice.skippedCount = {}, 0
     Voice.rerouted = true
     Voice:ClearQueue()
 end
@@ -896,15 +924,40 @@ local function onCancelled(_, reason)
     end
 end
 
-local function onArrived(_, stopIndex, isFinal)
+
+
+
+
+local function isLastStop(stopIndex)
+    local Navigator = FGPS.Navigator
+    local route = Navigator and Navigator.GetRoute and Navigator:GetRoute() or nil
+    if type(route) ~= "table" then return false end
+    local stops = route.stops
+    if type(stops) ~= "table" then return true end
+    local i = tonumber(stopIndex)
+    return i ~= nil and i >= #stops
+end
+
+
+
+
+
+
+local function onArrived(_, stopIndex, isFinal, stayEnded)
+    if stayEnded then
+        Voice.announced = {}
+        Voice.currentStep = nil
+        return
+    end
+    local onTheWay = isFinal == false and not isLastStop(stopIndex)
     local text
-    if isFinal == false then
+    if onTheWay then
         text = format(L["Arrived at stop %d."], tonumber(stopIndex) or 0)
     else
         text = L["You have arrived at your destination."]
     end
     Voice:Speak(text, { priority = Voice.PRIORITY_ALERT, key = "arrived:" .. tostring(stopIndex or "final"),
-                        clips = { isFinal == false and "stop_reached" or "arrived" } })
+                        clips = { onTheWay and "stop_reached" or "arrived" } })
     if isFinal ~= false then
         Voice.announced = {}
         Voice.currentStep = nil
@@ -1118,7 +1171,7 @@ function Voice:Init()
         Events:RegisterWoW("VOICE_CHAT_TTS_PLAYBACK_FINISHED", onTtsEvent, self)
         Events:RegisterWoW("VOICE_CHAT_TTS_PLAYBACK_FAILED", onTtsEvent, self)
         Events:RegisterWoW("VOICE_CHAT_TTS_VOICES_UPDATE", onTtsEvent, self)
-        FGPS.Slash.Register("voice", slashVoice, L["Voice guidance: on|off|mute|repeat|list|voice <id>|rate <n>|volume <n>"])
+        FGPS.Slash.Register("voice", slashVoice, L["Voice guidance: on|off|mute|repeat|list|voice <id>|rate <n>|volume <n>|verbosity <level>|test"])
     end
     self:UpdateState()
 end

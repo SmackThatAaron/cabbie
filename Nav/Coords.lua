@@ -159,10 +159,19 @@ function Coords.ZoneAt(inst, x, y)
     if inst == nil or x == nil or y == nil then return nil end
     if not zoneListsBuilt then buildZoneLists() end
     local G = FGPS.Graph
-    if G and G.Nearest and G.NodeZone then
-        local ok, near = pcall(G.Nearest, G, inst, x, y, 25, 1)
-        local hit = ok and type(near) == "table" and near[1]
-        local mapId = hit and hit.key and G:NodeZone(hit.key)
+    if G and (G.NearestKey or G.Nearest) and G.NodeZone then
+
+
+        local ok, key
+        if G.NearestKey then
+            ok, key = pcall(G.NearestKey, G, inst, x, y, 25)
+        else
+            local near
+            ok, near = pcall(G.Nearest, G, inst, x, y, 25, 1)
+            local hit = ok and type(near) == "table" and near[1]
+            key = hit and hit.key
+        end
+        local mapId = ok and key and G:NodeZone(key)
         local named = mapId and zoneById[inst] and zoneById[inst][mapId]
 
 
@@ -206,7 +215,8 @@ end
 local function dataMap(uiMapID)
     local maps = FGPS.Data and FGPS.Data.maps
     local m = maps and maps[uiMapID]
-    if hasBounds(m) and m.inst ~= nil and m.inst >= 0 then return m end
+
+    if hasBounds(m) and m.inst ~= nil and m.inst >= 0 and m.maxX > m.minX and m.maxY > m.minY then return m end
     return nil
 end
 
@@ -220,8 +230,8 @@ function Coords.MapToWorld(uiMapID, mx, my)
     if inst or rows then return inst, x, y end
     local hbd = Coords.HBD
     if hbd then
-        local x, y, inst = hbd:GetWorldCoordinatesFromZone(mx, my, uiMapID)
-        if x and y and inst and inst >= 0 then return inst, x, y end
+        local hx, hy, hinst = hbd:GetWorldCoordinatesFromZone(mx, my, uiMapID)
+        if hx and hy and hinst and hinst >= 0 then return hinst, hx, hy end
     end
     local m = dataMap(uiMapID)
     if m then
@@ -244,28 +254,48 @@ local function bestMapFor(inst, x, y)
     end
     local hbd = Coords.HBD
     if hbd then
+
+
+
+
+
+
         local list = hbdZoneCache[inst]
         if not list then
             list = {}
             hbdZoneCache[inst] = list
             local ok, ids = pcall(hbd.GetAllMapIDs, hbd)
             if ok and type(ids) == "table" then
-                for _, mapID in ipairs(ids) do
-                    local px, py, mapInst = hbd:GetWorldCoordinatesFromZone(0.5, 0.5, mapID)
-                    if px and mapInst == inst then list[#list + 1] = mapID end
+                for order, mapID in ipairs(ids) do
+                    local px, _, mapInst = hbd:GetWorldCoordinatesFromZone(0.5, 0.5, mapID)
+                    if px and mapInst == inst then
+                        local left, top = hbd:GetWorldCoordinatesFromZone(0, 0, mapID)
+                        local w, h = hbd:GetZoneSize(mapID)
+                        local area = (w or 0) * (h or 0)
+                        if left and top and w and h and w ~= 0 and h ~= 0 and area > 0 then
+
+                            list[#list + 1] = { id = mapID, left = left, top = top, w = w, h = h, area = area, order = order,
+                                                ask = mapID == 947 or nil }
+                        end
+                    end
                 end
+                table.sort(list, function(a, b)
+                    if a.area ~= b.area then return a.area < b.area end
+                    return a.order < b.order
+                end)
             end
         end
-        local best, bestArea
-        for _, mapID in ipairs(list) do
-            local zx, zy = hbd:GetZoneCoordinatesFromWorld(x, y, mapID)
-            if zx and zy then
-                local w, h = hbd:GetZoneSize(mapID)
-                local area = (w or 0) * (h or 0)
-                if area > 0 and (not bestArea or area < bestArea) then best, bestArea = mapID, area end
+        for i = 1, #list do
+            local m = list[i]
+            if m.ask then
+                local zx, zy = hbd:GetZoneCoordinatesFromWorld(x, y, m.id)
+                if zx and zy then return m.id end
+            else
+                local zx, zy = (m.left - x) / m.w, (m.top - y) / m.h
+                if zx >= 0 and zx <= 1 and zy >= 0 and zy <= 1 then return m.id end
             end
         end
-        return best
+        return nil
     end
     return nil
 end

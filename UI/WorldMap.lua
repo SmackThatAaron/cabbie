@@ -27,6 +27,10 @@
 
 
 
+
+
+
+
 local ADDON_NAME, FGPS = ...
 
 local L = FGPS.L
@@ -87,6 +91,13 @@ local WorldMap = {
     drawnLevelZ = nil,
     levelBandLow = nil,
     levelBandHigh = nil,
+
+
+    drawInPending = false,
+
+
+    drawInSupport = nil,
+    drawInUntil = nil,
 }
 FGPS.UI.WorldMap = WorldMap
 
@@ -109,10 +120,18 @@ local DASH_ON, DASH_OFF = 9, 6
 
 local DASH_UNDERLAY_ALPHA = 0.35
 local CLICK_PRIORITY = 95
-local PIN_SIZE = 28
-local NUMBER_FONT = "GameFontNormalSmall"
-local PIN_TEXTURE = "Interface\\AddOns\\Cabbie\\Media\\pin"
-local PIN_GLOW_TEXTURE = "Interface\\AddOns\\Cabbie\\Media\\dot"
+
+
+
+
+WorldMap.STOP_RING = "Interface\\AddOns\\Cabbie\\Media\\stop_ring"
+WorldMap.MAP_X = "Interface\\AddOns\\Cabbie\\Media\\map_x"
+local STOP_GROUND_TEXTURE = "Interface\\AddOns\\Cabbie\\Media\\dot"
+local PIN_SIZE = 32
+local RING_SIZE = 24
+
+
+WorldMap.RING_BOX = PIN_SIZE / RING_SIZE
 
 
 local TELEPORT_KINDS = { hearth = true, spell = true, portal = true }
@@ -140,13 +159,6 @@ FGPS.UI.AddSettingDefault("worldMapLegend", true)
 
 FGPS.UI.AddSettingDefault("openWithMap", false)
 
-local DEFAULT_COLORS = {
-    routeVerified = { 0.25, 0.80, 1.00, 0.95 },
-    routeUnverified = { 1.00, 0.55, 0.10, 0.95 },
-    routeTransport = { 0.80, 0.65, 1.00, 0.85 },
-    accent = { 0.31, 0.76, 0.97, 1.0 },
-}
-
 
 
 
@@ -154,20 +166,47 @@ local function settings()
     return FGPS.DB and FGPS.DB.settings or nil
 end
 
-local function skinColor(name)
+
+local function colorOf(c)
+    if type(c) ~= "table" then return nil end
+    local r, g, b, a = c[1] or c.r, c[2] or c.g, c[3] or c.b, c[4] or c.a
+    if r and g and b then return r, g, b, a or 1 end
+    return nil
+end
+
+
+local function ownSkinColor(name)
     local Skins = FGPS.UI.Skins
     if Skins and Skins.Current then
         local ok, skin = pcall(Skins.Current)
-        if ok and type(skin) == "table" and type(skin.colors) == "table" then
-            local c = skin.colors[name]
-            if type(c) == "table" then
-                local r, g, b, a = c[1] or c.r, c[2] or c.g, c[3] or c.b, c[4] or c.a
-                if r and g and b then return r, g, b, a or 1 end
-            end
+        if ok and type(skin) == "table" and type(skin.colors) == "table" then return colorOf(skin.colors[name]) end
+    end
+    return nil
+end
+
+
+local STROKE_INK_ALPHA = { routeVerified = 0.95, routeUnverified = 0.95, routeTransport = 0.85 }
+
+
+
+
+
+
+
+
+local function strokeColor(name)
+    local Skins = FGPS.UI.Skins
+    if Skins and Skins.ColorScheme then
+        local ok, scheme = pcall(Skins.ColorScheme)
+        if ok and type(scheme) == "table" and type(scheme.colors) == "table" then
+            local r, g, b, a = ownSkinColor(name)
+            if r then return r, g, b, a end
+            r, g, b, a = colorOf(scheme.colors[name])
+            if r then return r, g, b, a end
         end
     end
-    local d = DEFAULT_COLORS[name] or DEFAULT_COLORS.routeVerified
-    return d[1], d[2], d[3], d[4]
+    local r, g, b = FGPS.UI.Look.Color("route")
+    return r, g, b, STROKE_INK_ALPHA[name]
 end
 
 
@@ -661,6 +700,7 @@ function WorldMap.ComputeSegments(route, mapID, opts)
 end
 
 
+
 function WorldMap.ComputeStops(route, mapID)
     local pins = {}
     if type(route) ~= "table" or type(mapID) ~= "number" then return pins end
@@ -672,7 +712,7 @@ function WorldMap.ComputeStops(route, mapID)
             if type(dest) == "table" and dest.x and dest.y and (inst == nil or dest.inst == nil or dest.inst == inst) then
                 local mx, my = toMap(dest.inst or inst, dest.x, dest.y, mapID)
                 if mx and mx >= 0 and mx <= 1 and my >= 0 and my <= 1 then
-                    pins[#pins + 1] = { x = mx, y = my, index = i, name = dest.name, isFinal = (i == #stops) }
+                    pins[#pins + 1] = { x = mx, y = my, index = i, name = dest.name, isFinal = (i == #stops), dest = dest }
                 end
             end
         end
@@ -749,6 +789,12 @@ local function ensurePools()
         line:Hide()
         line:ClearAllPoints()
         line.normalizedX1, line.normalizedY1, line.normalizedX2, line.normalizedY2 = nil, nil, nil, nil
+
+
+
+        local drawIn = line.DrawIn
+        if drawIn then drawIn:Stop() end
+        line:SetAlpha(1)
     end)
 
 
@@ -782,8 +828,12 @@ function WorldMap:ClearDrawing()
     if self.labelPool then self.labelPool:ReleaseAll() end
     self.lastSegmentCount = 0
     self.lastDrawMapID = nil
+    self.drawnView = nil
 
-    if self.legend then self.legend:Hide() end
+    self.drawInUntil = nil
+
+    self.finalPinShown = false
+    if self.cartouche then self.cartouche:Hide() end
 end
 
 
@@ -798,6 +848,190 @@ local function placeLine(line, canvas, w, h, x1, y1, x2, y2, r, g, b, a, thickne
     line:SetColorTexture(r, g, b, a)
     line:SetThickness(thickness)
     line:Show()
+end
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+local drawInOrder = {}
+local drawInAt = {}
+local drawInLength = {}
+local collectDrawIn = false
+
+
+
+
+
+local inkFromX, inkFromY, inkFrom, inkLength, inkPer, inkOnX = nil, nil, 0, 0, 0, true
+
+local function clearList(list)
+    for i = #list, 1, -1 do list[i] = nil end
+end
+
+
+local function inkSegment(x1, y1, x2, y2, w, h)
+    local left, top, right, bottom = WorldMap._viewL, WorldMap._viewT, WorldMap._viewR, WorldMap._viewB
+    if left then
+        x1, y1, x2, y2 = clipRect(x1, y1, x2, y2, left, top, right, bottom)
+        if not x1 then
+            inkFromX = nil
+            return
+        end
+    end
+    local dx, dy = (x2 - x1) * w, (y2 - y1) * h
+    local length = sqrt(dx * dx + dy * dy)
+    inkFromX, inkFromY, inkFrom = x1, y1, inkLength
+    inkLength = inkLength + length
+
+
+    inkOnX = (dx < 0 and -dx or dx) >= (dy < 0 and -dy or dy)
+    local axis = inkOnX and (x2 - x1) or (y2 - y1)
+    inkPer = axis ~= 0 and length / axis or 0
+end
+
+
+local function newDrawIn(line)
+    local group = line:CreateAnimationGroup()
+    local fade = group:CreateAnimation("Alpha")
+    fade:SetFromAlpha(0)
+    fade:SetToAlpha(1)
+    group.fade = fade
+    if group.SetToFinalAlpha then group:SetToFinalAlpha(true) end
+    return group
+end
+
+
+
+
+
+local function addGrow(group)
+    local scale = group:CreateAnimation("LineScale")
+    if type(scale) ~= "table" then error("no LineScale animation", 0) end
+    group.grow = scale
+    scale:SetOrigin("LEFT", 0, 0)
+    scale:SetScaleFrom(0.001, 1)
+    scale:SetScaleTo(1, 1)
+end
+
+
+
+local function wholeAgain(group) group:GetParent():SetAlpha(1) end
+
+
+
+
+
+local function drawInGroup(line)
+    local group = line.DrawIn
+    if group ~= nil then return group or nil end
+    line.DrawIn = false
+    local support = WorldMap.drawInSupport
+    if support == false then return nil end
+    local Look = FGPS.UI.Look
+    if type(line.CreateAnimationGroup) ~= "function" then
+        WorldMap.drawInSupport = false
+        Look.NoteOnce("map:drawIn", "Map draw-in: none (no CreateAnimationGroup); a new route appears at once")
+        return nil
+    end
+    local ok, made = pcall(newDrawIn, line)
+    local refused
+    if ok and support ~= "fade" then
+        local grown, why = pcall(addGrow, made)
+        if not grown then
+            refused = why
+
+
+
+            if made.grow then ok, made = pcall(newDrawIn, line) end
+        end
+    end
+    if not ok then
+        WorldMap.drawInSupport = false
+        Look.NoteOnce("map:drawIn", "Map draw-in: none (%s); a new route appears at once", tostring(made))
+        return nil
+    end
+    if refused == nil and support ~= "fade" then
+        WorldMap.drawInSupport = "grow"
+        Look.NoteOnce("map:drawIn", "Map draw-in: fade and LineScale")
+    else
+        WorldMap.drawInSupport = "fade"
+        if refused then Look.NoteOnce("map:drawIn", "Map draw-in: fade only (LineScale: %s)", tostring(refused)) end
+    end
+    made:SetScript("OnFinished", wholeAgain)
+    made:SetScript("OnStop", wholeAgain)
+    line.DrawIn = made
+    return made
+end
+
+
+
+
+
+local function playDrawIn(lines, total)
+    if WorldMap.drawInSupport == false then return 0 end
+    local played = 0
+    local n = #lines
+    local span = FGPS.UI.Look.TOKENS.drawIn
+    for i = 1, n do
+        local line = lines[i]
+        local group = drawInGroup(line)
+        if group then
+            local delay, share
+            if total > 0 then
+                delay = drawInAt[i] / total * span
+                share = drawInLength[i] / total * span
+                if delay > span then delay = span end
+
+
+                if delay < 0 then delay = 0 end
+                if delay + share > span then share = span - delay end
+            else
+                delay, share = (i - 1) / n * span, span / n
+            end
+            group.fade:SetStartDelay(delay)
+            group.fade:SetDuration(share)
+            local grow = group.grow
+            if grow then
+                grow:SetStartDelay(delay)
+                grow:SetDuration(share)
+            end
+            line:SetAlpha(0)
+            group:Play()
+            played = played + 1
+        end
+    end
+    return played
+end
+
+
+
+
+local function startDrawIn(lines, total)
+    local ok, played = pcall(playDrawIn, lines, total)
+    if ok then
+        if played > 0 then WorldMap.drawInUntil = (GetTime and GetTime() or 0) + FGPS.UI.Look.TOKENS.drawIn end
+        return
+    end
+    local err = played
+    WorldMap.drawInSupport = false
+    FGPS.UI.Look.NoteOnce("map:drawIn:play", "Map draw-in failed (%s); the line is drawn whole", tostring(err))
+    for i = 1, #lines do
+        local line = lines[i]
+        local group = line.DrawIn
+        if group then group:Stop() end
+        line:SetAlpha(1)
+    end
 end
 
 
@@ -863,30 +1097,72 @@ local function emitLine(pool, canvas, w, h, scale, x1, y1, x2, y2, r, g, b, a, t
     if pieces > 128 then pieces = 128 end
     for i = 1, pieces do
         local t0, t1 = (i - 1) / pieces, i / pieces
-        placeLine(pool:Acquire(), canvas, w, h,
-            x1 + (x2 - x1) * t0, y1 + (y2 - y1) * t0,
-            x1 + (x2 - x1) * t1, y1 + (y2 - y1) * t1, r, g, b, a, thickness)
+        local line = pool:Acquire()
+        local px, py = x1 + (x2 - x1) * t0, y1 + (y2 - y1) * t0
+        placeLine(line, canvas, w, h, px, py, x1 + (x2 - x1) * t1, y1 + (y2 - y1) * t1, r, g, b, a, thickness)
+        if collectDrawIn then
+
+            local n = #drawInOrder + 1
+            local at = inkFrom
+            if inkFromX then at = at + (inkOnX and px - inkFromX or py - inkFromY) * inkPer end
+            drawInOrder[n], drawInAt[n], drawInLength[n] = line, at, localLen / pieces
+        end
     end
     return pieces
 end
 
+
+
+
+
+
+local function itineraryIndex(Navigator, index, dest)
+    if type(dest) ~= "table" or not Navigator.GetStops then return nil end
+    local ok, stops = pcall(Navigator.GetStops, Navigator)
+    if not ok or type(stops) ~= "table" then return nil end
+    local D = FGPS.Destinations
+    local function same(stop)
+        return stop == dest or (D ~= nil and D.Equal ~= nil and D.Equal(stop, dest) == true)
+    end
+    if type(index) == "number" and stops[index] ~= nil and same(stops[index]) then return index end
+    for i = 1, #stops do
+        if same(stops[i]) then return i end
+    end
+    return nil
+end
+
+
+local PIN_HINTS = { L["Shift+Right-click to remove"], L["Right-click for options"] }
+
 local function setupPin(pin)
     if pin.fgpsReady then return end
     pin.fgpsReady = true
+    local Look = FGPS.UI.Look
     pin:SetSize(PIN_SIZE, PIN_SIZE)
 
+    pin.Fill = pin:CreateTexture(nil, "BACKGROUND")
+    pin.Fill:SetSize(RING_SIZE, RING_SIZE)
+    pin.Fill:SetPoint("CENTER", pin, "CENTER", 0, 0)
+    pin.Fill:SetTexture(STOP_GROUND_TEXTURE)
+    pin.Ring = pin:CreateTexture(nil, "ARTWORK")
+    pin.Ring:SetAllPoints(pin)
+    pin.Ring:SetTexture(WorldMap.STOP_RING)
+    pin.Number = pin:CreateFontString(nil, "OVERLAY", Look.Font("rowSmall"))
+    pin.Number:SetPoint("CENTER", pin, "CENTER", 0, 0)
 
-    pin.glow = pin:CreateTexture(nil, "BACKGROUND")
-    pin.glow:SetSize(PIN_SIZE * 1.7, PIN_SIZE * 1.7)
-    pin.glow:SetPoint("CENTER", pin, "TOP", 0, -PIN_SIZE * 0.36)
-    pin.glow:SetTexture(PIN_GLOW_TEXTURE)
-    pin.bg = pin:CreateTexture(nil, "ARTWORK")
-    pin.bg:SetAllPoints(pin)
-    pin.bg:SetTexture(PIN_TEXTURE)
-    pin.number = pin:CreateFontString(nil, "OVERLAY", NUMBER_FONT)
+    pin.Label = pin:CreateFontString(nil, "OVERLAY", Look.Font("rowSmall"))
+    pin.Label:SetPoint("LEFT", pin, "RIGHT", Look.TOKENS.gap - (PIN_SIZE - RING_SIZE) / 2, 0)
 
-    pin.number:SetPoint("CENTER", pin, "TOP", 0, -PIN_SIZE * 0.36)
-    pin.number:SetTextColor(0.08, 0.10, 0.14, 1)
+
+    pin.Mark = pin:CreateTexture(nil, "ARTWORK")
+    pin.Mark:SetAllPoints(pin)
+    pin.Mark:SetTexture(WorldMap.MAP_X)
+    pin.Name = pin:CreateFontString(nil, "OVERLAY", Look.Font("mapLabel"))
+    pin.Name:SetPoint("TOP", pin, "BOTTOM", 0, 0)
+    pin.Sub = pin:CreateFontString(nil, "OVERLAY", Look.Font("hint"))
+    pin.Sub:SetPoint("TOP", pin.Name, "BOTTOM", 0, 0)
+
+
 
 
 
@@ -894,44 +1170,80 @@ local function setupPin(pin)
     pin:RegisterForClicks("RightButtonUp")
     pin:SetScript("OnClick", function(self, button)
         if button ~= "RightButton" then return end
-        if not (IsShiftKeyDown and IsShiftKeyDown()) then return end
-        local index = self.fgpsIndex
+        if not (IsShiftKeyDown and IsShiftKeyDown()) then
+            if (IsControlKeyDown and IsControlKeyDown()) or (IsAltKeyDown and IsAltKeyDown()) then return end
+            if GameTooltip and GameTooltip.IsOwned and GameTooltip:IsOwned(self) then GameTooltip:Hide() end
+            local Menus = FGPS.UI.Menus
+            if Menus and Menus.OpenRouteMenu then
+                local ok, err = pcall(Menus.OpenRouteMenu, self)
+                if not ok then FGPS.Log:Error("OpenRouteMenu failed: %s", tostring(err)) end
+            end
+            return
+        end
         local Navigator = FGPS.Navigator
-        if type(index) == "number" and Navigator and Navigator.RemoveStop then
+        if not (Navigator and Navigator.RemoveStop) then return end
+        local index = itineraryIndex(Navigator, self.fgpsIndex, self.fgpsDest)
+        if index then
             local ok, err = pcall(Navigator.RemoveStop, Navigator, index)
             if not ok then FGPS.Log:Error("RemoveStop failed: %s", tostring(err)) end
         end
     end)
     pin:SetScript("OnEnter", function(self)
-        if not GameTooltip then return end
-        local name = self.fgpsName or L["Stop"]
-        local index = self.fgpsIndex or "?"
-        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:AddLine(format(L["Stop %s: %s"], tostring(index), name))
-        GameTooltip:AddLine(L["Shift+Right-click to remove"], 1, 1, 1, true)
-        GameTooltip:Show()
+        local title = format(L["Stop %s: %s"], tostring(self.fgpsIndex or "?"), self.fgpsName or L["Stop"])
+        FGPS.UI.Look.Tooltip(self, title, nil, PIN_HINTS)
     end)
     pin:SetScript("OnLeave", function(self)
         if GameTooltip and (not GameTooltip.IsOwned or GameTooltip:IsOwned(self)) then GameTooltip:Hide() end
     end)
 end
 
-local function placePin(pin, canvas, w, h, scale, entry)
+
+
+
+
+local function wayLeft(route, progress)
+    if type(route) ~= "table" then return nil end
+    local yards, seconds
+    if type(progress) == "table" then yards, seconds = progress.remainingYards, progress.remainingSeconds end
+    if type(yards) ~= "number" then yards = route.totalYards end
+    if type(seconds) ~= "number" then seconds = route.totalSeconds end
+    local Look = FGPS.UI.Look
+    local distance = type(yards) == "number" and Look.Distance(yards) or nil
+    local about = Look.About(seconds)
+    if distance and about then return distance .. " \194\183 " .. about end
+    return distance or about
+end
+
+
+local function placePin(pin, canvas, w, h, scale, entry, way)
+    local Look = FGPS.UI.Look
     pin.normalizedX, pin.normalizedY = entry.x, entry.y
-    pin.fgpsIndex, pin.fgpsName = entry.index, entry.name
+    pin.fgpsIndex, pin.fgpsName, pin.fgpsDest = entry.index, entry.name, entry.dest
     pin:SetScale(1 / scale)
     pin:ClearAllPoints()
 
-    pin:SetPoint("BOTTOM", canvas, "TOPLEFT", (entry.x * w) * scale, -(entry.y * h) * scale)
-    pin.number:SetText(tostring(entry.index))
-    local r, g, b = skinColor("accent")
-    if entry.isFinal then
-        pin.bg:SetVertexColor(r, g, b, 1)
-        pin.glow:SetVertexColor(r, g, b, 0.55)
+    pin:SetPoint("CENTER", canvas, "TOPLEFT", (entry.x * w) * scale, -(entry.y * h) * scale)
+    local final = entry.isFinal == true
+    pin.Fill:SetShown(not final)
+    pin.Ring:SetShown(not final)
+    pin.Number:SetShown(not final)
+    pin.Label:SetShown(not final)
+    pin.Mark:SetShown(final)
+    pin.Name:SetShown(final)
+    pin.Sub:SetShown(final and way ~= nil)
+    if final then
+        pin.Mark:SetVertexColor(Look.Color("route"))
+        pin.Name:SetText(entry.name or "")
+        pin.Name:SetTextColor(Look.Color("gilt"))
+        pin.Sub:SetText(way or "")
+        pin.Sub:SetTextColor(Look.Color("grey"))
     else
-
-        pin.bg:SetVertexColor(0.92, 0.94, 0.98, 1)
-        pin.glow:SetVertexColor(r, g, b, 0.30)
+        pin.Fill:SetVertexColor(Look.Color("paleRing"))
+        pin.Ring:SetVertexColor(Look.Color("route"))
+        pin.Number:SetText(tostring(entry.index))
+        pin.Number:SetTextColor(Look.Color("rubric"))
+        pin.Label:SetText(entry.name or "")
+        pin.Label:SetTextColor(Look.Color("gilt"))
     end
     pin:Show()
 end
@@ -949,7 +1261,8 @@ local function setupLabel(label)
     label.icon:SetSize(DOCK_ICON_SIZE, DOCK_ICON_SIZE)
     label.icon:SetPoint("CENTER", label, "CENTER", 0, 0)
     label.icon:Hide()
-    label.text = label:CreateFontString(nil, "OVERLAY", NUMBER_FONT)
+
+    label.text = label:CreateFontString(nil, "OVERLAY", FGPS.UI.Look.Font("mapLabel"))
     label.text:SetJustifyH("LEFT")
     label:EnableMouse(false)
 end
@@ -965,8 +1278,7 @@ local function placeLabel(label, canvas, w, h, scale, entry)
     label.text:ClearAllPoints()
     label.text:SetPoint("LEFT", label, "CENTER", entry.icon and (DOCK_ICON_SIZE / 2 + 3) or LABEL_OFFSET, 0)
     label.text:SetText(entry.text)
-    local r, g, b = skinColor("routeTransport")
-    label.text:SetTextColor(r, g, b, 1)
+    label.text:SetTextColor(FGPS.UI.Look.Color("gilt"))
     label:Show()
 end
 
@@ -990,6 +1302,12 @@ end
 
 
 function WorldMap:Redraw()
+
+
+
+
+    local drawIn = self.drawInPending == true
+    self.drawInPending = false
     local map = WorldMapFrame
     if not map or not self.overlay then return end
     if not ensurePools() then return end
@@ -1063,9 +1381,9 @@ function WorldMap:Redraw()
     self.drawnLevelZ = levelZ
     self.levelBandLow = segInfo and segInfo.levelLow
     self.levelBandHigh = segInfo and segInfo.levelHigh
-    local vr, vg, vb, va = skinColor("routeVerified")
-    local ur, ug, ub, ua = skinColor("routeUnverified")
-    local tr, tg, tb, ta = skinColor("routeTransport")
+    local vr, vg, vb, va = strokeColor("routeVerified")
+    local ur, ug, ub, ua = strokeColor("routeUnverified")
+    local tr, tg, tb, ta = strokeColor("routeTransport")
     if self.routeIsPreview then va, ua, ta = va * 0.8, ua * 0.8, ta * 0.8 end
     local fade = WorldMap.OTHER_LEVEL_ALPHA
 
@@ -1077,9 +1395,20 @@ function WorldMap:Redraw()
 
     local spareDashes = budget - #segments
     if spareDashes < 0 then spareDashes = 0 end
+
+
+    drawIn = drawIn and drawRoute
+    if drawIn then
+        clearList(drawInOrder)
+        clearList(drawInAt)
+        clearList(drawInLength)
+        inkFromX, inkFromY, inkFrom, inkLength, inkPer, inkOnX = nil, nil, 0, 0, 0, true
+    end
+    collectDrawIn = drawIn
     for _, seg in ipairs(segments) do
         if used >= budget then break end
         local x1, y1, x2, y2 = seg[1], seg[2], seg[3], seg[4]
+        if drawIn then inkSegment(x1, y1, x2, y2, w, h) end
 
         local f = seg.otherLevel and fade or 1
         if seg.unverified then
@@ -1146,11 +1475,18 @@ function WorldMap:Redraw()
             used = used + 1
         end
     end
+    collectDrawIn = false
 
-    for _, entry in ipairs(WorldMap.ComputeStops(markerSource, mapID)) do
+    local stops = WorldMap.ComputeStops(markerSource, mapID)
+    local way
+    if #stops > 0 and drawRoute then way = wayLeft(self.route, not self.routeIsPreview and self.progress or nil) end
+
+    self.finalPinShown = false
+    for _, entry in ipairs(stops) do
         local pin = self.pinPool:Acquire()
         setupPin(pin)
-        placePin(pin, canvas, w, h, scale, entry)
+        placePin(pin, canvas, w, h, scale, entry, way)
+        if entry.isFinal then self.finalPinShown = true end
     end
     for _, entry in ipairs(drawRoute and WorldMap.ComputeTransportLabels(self.route, mapID, fromLeg) or {}) do
         local label = self.labelPool:Acquire()
@@ -1159,15 +1495,37 @@ function WorldMap:Redraw()
     end
     self.lastSegmentCount = used
     self.lastDrawMapID = mapID
-    self:UpdateLegend()
+    self.drawnView = { mapID = mapID, scale = scale, w = w, h = h,
+                       l = self._viewL, t = self._viewT, r = self._viewR, b = self._viewB }
+    self:UpdateCartouche()
+
+    if drawIn and #drawInOrder > 0 then
+        startDrawIn(drawInOrder, inkLength)
+        clearList(drawInOrder)
+    end
     if Perf then Perf:End("mapRedraw") end
+end
+
+
+
+
+
+function WorldMap:RedrawForCanvas()
+    local v, map = self.drawnView, WorldMapFrame
+    local canvas = v and map and map.GetCanvas and map:GetCanvas()
+    if canvas and map:GetMapID() == v.mapID and canvasScale() == v.scale
+        and canvas:GetWidth() == v.w and canvas:GetHeight() == v.h then
+        local l, t, r, b = visibleNormRect(map)
+        if l == v.l and t == v.t and r == v.r and b == v.b then return end
+    end
+    self:Redraw()
 end
 
 
 function WorldMap:OnScaleChanged()
 
 
-    self:Redraw()
+    self:RedrawForCanvas()
 end
 
 
@@ -1224,8 +1582,8 @@ local function createProvider()
         WorldMap:OnMapHidden()
     end
     function provider:OnCanvasScaleChanged() WorldMap:OnScaleChanged() end
-    function provider:OnCanvasPanChanged() WorldMap:Redraw() end
-    function provider:OnCanvasSizeChanged() WorldMap:Redraw() end
+    function provider:OnCanvasPanChanged() WorldMap:RedrawForCanvas() end
+    function provider:OnCanvasSizeChanged() WorldMap:RedrawForCanvas() end
     return provider
 end
 
@@ -1292,6 +1650,12 @@ end
 
 WorldMap.GO_REFUSED_SECONDS = 4
 
+local function reasonText(err)
+    local C = FGPS.UI and FGPS.UI.Compat
+    if C and C.ReasonText then return C.ReasonText(err, L["unknown reason"]) end
+    return tostring(err)
+end
+
 function WorldMap:OnCanvasClick(mapCanvas, button, cursorX, cursorY)
     local goNow = WorldMap.IsGoClick(button)
     if not (goNow or WorldMap.ClickMatches(button)) then return false end
@@ -1320,7 +1684,7 @@ function WorldMap:OnCanvasClick(mapCanvas, button, cursorX, cursorY)
 
             local Guide = FGPS.UI and FGPS.UI.Guide
             if Guide and Guide.Say then
-                Guide.Say((L["That map position cannot be used as a destination%s"]):format(err and (": " .. FGPS.UI.Compat.ReasonText(err, L["unknown reason"])) or "."),
+                Guide.Say((L["That map position cannot be used as a destination%s"]):format(err and (": " .. reasonText(err)) or "."),
                     WorldMap.GO_REFUSED_SECONDS)
             end
         end
@@ -1351,146 +1715,174 @@ end
 
 
 
-WorldMap.LEGEND = {
-    { style = "solid", color = "routeVerified", text = "Solid line: road or walkable ground" },
-    { style = "dashed", color = "routeUnverified", text = "Dashed line: open ground or a guess" },
-    { style = "transport", color = "routeTransport", text = "Dotted coloured line: flight, boat or zeppelin" },
-    { style = "icon", icon = DOCK_ICONS.boat, color = "routeTransport",
-      text = "Boat or zeppelin icon: where you board; the label beside it names the far side" },
-}
-
-WorldMap.LEGEND_MINIMAP = "On the minimap a solid dot is a road or walkable ground, and a larger hollow dot is open ground or a guess."
-
-local function colorEscape(colorName)
-    local r, g, b = skinColor(colorName)
-    local function byte(v) return floor(Util.Clamp(v or 1, 0, 1) * 255 + 0.5) end
-    return string.format("|cff%02x%02x%02x", byte(r), byte(g), byte(b))
-end
-
-
-
-
 function WorldMap.TooltipLines()
-    local lines = {
-        L.ADDON_TITLE,
-        L["Open the Cabbie destination search"],
-        L["Right-click: clear the route and every stop"],
-        L["Route lines on the map:"],
-    }
-    for _, entry in ipairs(WorldMap.LEGEND) do
-        local icon = entry.icon and ("|T" .. entry.icon .. ":14|t ") or ""
-        lines[#lines + 1] = icon .. colorEscape(entry.color) .. L[entry.text] .. "|r"
-    end
-    lines[#lines + 1] = L[WorldMap.LEGEND_MINIMAP]
-    return lines
-end
-
-
-
-
-local LEGEND_SAMPLE_WIDTH = 26
-local LEGEND_ROW_HEIGHT = 26
-local LEGEND_WIDTH = 300
-
-
-
-
-local function buildLegendRow(parent, index, entry)
-    local row = CreateFrame("Frame", nil, parent)
-    row:SetSize(LEGEND_WIDTH - 12, LEGEND_ROW_HEIGHT)
-    row:SetPoint("TOPLEFT", parent, "TOPLEFT", 6, -(4 + (index - 1) * LEGEND_ROW_HEIGHT))
-    row:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -6, -(4 + (index - 1) * LEGEND_ROW_HEIGHT))
-    row.samples = {}
-    if entry.style == "icon" then
-        row.icon = row:CreateTexture(nil, "ARTWORK")
-        row.icon:SetTexture(entry.icon)
-        row.icon:SetSize(16, 16)
-        row.icon:SetPoint("LEFT", row, "LEFT", (LEGEND_SAMPLE_WIDTH - 16) / 2, 0)
+    local Launcher = FGPS.UI.Launcher
+    local hint
+    if Launcher and type(Launcher.ClickHint) == "function" then
+        hint = Launcher.ClickHint()
     else
-        local pieces = (entry.style == "dashed") and 3 or 1
-        local gap = (entry.style == "dashed") and 3 or 0
-        local width = (LEGEND_SAMPLE_WIDTH - gap * (pieces - 1)) / pieces
-        for i = 1, pieces do
-            local tex = row:CreateTexture(nil, "ARTWORK")
-            tex:SetTexture("Interface\\Buttons\\WHITE8X8")
-            tex:SetSize(width, 2)
-            tex:SetPoint("LEFT", row, "LEFT", (i - 1) * (width + gap), 0)
-            row.samples[i] = tex
-        end
+        hint = L["Click to open"] .. " \194\183 " .. L["Right-click for options"]
     end
-    row.text = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    row.text:SetPoint("LEFT", row, "LEFT", LEGEND_SAMPLE_WIDTH + 6, 0)
-    row.text:SetPoint("RIGHT", row, "RIGHT", -2, 0)
-    row.text:SetJustifyH("LEFT")
-    row.text:SetJustifyV("MIDDLE")
-    if row.text.SetWordWrap then row.text:SetWordWrap(true) end
-    row.text:SetText(L[entry.text])
-    row.color = entry.color
-    return row
+    return {
+        L.ADDON_TITLE,
+        L["A solid line is a road or walkable ground, a dashed line open ground or a guess."],
+        hint,
+    }
 end
 
-local function applyLegendColors(legend)
-    for _, row in ipairs(legend.rows or {}) do
-        local r, g, b, a = skinColor(row.color)
-        for _, tex in ipairs(row.samples) do tex:SetVertexColor(r, g, b, a or 1) end
-    end
+local function showCompassTooltip(button)
+    local lines = WorldMap.TooltipLines()
+    FGPS.UI.Look.Tooltip(button, lines[1], lines[2], lines[3], "ANCHOR_LEFT")
 end
 
-local function ensureLegend()
-    if WorldMap.legend then return WorldMap.legend end
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+WorldMap.CARTOUCHE_MAX_WIDTH = 260
+
+
+
+local function inkEdges(frame)
+    if not (type(PixelUtil) == "table" and type(PixelUtil.SetHeight) == "function"
+        and type(PixelUtil.SetWidth) == "function") then
+        return nil
+    end
+    local Look = FGPS.UI.Look
+    local edges = {}
+    local function edge(horizontal, a, b)
+        local tex = frame:CreateTexture(nil, "BORDER")
+        tex:SetColorTexture(Look.Color("ink"))
+        tex:SetPoint(a, frame, a, 0, 0)
+        tex:SetPoint(b, frame, b, 0, 0)
+        if horizontal then PixelUtil.SetHeight(tex, 1, 1) else PixelUtil.SetWidth(tex, 1, 1) end
+        edges[#edges + 1] = tex
+    end
+    edge(true, "TOPLEFT", "TOPRIGHT")
+    edge(true, "BOTTOMLEFT", "BOTTOMRIGHT")
+    edge(false, "TOPLEFT", "BOTTOMLEFT")
+    edge(false, "TOPRIGHT", "BOTTOMRIGHT")
+    return edges
+end
+
+local function ensureCartouche()
+    if WorldMap.cartouche then return WorldMap.cartouche end
     local map = WorldMapFrame
     if not map then return nil end
+    local picture = map.ScrollContainer or (map.GetCanvasContainer and map:GetCanvasContainer()) or map
+    local Look = FGPS.UI.Look
+    local tokens = Look.TOKENS
+    local frame = CreateFrame("Frame", nil, picture)
+    frame:EnableMouse(false)
+    frame:SetPoint("TOPRIGHT", picture, "TOPRIGHT", -tokens.gapWide, -tokens.gapWide)
 
 
-    local anchor = map.ScrollContainer or map.BorderFrame or map
-    local legend = CreateFrame("Frame", nil, anchor)
-    legend:SetSize(LEGEND_WIDTH, 10 + LEGEND_ROW_HEIGHT * #WorldMap.LEGEND + 32)
-    legend:SetPoint("BOTTOMLEFT", anchor, "BOTTOMLEFT", 16, 28)
-    legend:EnableMouse(false)
-    if anchor.GetFrameStrata then
-        pcall(legend.SetFrameStrata, legend, "HIGH")
-        pcall(legend.SetFrameLevel, legend, (WorldMap.overlay and WorldMap.overlay:GetFrameLevel() or anchor:GetFrameLevel()) + 2)
+
+
+
+
+
+    if frame.SetFrameStrata then pcall(frame.SetFrameStrata, frame, "HIGH") end
+    if frame.SetFrameLevel and WorldMap.overlay and WorldMap.overlay.GetFrameLevel then
+        pcall(frame.SetFrameLevel, frame, (WorldMap.overlay:GetFrameLevel() or 1) + 2)
     end
-    legend.bg = legend:CreateTexture(nil, "BACKGROUND")
-    legend.bg:SetAllPoints(legend)
-    legend.bg:SetTexture("Interface\\Buttons\\WHITE8X8")
-    legend.bg:SetVertexColor(0, 0, 0, 0.55)
-    legend.rows = {}
-    for i, entry in ipairs(WorldMap.LEGEND) do
-        legend.rows[i] = buildLegendRow(legend, i, entry)
-    end
-    legend.note = legend:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    legend.note:SetPoint("TOPLEFT", legend, "TOPLEFT", 6, -(4 + #WorldMap.LEGEND * LEGEND_ROW_HEIGHT))
-    legend.note:SetPoint("TOPRIGHT", legend, "TOPRIGHT", -6, -(4 + #WorldMap.LEGEND * LEGEND_ROW_HEIGHT))
-    legend.note:SetJustifyH("LEFT")
-    legend.note:SetText(L[WorldMap.LEGEND_MINIMAP])
-    if legend.note.SetWordWrap then legend.note:SetWordWrap(true) end
-
-
-    legend.close = FGPS.UI.Look.CloseButton(legend, function()
-        if GameTooltip then GameTooltip:Hide() end
-        if FGPS.DB then FGPS.DB:Set("worldMapLegend", false) end
-    end)
-    legend.close:EnableMouse(true)
-    legend.close:SetSize(22, 22)
-    legend.close:SetPoint("TOPRIGHT", legend, "TOPRIGHT", 2, 2)
-    legend.close:SetScript("OnEnter", function(self)
-        if not GameTooltip then return end
-        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:AddLine(L["Hide the map legend"])
-        GameTooltip:AddLine(L["Turn it back on in Cabbie's settings, or with /cabbie legend on."], 1, 1, 1, true)
-        GameTooltip:Show()
-    end)
-    legend.close:SetScript("OnLeave", function(self)
-        if GameTooltip and (not GameTooltip.IsOwned or GameTooltip:IsOwned(self)) then GameTooltip:Hide() end
-    end)
-    legend:Hide()
-    WorldMap.legend = legend
-    return legend
+    frame.Ground = frame:CreateTexture(nil, "BACKGROUND")
+    frame.Ground:SetAllPoints(frame)
+    frame.Ground:Hide()
+    frame.Edges = inkEdges(frame)
+    frame.Line1 = frame:CreateFontString(nil, "OVERLAY", Look.Font("pageBody"))
+    frame.Line1:SetPoint("TOPLEFT", frame, "TOPLEFT", tokens.gapWide, -tokens.gap)
+    frame.Line1:SetJustifyH("LEFT")
+    frame.Line1:SetWordWrap(false)
+    frame.Line2 = frame:CreateFontString(nil, "OVERLAY", Look.Font("pageSub"))
+    frame.Line2:SetPoint("TOPLEFT", frame.Line1, "BOTTOMLEFT", 0, -tokens.gap)
+    frame.Line2:SetJustifyH("LEFT")
+    frame.Line2:SetWordWrap(false)
+    frame:Hide()
+    WorldMap.cartouche = frame
+    return frame
 end
 
 
-function WorldMap.LegendWanted()
+
+
+local function paintGround(frame)
+    local Look = FGPS.UI.Look
+    if Look.TomeHas("atlas", Look.PARCHMENT_ATLAS) then
+        if frame.Ground._fgpsAtlas ~= Look.PARCHMENT_ATLAS then
+            frame.Ground:SetAtlas(Look.PARCHMENT_ATLAS)
+            frame.Ground._fgpsAtlas = Look.PARCHMENT_ATLAS
+        end
+        frame.Ground:Show()
+    else
+        frame.Ground:Hide()
+        Look.NoteOnce("map:cartouche", "World map label: atlas %s missing; the words show with no ground", Look.PARCHMENT_ATLAS)
+    end
+end
+
+
+
+local function cartoucheWords(route, xShown)
+    local stops = type(route.stops) == "table" and route.stops or {}
+    local last = stops[#stops]
+    local dest = type(last) == "table" and (last.dest or last) or nil
+    local name = type(dest) == "table" and dest.name or nil
+    if not (type(name) == "string" and name ~= "") then
+        local legs = type(route.legs) == "table" and route.legs or {}
+        local leg = legs[#legs]
+        name = type(leg) == "table" and leg.label or nil
+    end
+    local first = (type(name) == "string" and name ~= "") and format(L["Route to %s"], name) or L["Route"]
+    local count = math.max(1, #stops)
+    local second = format(count == 1 and L["%d stop"] or L["%d stops"], count)
+    if xShown then second = second .. " \194\183 " .. L["Right-click the X for options"] end
+    return first, second
+end
+
+
+
+local function setWords(frame, first, second)
+    if frame.fgpsFirst == first and frame.fgpsSecond == second then return end
+    frame.fgpsFirst, frame.fgpsSecond = first, second
+    local tokens = FGPS.UI.Look.TOKENS
+    frame.Line1:SetWidth(0)
+    frame.Line2:SetWidth(0)
+    frame.Line1:SetText(first)
+    frame.Line2:SetText(second)
+    local wide = math.max(frame.Line1:GetStringWidth() or 0, frame.Line2:GetStringWidth() or 0)
+    local width = math.min(ceil(wide), WorldMap.CARTOUCHE_MAX_WIDTH)
+    frame.Line1:SetWidth(width)
+    frame.Line2:SetWidth(width)
+    local height = (frame.Line1:GetStringHeight() or 0) + tokens.gap + (frame.Line2:GetStringHeight() or 0)
+    frame:SetSize(width + 2 * tokens.gapWide, ceil(height) + 2 * tokens.gap)
+end
+
+
+
+function WorldMap.CartoucheWanted()
     local s = settings()
     if s and s.worldMapLegend == false then return false end
     if not WorldMap.route then return false end
@@ -1499,23 +1891,25 @@ function WorldMap.LegendWanted()
     return WorldMap.lastSegmentCount > 0
 end
 
-function WorldMap:UpdateLegend()
+function WorldMap:UpdateCartouche()
 
 
     if FGPS.MapShot and FGPS.MapShot.IsRunning and FGPS.MapShot.IsRunning() then
-        if WorldMap.legend then WorldMap.legend:Hide() end
+        if WorldMap.cartouche then WorldMap.cartouche:Hide() end
         return false
     end
-    local wanted = WorldMap.LegendWanted()
-    local legend = WorldMap.legend
-    if not wanted then
-        if legend then legend:Hide() end
+    if not WorldMap.CartoucheWanted() then
+        if WorldMap.cartouche then WorldMap.cartouche:Hide() end
         return false
     end
-    legend = ensureLegend()
-    if not legend then return false end
-    applyLegendColors(legend)
-    legend:Show()
+    local frame = ensureCartouche()
+    if not frame then return false end
+    local Look = FGPS.UI.Look
+    paintGround(frame)
+    frame.Line1:SetTextColor(Look.Color("ink"))
+    frame.Line2:SetTextColor(Look.Color("inkGrey"))
+    setWords(frame, cartoucheWords(WorldMap.route, WorldMap.finalPinShown == true))
+    frame:Show()
     return true
 end
 
@@ -1540,6 +1934,7 @@ function WorldMap.SomethingIsSet()
     end
     return WorldMap.route ~= nil or WorldMap.markers ~= nil
 end
+
 
 
 
@@ -1587,9 +1982,10 @@ function WorldMap:UpdateClearButton()
     return show
 end
 
+
 function WorldMap.ClearTooltipLines()
     return {
-        L["Clear Cabbie"],
+        L["Stop Route"],
         L["Removes the route, the preview, every stop and their markers. Nothing stays set."],
     }
 end
@@ -1635,7 +2031,6 @@ end
 local function createMapButton()
     local map = WorldMapFrame
     if not map or WorldMap.button then return WorldMap.button end
-    local Frames = FGPS.UI.Frames
 
 
     local button = CreateFrame("Button", nil, map)
@@ -1651,28 +2046,26 @@ local function createMapButton()
     button:SetScript("OnMouseDown", function(self) self.Icon:SetPoint("TOPLEFT", self, "TOPLEFT", 1, -1) self.Icon:SetPoint("BOTTOMRIGHT", self, "BOTTOMRIGHT", 1, -1) end)
     button:SetScript("OnMouseUp", function(self) self.Icon:ClearAllPoints() self.Icon:SetAllPoints(self) end)
 
+
+
     button:RegisterForClicks("LeftButtonUp", "RightButtonUp")
-    button:SetScript("OnClick", function(_, mouseButton)
-        if mouseButton == "RightButton" then WorldMap:ClearAll() else WorldMap:ToggleSearch() end
+    button:SetScript("OnClick", function(self, mouseButton)
+        if mouseButton == "RightButton" then
+            local Launcher = FGPS.UI.Launcher
+            if Launcher and Launcher.OpenMenu then Launcher:OpenMenu(self) end
+        else
+            WorldMap:ToggleSearch()
+        end
     end)
 
     local anchor = map.BorderFrame or map
     button:SetPoint("TOPRIGHT", anchor, "TOPRIGHT", -8, -26)
     raiseAboveBorder(button, anchor)
-    if Frames and Frames.Tooltip then
 
-        pcall(Frames.Tooltip, button, WorldMap.TooltipLines, "ANCHOR_LEFT")
-    else
-        button:SetScript("OnEnter", function(self)
-            if not GameTooltip then return end
-            GameTooltip:SetOwner(self, "ANCHOR_LEFT")
-            for i, line in ipairs(WorldMap.TooltipLines()) do
-                if i == 1 then GameTooltip:AddLine(line) else GameTooltip:AddLine(line, 1, 1, 1, true) end
-            end
-            GameTooltip:Show()
-        end)
-        button:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
-    end
+    button:SetScript("OnEnter", showCompassTooltip)
+    button:SetScript("OnLeave", function(self)
+        if GameTooltip and (not GameTooltip.IsOwned or GameTooltip:IsOwned(self)) then GameTooltip:Hide() end
+    end)
     WorldMap.button = button
     createClearButton(button, anchor)
     return button
@@ -1707,6 +2100,9 @@ function WorldMap:OnMapShown()
     if s and s.openWithMap == false then return end
     local Search = FGPS.UI.Search
     if not (Search and Search.Show and Search.IsShown) or Search:IsShown() then return end
+
+    local Tome = FGPS.UI.Tome
+    if Tome and Tome.window and Tome.window:IsShown() then return end
     local ok, shown = pcall(Search.Show, Search, { dock = WorldMapFrame, noFocus = true })
     self.autoOpenedSearch = ok and shown == true
     if not ok and FGPS.Log then FGPS.Log:Error("Opening the search with the map failed: %s", tostring(shown)) end
@@ -1752,14 +2148,11 @@ function WorldMap:PollDistances()
         pcall(Search.RefreshDistances, Search)
     end
     local QuestPanel = FGPS.UI.QuestPanel
-    if QuestPanel and QuestPanel.IsShown and QuestPanel:IsShown() then
+    if QuestPanel and QuestPanel.IsShown and QuestPanel:IsShown() and QuestPanel.RefreshDistances then
 
 
-        if QuestPanel.tab == "search" and QuestPanel.RefreshSearchDistances then
-            pcall(QuestPanel.RefreshSearchDistances, QuestPanel)
-        elseif QuestPanel.Refresh then
-            pcall(QuestPanel.Refresh, QuestPanel)
-        end
+
+        pcall(QuestPanel.RefreshDistances, QuestPanel)
     end
     local MapPlaces = FGPS.UI.MapPlaces
     if MapPlaces and MapPlaces.RefreshOpenTooltip then
@@ -1857,6 +2250,8 @@ local function onRouteEvent(event, route)
         WorldMap.routeIsPreview = false
 
         WorldMap.progress = nil
+
+        if event == "ROUTE_STARTED" then WorldMap.drawInPending = true end
     elseif event == "NAV_CANCELLED" then
         WorldMap.route = nil
         WorldMap.routeIsPreview = false
@@ -1920,6 +2315,7 @@ end
 
 
 
+
 function WorldMap:OnRouteProgress(progress)
     if progress ~= nil then self.progress = progress end
     local route = self.route
@@ -1931,6 +2327,9 @@ function WorldMap:OnRouteProgress(progress)
     local leg, point, pos = lineStart(route, self.progress)
     if leg == self.drawnFromLeg and point == self.drawnFromPoint and not movedOn(pos) and not levelChanged(route) then return end
     local t = GetTime and GetTime() or 0
+
+
+    if self.drawInUntil and t < self.drawInUntil then return end
     if self.progressRedrawAt and t - self.progressRedrawAt < self.PROGRESS_REDRAW_SECONDS then return end
     self.progressRedrawAt = t
     self:Redraw()
@@ -1976,7 +2375,7 @@ function WorldMap:SetMarkers(stops)
     local markers
     if type(stops) == "table" and #stops > 0 then
         markers = {}
-        for i, dest in ipairs(stops) do
+        for _, dest in ipairs(stops) do
             if type(dest) == "table" then
                 markers[#markers + 1] = { inst = dest.inst, x = dest.x, y = dest.y, name = dest.name }
             end
@@ -2017,9 +2416,14 @@ function WorldMap:Init()
 
         Events:Register("ADDON_READY", function() WorldMap:Attach() end, self)
         if not WorldMapFrame then
-            Events:RegisterWoW("ADDON_LOADED", function(_, name)
-                if name == "Blizzard_WorldMap" and FGPS.ready then WorldMap:Attach() end
-            end, self)
+            local onAddonLoaded
+            onAddonLoaded = function(_, name)
+                if name ~= "Blizzard_WorldMap" then return end
+
+                Events:UnregisterWoW("ADDON_LOADED", onAddonLoaded)
+                if FGPS.ready then WorldMap:Attach() end
+            end
+            Events:RegisterWoW("ADDON_LOADED", onAddonLoaded, self)
         end
     end
 

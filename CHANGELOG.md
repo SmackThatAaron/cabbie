@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.4.0 (2026-11-04)
+
+- Cabbie is now for WoW Forever only; Classic Era is no longer supported. Extract the zip into the `Interface/AddOns` folder of your WoW Forever install and restart the game after updating: a /reload does not pick up new add-on folders.
+- A new book-style window opens from the game's add-on compartment beside the minimap: left-click opens it, right-click shows a small menu. Its Places page replaces the Where to window. With nothing typed it lists the nearest innkeeper, flight master, bank and mailbox by route; typing searches places; your favorites and recent places sit under the nearest services, and a right-click on one renames it, removes it or adds it as a stop.
+- Quest help is off by default, so out of the box Cabbie is pure navigation: no quest pins, objective areas, "!" pick-up marks, Quests or Optimized Leveling pages, and nothing added to the game's quest menus. Turn on Quest help under Quests in Cabbie's settings to get them back; even then, the "!" pick-up marks and the quest pins on the minimap stay off until you tick them too. If you had quest help on before, this update switches it off once; anything you turn back on stays on.
+- With Quest help on, the Quests page lists your quests with each one's next step and a quest search, and the Optimized Leveling page shows the next stop's quests for your faction, race and class, with Accept, Objective or Turn in beside them. Double-click a row to be guided there; right-click it for Show on Map or Skip Step. Optimized Leveling no longer offers quests your race, class or side cannot take, both quests of a "one of" pair, or quests you cannot pick up yet.
+- A new look: the turn arrow is a gilded arrow that glows softly at each turn ("Pulse at turns" in Edit Mode switches that off) with its words on a small parchment scroll. The route on the world map is drawn in dark ink, solid on roads, dashed over open ground and dotted for flights, boats and zeppelins, with numbered stops and an inked X at the destination, and a route started with the map open draws itself across it. The route dots on the minimap are ink-dark too.
+- The nearest services on the Places page no longer go blank while you follow a route.
+- Smaller fixes: the voice says "You have arrived at your destination." once, and no longer says "Disembark" in the middle of a ride after a fight; pressing Enter in the search gives the keyboard back so you can move at once; menus and tooltips read like the game's own (Stop Route, Turn in); the turn arrow can be picked up in Edit Mode every time; many quest search fixes.
+
+Known gaps: parts of this release were played in WoW Forever on its launch day; the newest changes were checked with the automated tests only. Routes inside some dungeon areas are still missing or rough. The voice is English only.
+
 ## 1.3.0 (2026-10-31)
 
 - Guidance now leads you inside dungeons and raids, to rooms and bosses. At a dungeon's door the route says "Enter" and the dungeon's name and picks the wing your place is in; inside, the call-out names the next room and the one after it, says when the next room is up or down, and keeps going after the loading screen until you arrive. A quest objective inside a dungeon or raid leads inside to it, room by room. Uldaman's rooms and more of the Ruins of Lordaeron now have a way in, and inside Zul'Gurub and the Excavation Site the way follows the floor instead of a straight line through a wall.

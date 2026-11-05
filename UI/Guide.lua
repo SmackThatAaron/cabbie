@@ -11,6 +11,7 @@ local ADDON_NAME, FGPS = ...
 local L = FGPS.L
 local Util = FGPS.Util
 local type, format, abs, max, pi, huge = type, string.format, math.abs, math.max, math.pi, math.huge
+local tonumber = tonumber
 
 local Guide = {
     model = nil,
@@ -18,6 +19,8 @@ local Guide = {
     progress = nil,
     navState = "idle",
     destName = nil,
+    dest = nil,
+
     notice = nil,
 
     noticeTimer = nil,
@@ -104,14 +107,32 @@ end
 
 
 
-function Guide.RowText(step)
+
+
+
+
+
+
+
+
+function Guide.ShortLandmark(name)
+    if type(name) ~= "string" then return name end
+    local short = name:match("^(.-)%s+%b()$")
+    if short and short ~= "" then return short end
+    return name
+end
+
+
+
+
+local function stepWords(step, landmarkOf)
     if type(step) ~= "table" then return nil end
     local text, short = step.shortText, true
     if type(text) ~= "string" or text == "" then text, short = step.text, false end
     if type(text) ~= "string" or text == "" then return nil end
 
     if isTurn(step.kind) and not step.toward and type(step.landmark) == "string" and step.landmark ~= "" then
-        text = format(L["%s at %s"], text, step.landmark)
+        text = format(L["%s at %s"], text, landmarkOf and landmarkOf(step.landmark) or step.landmark)
     end
 
 
@@ -124,6 +145,10 @@ function Guide.RowText(step)
         end
     end
     return text
+end
+
+function Guide.RowText(step)
+    return stepWords(step, nil)
 end
 
 local function indexOf(steps, step)
@@ -288,7 +313,11 @@ function Guide.CalloutFor(route, progress, speed)
             return true
         end
     end)
-    return { glyph = glyph, text = text, yards = yards, key = step.index, open = open }
+
+
+
+    return { glyph = glyph, text = text, short = stepWords(step, Guide.ShortLandmark), yards = yards, key = step.index,
+             open = open, inst = step.inst, x = step.x, y = step.y }
 end
 
 
@@ -442,11 +471,71 @@ end
 
 
 
-function Guide.DestName(route)
+
+local function lastDest(route)
     local stops = type(route) == "table" and route.stops or nil
     local stop = type(stops) == "table" and stops[#stops] or nil
     local dest = stop and (stop.dest or stop)
-    if type(dest) == "table" and type(dest.name) == "string" and dest.name ~= "" then return dest.name end
+    return type(dest) == "table" and dest or nil
+end
+
+function Guide.DestName(route)
+    local dest = lastDest(route)
+    if dest and type(dest.name) == "string" and dest.name ~= "" then return dest.name end
+    return nil
+end
+
+
+local function placeOf(dest)
+    if type(dest) ~= "table" then return nil end
+    return { name = dest.name, kind = dest.kind, questID = dest.questID }
+end
+
+
+
+
+
+
+
+
+
+
+
+local function magicEscaped(text) return (text:gsub("[%^%$%(%)%%%.%[%]%*%+%-%?]", "%%%0")) end
+
+
+local standIn = { source = nil, pattern = false }
+local function standInPattern()
+    local source = L["Quest %d"]
+    if standIn.source ~= source then
+        standIn.source, standIn.pattern = source, false
+        local before, after
+        if type(source) == "string" then before, after = source:match("^(.-)%%d(.*)$") end
+        if before then
+            local edge = (after == "" or after:find("%w$")) and "%f[%W]" or ""
+            standIn.pattern = "^" .. magicEscaped(before) .. "(%d+)" .. magicEscaped(after) .. edge
+        end
+    end
+    return standIn.pattern or nil
+end
+function Guide.UnknownQuest(name, questID, title)
+    if type(name) ~= "string" then return name, nil end
+    local pattern = standInPattern()
+    if not pattern then return name, nil end
+    local first, last, digits = name:find(pattern)
+    if not first then return name, nil end
+    local number = tonumber(digits)
+    if questID ~= nil and tonumber(questID) ~= number then return name, nil end
+    if questID ~= nil and type(title) == "string" and title ~= "" then return title .. name:sub(last + 1), nil end
+    return L["Unknown quest"] .. name:sub(last + 1), number
+end
+
+
+local function knownTitle(questID)
+    local QuestPanel = FGPS.UI.QuestPanel
+    if not (QuestPanel and QuestPanel.TitleFor) then return nil end
+    local ok, title, known = pcall(QuestPanel.TitleFor, questID)
+    if ok and known == true and type(title) == "string" and title ~= "" then return title end
     return nil
 end
 
@@ -523,7 +612,25 @@ function Guide.Build(input)
     if newPlace and input.computing and state ~= "paused" then journey = false end
     local name = input.destName or Guide.DestName(route)
     if newPlace and journey and state ~= "paused" then name = routeName end
-    if name then model.title = format(L["To %s"], name) end
+    if name then
+
+
+
+
+
+
+        local dest = lastDest(route)
+        if not (dest and dest.name == name) then dest = input.dest end
+        if not (type(dest) == "table" and dest.name == name) then dest = nil end
+        local shown, unknown = name, nil
+        if dest and dest.kind == "quest" then
+            shown, unknown = Guide.UnknownQuest(name, dest.questID)
+
+            local title = unknown and dest.questID ~= nil and knownTitle(dest.questID) or nil
+            if title then shown, unknown = Guide.UnknownQuest(name, dest.questID, title) end
+        end
+        model.title, model.unknownQuest = format(L["To %s"], shown), unknown
+    end
 
     if journey then
         model.visible = true
@@ -647,8 +754,8 @@ function Guide.LayoutDiffers(a, b)
     end
     local ca, cb = a.callout, b.callout
     if (ca == nil) ~= (cb == nil) then return true end
-    if ca and (ca.key ~= cb.key or ca.text ~= cb.text or ca.glyph ~= cb.glyph or ca.open ~= cb.open or ca.answer ~= cb.answer
-        or ca.live ~= cb.live) then return true end
+    if ca and (ca.key ~= cb.key or ca.text ~= cb.text or ca.short ~= cb.short or ca.glyph ~= cb.glyph or ca.open ~= cb.open
+        or ca.answer ~= cb.answer or ca.live ~= cb.live) then return true end
     return false
 end
 
@@ -801,7 +908,7 @@ function Guide.Refresh()
     local model = Guide.Build({
         state = Guide.navState, route = Guide.route, progress = Guide.progress, speed = speed,
         moving = moving, facing = facing,
-        computing = computing(), destName = Guide.destName, notice = notice,
+        computing = computing(), destName = Guide.destName, dest = Guide.dest, notice = notice,
         pauseReason = nav and nav.pauseReason or nil, wrongWay = Guide.wrongWay, stopped = Guide.stopped ~= nil,
         noFlights = Guide.noFlights, noFlightsIn = Guide.noFlightsIn, staying = Guide.Staying(Guide.route, Guide.progress),
     })
@@ -1029,6 +1136,7 @@ function Guide:Init()
 
     Events:Register("DESTINATION_SET", function(_, dest)
         Guide.destName = type(dest) == "table" and dest.name or nil
+        Guide.dest = placeOf(dest)
 
 
         forgetStopped()
@@ -1060,7 +1168,8 @@ function Guide:Init()
 
     local function onRoute(_, route)
         Guide.route = route
-        Guide.destName = Guide.DestName(route) or Guide.destName
+        local named = Guide.DestName(route)
+        if named then Guide.destName, Guide.dest = named, placeOf(lastDest(route)) end
         local nav = FGPS.Navigator
         local progress = nav and nav.GetProgress and nav:GetProgress() or nil
         if progress then Guide.progress = progress end

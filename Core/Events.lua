@@ -3,6 +3,7 @@
 
 
 
+
 local ADDON_NAME, FGPS = ...
 
 local pcall, type, select, ipairs, pairs = pcall, type, select, ipairs, pairs
@@ -18,9 +19,17 @@ FGPS.Events = Events
 
 local firing = {}
 
-local function logError(kind, name, err)
+
+
+
+
+
+local function logError(entry, kind, name, err)
+    local text = tostring(err)
+    if entry.lastError == text then return end
+    entry.lastError = text
     if FGPS.Log then
-        FGPS.Log:Error("%s handler for %s failed: %s", kind, tostring(name), tostring(err))
+        FGPS.Log:Error("%s handler for %s failed: %s", kind, tostring(name), text)
     end
 end
 
@@ -45,8 +54,16 @@ local function dispatch(list, kind, name, ...)
     firing[list] = (firing[list] or 0) + 1
     for i = 1, #list do
         local entry = list[i]
-        local ok, err = pcall(entry.fn, name, ...)
-        if not ok then logError(kind, name, err) end
+
+
+        if not entry.removed then
+            local ok, err = pcall(entry.fn, name, ...)
+            if not ok then
+                logError(entry, kind, name, err)
+            elseif entry.lastError ~= nil then
+                entry.lastError = nil
+            end
+        end
     end
     local depth = firing[list] - 1
     firing[list] = depth > 0 and depth or nil
@@ -63,6 +80,7 @@ local function removeMatching(store, name, fnOrOwner)
         if entry.fn == fnOrOwner or (fnOrOwner ~= nil and entry.owner == fnOrOwner) then
             target = target or mutableList(store, name)
             table.remove(target, i)
+            entry.removed = true
             removed = removed + 1
         end
     end
@@ -119,9 +137,13 @@ local function onWoWEvent(frame, event, ...)
         else
             mine = entry.unit == nil
         end
-        if mine then
+        if mine and not entry.removed then
             local ok, err = pcall(entry.fn, event, ...)
-            if not ok then logError("WoW event", event, err) end
+            if not ok then
+                logError(entry, "WoW event", event, err)
+            elseif entry.lastError ~= nil then
+                entry.lastError = nil
+            end
         end
     end
     local depth = firing[list] - 1
@@ -136,7 +158,26 @@ local function ensureFrame()
     return Events.frame
 end
 
+
+
+
+
+
+local unknownEvents = {}
+
+local function eventKnown(event)
+    if unknownEvents[event] then return false end
+    local utils = C_EventUtils
+    if not (utils and utils.IsEventValid) then return true end
+    local ok, valid = pcall(utils.IsEventValid, event)
+    if not ok or valid ~= false then return true end
+    unknownEvents[event] = true
+    if FGPS.Log then FGPS.Log:Info("This game client has no event %s; nothing listens for it", tostring(event)) end
+    return false
+end
+
 local function registerFrameEvent(frame, event)
+    if not eventKnown(event) then return false end
     local ok, err = pcall(frame.RegisterEvent, frame, event)
     if not ok and FGPS.Log then FGPS.Log:Warn("Cannot register WoW event %s: %s", tostring(event), tostring(err)) end
     return ok
@@ -158,7 +199,7 @@ end
 local function applyUnitFilter(event)
     local frame = Events.unitFrames[event]
     local filters = Events.unitFilters[event]
-    if not frame then return end
+    if not frame or not eventKnown(event) then return end
     local units = {}
     for unit, count in pairs(filters or {}) do
         if count > 0 then units[#units + 1] = unit end
@@ -200,6 +241,7 @@ function Events:UnregisterWoW(event, fnOrOwner)
         if entry.fn == fnOrOwner or (fnOrOwner ~= nil and entry.owner == fnOrOwner) then
             target = target or mutableList(self.wowHandlers, event)
             table.remove(target, i)
+            entry.removed = true
             removed = removed + 1
             if entry.unit then removedUnits[entry.unit] = (removedUnits[entry.unit] or 0) + 1 end
         end
@@ -218,7 +260,7 @@ function Events:UnregisterWoW(event, fnOrOwner)
     for i = 1, #remaining do
         if remaining[i].unit == nil then plainLeft = true break end
     end
-    if not plainLeft and self.frame then self.frame:UnregisterEvent(event) end
+    if not plainLeft and self.frame and not unknownEvents[event] then self.frame:UnregisterEvent(event) end
     if #remaining == 0 then self.wowHandlers[event] = nil end
     return removed
 end
@@ -239,4 +281,10 @@ end
 function Events:IsWoWRegistered(event)
     local list = self.wowHandlers[event]
     return list ~= nil and #list > 0
+end
+
+
+
+function Events:ClientLacks(event)
+    return unknownEvents[event] == true
 end

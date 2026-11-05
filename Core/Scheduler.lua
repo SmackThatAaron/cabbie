@@ -117,6 +117,13 @@ local function finish(task, ok, ...)
         task.error = (...)
         logError("Scheduler task '%s' failed: %s", tostring(task.label), tostring(task.error))
         safeCall(task.onError, task.error)
+    elseif not ok and task.raised then
+
+
+        task.error = (...)
+        if FGPS.Log then
+            FGPS.Log:Warn("Scheduler task '%s' raised after it was cancelled: %s", tostring(task.label), tostring(task.error))
+        end
     end
     safeCall(task.onDone, ok, ...)
 end
@@ -129,6 +136,7 @@ local function afterResume(task, ok, ...)
     Scheduler.stats.sliceMs = Scheduler.stats.sliceMs + spent
     Scheduler.stats.slices = Scheduler.stats.slices + 1
     if not ok then
+        task.raised = true
         finish(task, false, ...)
     elseif coroutine.status(task.co) == "dead" then
         if task.cancelled then

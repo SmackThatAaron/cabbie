@@ -25,6 +25,7 @@
 
 
 
+
 local ADDON_NAME, FGPS = ...
 
 local L = FGPS.L
@@ -143,11 +144,17 @@ local function liveGroundYps()
     return fallback
 end
 
+
+
+local oneLeg = { legs = {} }
+
 local function legYardsLeft(leg, segIndex, x, y, current)
     if not current then return leg.yards or 0 end
     local R = FGPS.Route
     if R and R.RemainingYards then
-        local ok, v = pcall(R.RemainingYards, { legs = { leg } }, 1, segIndex, x, y)
+        oneLeg.legs[1] = leg
+        local ok, v = pcall(R.RemainingYards, oneLeg, 1, segIndex, x, y)
+        oneLeg.legs[1] = nil
         if ok and type(v) == "number" then return v end
     end
     return leg.yards or 0
@@ -462,7 +469,13 @@ local function keepContinuous(self, leg, pos, segIndex, perp, along, held)
         end
     end
     if accept then
-        p.match = { leg = p.legIndex, along = along, at = t, x = pos.x, y = pos.y, toward = 0 }
+
+
+        if m then
+            m.leg, m.along, m.at, m.x, m.y, m.toward = p.legIndex, along, t, pos.x, pos.y, 0
+        else
+            p.match = { leg = p.legIndex, along = along, at = t, x = pos.x, y = pos.y, toward = 0 }
+        end
         return segIndex, perp, along
     end
     m.along, m.at, m.x, m.y = ralong, t, pos.x, pos.y
@@ -1187,6 +1200,8 @@ function Navigator:PrepareRoute(route)
 
 
 
+
+
     local Calibrate = FGPS.Calibrate
     if Calibrate and Calibrate.ApplyToRoute then pcall(Calibrate.ApplyToRoute, route) end
     local legs = route.legs or {}
@@ -1232,6 +1247,7 @@ function Navigator:ResetProgress()
         distToNext = nil, remainingYards = route and route.totalYards or 0, remainingSeconds = route and route.totalSeconds or 0,
         currentStep = nil, nextStep = nil, offRouteYards = 0, pos = self.lastPos, arrivedStopIndex = nil,
         legKind = leg and leg.kind or nil, state = self.state,
+
 
 
 
@@ -1307,7 +1323,9 @@ function Navigator:OnCombat(inCombat)
     local depart = held and p and self.state ~= "paused" and (p.pointIndex or 1) <= 2 and legDepartStep(self.route, p.legIndex) or nil
     if depart and depart.text == held.text then Events:Fire("NAV_INSTRUCTION", depart, true, false) end
 
-    if wanted and p and p.currentStep and self.state ~= "paused" then
+
+
+    if wanted and p and p.currentStep and self.state ~= "paused" and self.state ~= "in_transit" then
         Events:Fire("NAV_INSTRUCTION", p.currentStep, false, true)
     end
 end
@@ -1559,7 +1577,12 @@ function Navigator:Reroute(why, askedBy)
     if not self:IsJourney() then return false end
     askedBy = askedBy or "navigator"
     if self.pendingReroute and self.pendingAskedBy == "player" then askedBy = "player" end
-    if rideUnderWay(self) then
+
+
+
+
+
+    if rideUnderWay(self) or not (playerPos() or insideOrigin(self)) then
         if why ~= "recalc" then self.pendingRecalcWhy = nil end
         self.pendingReroute, self.pendingAskedBy = why or "itinerary", askedBy
         return true
@@ -1585,15 +1608,18 @@ end
 
 
 
+
+
 function Navigator:Pause()
     if self.state ~= "active" and self.state ~= "in_transit" then return false end
     if self.state == "in_transit" then self.rodePaused = true end
     self.pauseReason = nil
     self:SetState("paused")
     local asked = self.inflight
-    if asked and (asked.kind == "recalc" or asked.kind == "reroute") then
+    if asked and (asked.kind == "recalc" or asked.kind == "reroute" or asked.kind == "start") then
         self:CancelInflight()
-        local why = asked.kind == "recalc" and "recalc" or asked.why or (asked.reason == "level" and "level") or "itinerary"
+        local why = asked.kind == "recalc" and "recalc" or asked.kind == "start" and "destination"
+            or asked.why or (asked.reason == "level" and "level") or "itinerary"
         keptForResume(self, why, asked.askedBy, asked.why)
         if asked.kind == "recalc" then Events:Fire("NAV_RECALC_DONE", self.route, nil, "kept") end
     end
@@ -1609,8 +1635,16 @@ function Navigator:Resume()
     if reason then
 
 
+
+
+
+
         self.lastRecalcAt = nil
-        self:RequestRecalc("player", "resume")
+        if playerPos() or insideOrigin(self) then
+            self:RequestRecalc("player", "resume")
+        else
+            self:Reroute(self.pendingReroute or "recalc", "player")
+        end
     elseif self.flightsOwed then
 
         self.flightsOwed = nil
@@ -1897,12 +1931,23 @@ end
 
 
 
+
 function Navigator:OnFlightsKnown()
     self:DropAlternatives()
     if self.state == "paused" and not self.pauseReason then
         self.flightsOwed = self.inflight and self.inflight.token or true
     elseif self:IsJourney() then
         self:Reroute("flights")
+    elseif self.inflight then
+
+
+
+        local asked = self.inflight
+        self:Request(asked.kind, asked.reason, asked.variant, asked.onResult, asked.askedBy, asked.why)
+    elseif self.state == "previewing" then
+
+
+        self.previewRev = nil
     end
 end
 
@@ -2048,6 +2093,8 @@ function Navigator:OffRouteThreshold(leg, segIndex)
     if band > yards then yards = band end
     return yards, true
 end
+
+
 
 
 
@@ -2279,6 +2326,12 @@ function Navigator:CompleteLeg(legIndex, pos)
             p.parked, p.holdYards, p.arrivedStopIndex = true, hold, stopIdx
             return true
         end
+
+
+
+
+        local stayEnded = isFinal and not park and type(dest) == "table" and self.stayedAt ~= nil
+            and self.stayedAt.inside and self.stayedAt.questID == dest.questID or nil
         if dest and not p.parked then
             local D = FGPS.Destinations
 
@@ -2286,13 +2339,16 @@ function Navigator:CompleteLeg(legIndex, pos)
 
 
 
-            if not self.quiet then FGPS:Print(L.ARRIVED_AT, describe(dest)) end
+            if not self.quiet and not stayEnded then FGPS:Print(L.ARRIVED_AT, describe(dest)) end
         end
         p.arrivedStopIndex = stopIdx
-        Events:Fire("NAV_ARRIVED", stopIdx, isFinal and not park)
+        Events:Fire("NAV_ARRIVED", stopIdx, isFinal and not park, stayEnded)
         if park then
             p.parked, p.holdYards = true, hold
-            if hold then self.stayedAt = { questID = dest.questID, inst = dest.inst, x = dest.x, y = dest.y, inside = true } end
+            if hold then
+                self.stayedAt = { questID = dest.questID, inst = dest.inst, x = dest.x, y = dest.y, inside = true,
+                                  leave = hold + self.STAY_LEAVE_YARDS }
+            end
             return true
         end
         if isFinal then
@@ -2375,7 +2431,9 @@ function Navigator:RecheckStay()
     p.parked, p.holdYards = nil, nil
     local Quests = FGPS.Quests
     if Quests and Quests.FollowsMine and Quests.FollowsMine() then return false end
-    Events:Fire("NAV_ARRIVED", last, true)
+
+
+    Events:Fire("NAV_ARRIVED", last, true, true)
     self:Finish()
     return true
 end
@@ -2773,6 +2831,11 @@ function Navigator:Advance(pos)
         end
         p.parked, p.holdYards = nil, nil
         if stay then stay.inside = nil end
+    elseif stay and stay.inside and stay.leave then
+
+
+
+        if pos.inst ~= stay.inst or dist(pos.x, pos.y, stay.x, stay.y) > stay.leave then stay.inside = nil end
     end
 
 
@@ -3422,9 +3485,9 @@ function Navigator:AnnounceKeptItinerary()
 
     self.keptRev = self.itineraryRev
     local shown = ensureKeptPopup() and type(StaticPopup_Show) == "function"
-        and StaticPopup_Show(KEPT_POPUP, (L["Your route from last time is still set (%d stop(s)). Continue or clear?"]):format(count))
+        and StaticPopup_Show(KEPT_POPUP, (L["Your route from last time is still set. Stops: %d. Continue or clear?"]):format(count))
     if not shown then
-        FGPS:Print(L["Your stops from last time are still set (%d stop(s)). Type /cabbie start to continue or /cabbie cancel to clear them."], count)
+        FGPS:Print(L["Stops kept from last time: %d. Type /cabbie start to continue or /cabbie cancel to clear them."], count)
     end
     Events:Fire("KEPT_ITINERARY", count)
     return true

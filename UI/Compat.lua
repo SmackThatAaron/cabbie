@@ -52,6 +52,12 @@ local WAY_WORDS = { "/way", "/cabbieway" }
 
 
 
+local function wayWord()
+    return Compat.waySlashRegistered and WAY_WORDS[1] or "/cabbie way"
+end
+
+
+
 
 
 
@@ -263,6 +269,7 @@ end
 
 
 
+
 function Compat.Accept(dest, opts)
     opts = opts or {}
     local Search = FGPS.UI.Search
@@ -295,15 +302,15 @@ function Compat.Accept(dest, opts)
 
 
         FGPS.Log:Debug("Waypoint from %s is where the journey already ends: %s", tostring(opts.source or "way"), describe(dest))
-        return true
+        return true, "kept"
     end
     if running and not samePlace then
         if previous then
-            FGPS:Print(L["Your route to %s was replaced by %s. Use '/way add <coordinates>' to keep the route and add a stop instead."],
-                describe(previous), describe(dest))
+            FGPS:Print(L["Your route to %s was replaced by %s. Use '%s add <coordinates>' to keep the route and add a stop instead."],
+                describe(previous), describe(dest), wayWord())
         else
-            FGPS:Print(L["The route in progress was replaced by %s. Use '/way add <coordinates>' to keep the route and add a stop instead."],
-                describe(dest))
+            FGPS:Print(L["The route in progress was replaced by %s. Use '%s add <coordinates>' to keep the route and add a stop instead."],
+                describe(dest), wayWord())
         end
     end
 
@@ -380,6 +387,42 @@ end
 
 
 
+local WAYPOINT_CAP = 200
+
+local function pruneWaypoints()
+    local waypoints = Compat.waypoints
+    local uids = {}
+    for uid in pairs(waypoints) do uids[#uids + 1] = uid end
+    local excess = #uids - WAYPOINT_CAP
+    if excess <= 0 then return 0 end
+    table.sort(uids)
+    local Destinations, Navigator = FGPS.Destinations, FGPS.Navigator
+    local stops = {}
+    if Destinations and Destinations.Equal and Navigator and Navigator.GetStops then
+        local ok, list = pcall(Navigator.GetStops, Navigator)
+        if ok and type(list) == "table" then stops = list end
+    end
+    local dropped = 0
+    for i = 1, #uids do
+        if dropped >= excess then break end
+        local uid = uids[i]
+        local dest = waypoints[uid].dest
+        local onJourney = false
+        for j = 1, #stops do
+            if Destinations.Equal(stops[j], dest) then onJourney = true break end
+        end
+        if not onJourney then
+            waypoints[uid] = nil
+            dropped = dropped + 1
+        end
+    end
+    return dropped
+end
+
+
+
+
+
 
 
 
@@ -404,12 +447,25 @@ function Compat.AddWaypoint(uiMapID, x, y, opts, methodOpts)
         if not opts.silent then FGPS:Print(L["Could not add that waypoint: %s"], tostring(reason)) end
         return nil, reason
     end
-    if not Compat.Accept(dest, { addStop = opts.addStop == true, silent = opts.silent == true, source = "AddWaypoint" }) then
+    local accepted, kept = Compat.Accept(dest, { addStop = opts.addStop == true, silent = opts.silent == true, source = "AddWaypoint" })
+    if not accepted then
         return nil, L["the navigator did not accept the waypoint"]
     end
     local uid = Compat.nextUid
     Compat.nextUid = uid + 1
-    Compat.waypoints[uid] = { dest = dest, title = opts.title, addedAt = GetTime and GetTime() or 0, source = "AddWaypoint" }
+
+
+
+    local owns = true
+    if kept == "kept" then
+        owns = false
+        local equal = FGPS.Destinations and FGPS.Destinations.Equal
+        for _, other in pairs(Compat.waypoints) do
+            if other.owns ~= false and equal and equal(other.dest, dest) then owns = true break end
+        end
+    end
+    Compat.waypoints[uid] = { dest = dest, title = opts.title, addedAt = GetTime and GetTime() or 0, source = "AddWaypoint", owns = owns }
+    pruneWaypoints()
     return uid
 end
 
@@ -417,7 +473,7 @@ end
 
 function Compat.AddMFWaypoint(uiMapID, floor, x, y, opts, methodOpts)
     if type(uiMapID) == "table" then
-        uiMapID, floor, x, y, opts = floor, x, y, opts, methodOpts
+        uiMapID, x, y, opts = floor, y, opts, methodOpts
     end
     return Compat.AddWaypoint(uiMapID, x, y, opts)
 end
@@ -432,6 +488,8 @@ function Compat.RemoveWaypoint(uid, methodUid)
     local entry = Compat.waypoints[uid]
     if not entry then return false end
     Compat.waypoints[uid] = nil
+
+    if entry.owns == false then return true end
     local Destinations, Navigator = FGPS.Destinations, FGPS.Navigator
     if not (Destinations and Destinations.Equal and Navigator and Navigator.GetStops and Navigator.RemoveStop) then
         return true
@@ -464,7 +522,7 @@ function Compat.ClearWaypoints()
         count = count + 1
     end
     if count > 0 and journeyRunning() then
-        FGPS:Print(L["%d waypoint(s) forgotten. The route in progress is still running; type /cabbie cancel to stop it."], count)
+        FGPS:Print(L["Waypoints forgotten: %d. The route in progress is still running; type /cabbie cancel to stop it."], count)
     end
     return count
 end
@@ -473,7 +531,9 @@ end
 
 
 local function printWayHelp()
-    FGPS:Print(L["Waypoints: /way <x> <y> [zone or title] | /way <zone> <x> <y> [title] | /way <pasted map pin link> | /way pin | /way add <...> | /way clear"])
+    local w = wayWord()
+    FGPS:Print(L["Waypoints: %s <x> <y> [zone or title] | %s <zone> <x> <y> [title] | %s <pasted map pin link> | %s pin | %s add <...> | %s clear"],
+        w, w, w, w, w, w)
     FGPS:Print(L["The same words work as /cabbie way ... . Cabbie understands the common waypoint wording so guides need no rewriting; it is not, and does not replace, any other waypoint add-on."])
 end
 
@@ -509,7 +569,7 @@ function Compat.SlashWay(args)
     else
         local x, y, zone, title = Compat.ParseWay(args)
         if not x then
-            FGPS:Print(L["That is not a coordinate pair. Try: /way 42.5 65.1 Elwynn Forest"])
+            FGPS:Print(L["That is not a coordinate pair. Try: %s 42.5 65.1 Elwynn Forest"], wayWord())
             printWayHelp()
             return false
         end
@@ -623,6 +683,14 @@ function Compat.UnregisterWaySlash()
         for i = 1, #WAY_WORDS do globals["SLASH_" .. WAY_SLASH_NAME .. i] = nil end
     end
     if type(SlashCmdList) == "table" then SlashCmdList[WAY_SLASH_NAME] = nil end
+
+    local hashes = type(globals) == "table" and globals.hash_SlashCmdList
+    if type(hashes) == "table" then
+        for i = 1, #WAY_WORDS do
+            local key = string.upper(WAY_WORDS[i])
+            if hashes[key] == waySlash then hashes[key] = nil end
+        end
+    end
     Compat.waySlashRegistered = false
     return true
 end

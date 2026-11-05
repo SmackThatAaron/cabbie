@@ -28,6 +28,13 @@
 
 
 
+
+
+
+
+
+
+
 local ADDON_NAME, FGPS = ...
 
 local L = FGPS.L
@@ -45,6 +52,8 @@ local QuestMarks = {
     timer = nil,
     hovered = nil,
     clickHandler = nil,
+    ringQuest = nil,
+    levelingFailed = nil,
     lastDrawMapID = nil,
     lastCount = 0,
     lastMinimapMapID = nil,
@@ -57,6 +66,11 @@ FGPS.UI.QuestMarks = QuestMarks
 QuestMarks.REF = "CabbieQuestMarks"
 local PIN_SIZE = 18
 local MINIMAP_PIN_SIZE = 12
+
+
+
+local RING_FILE = "Interface\\Common\\RingBorder"
+local RING_SIZE = 24
 local REDRAW_SECONDS = 1
 local CLICK_PRIORITY = 96
 local SRC_ITEM_DROP = 3
@@ -148,17 +162,27 @@ local function giversOn(QuestData, uiMapID)
 end
 
 
+
 local function gatingSkillLines()
     if QuestMarks.skillLines then return QuestMarks.skillLines end
-    local lines = {}
+    local lines, values, seen = {}, {}, {}
     local QuestData = FGPS.QuestData
     local quests = QuestData and QuestData.Dataset and QuestData.Dataset()
     if quests and type(quests.sk) == "table" then
         for _, skill in pairs(quests.sk) do
-            if type(skill) == "number" then lines[math.floor(skill / 1000)] = true end
+            if type(skill) == "number" then
+                local line = math.floor(skill / 1000)
+                lines[line] = true
+                if not seen[skill] then
+                    seen[skill] = true
+                    local list = values[line]
+                    if not list then list = {} values[line] = list end
+                    list[#list + 1] = skill % 1000
+                end
+            end
         end
     end
-    QuestMarks.skillLines = lines
+    QuestMarks.skillLines, QuestMarks.skillValues = lines, values
     return lines
 end
 
@@ -177,20 +201,33 @@ end
 
 
 
+
 local function gatingFactions()
     if QuestMarks.factions then return QuestMarks.factions end
-    local factions = {}
+    local factions, values = {}, {}
+    local function addValue(faction, value)
+        local list = values[faction]
+        if not list then list = {} values[faction] = list end
+        if type(value) == "number" then list[#list + 1] = value end
+    end
     local QuestData = FGPS.QuestData
     local quests = QuestData and QuestData.Dataset and QuestData.Dataset()
     if quests and type(quests.rp) == "table" then
-        for _, rp in pairs(quests.rp) do
+        local rpn, rpx = quests.rpn or {}, quests.rpx or {}
+        for row, rp in pairs(quests.rp) do
             if type(rp) == "number" then
-                if rp >= 10000 then factions[math.floor(rp / 10000)] = true end
-                if rp % 10000 > 0 then factions[rp % 10000] = true end
+                if rp >= 10000 then
+                    factions[math.floor(rp / 10000)] = true
+                    addValue(math.floor(rp / 10000), rpn[row])
+                end
+                if rp % 10000 > 0 then
+                    factions[rp % 10000] = true
+                    addValue(rp % 10000, rpx[row])
+                end
             end
         end
     end
-    QuestMarks.factions = factions
+    QuestMarks.factions, QuestMarks.factionValues = factions, values
     return factions
 end
 
@@ -204,6 +241,43 @@ local function standings()
         end
     end
     return out
+end
+
+
+
+
+local function standingBands(stands)
+    gatingFactions()
+    local bands = {}
+    for faction, standing in pairs(stands) do
+        local band = 0
+        for _, value in ipairs(QuestMarks.factionValues[faction] or {}) do
+            if standing >= value then band = band + 1 end
+        end
+        bands[faction] = band
+    end
+    return bands
+end
+
+
+
+
+
+local function skillBands(ranks)
+    gatingSkillLines()
+    local values = QuestMarks.skillValues or {}
+    local bands = {}
+    for line, rank in pairs(ranks) do
+        local band = -1
+        if rank > 0 then
+            band = 0
+            for _, value in ipairs(values[line] or {}) do
+                if rank >= value then band = band + 1 end
+            end
+        end
+        bands[line] = band
+    end
+    return bands
 end
 
 local function sameRanks(a, b)
@@ -239,32 +313,31 @@ end
 
 
 
+
+
+
+
 function QuestMarks.TooltipLines(mark, onMap)
     local QuestData = FGPS.QuestData
-    local lines = {}
-    if not (mark and QuestData) then return lines end
-    lines[1] = { text = QuestData.Title(mark.questID) or format(L["Quest %d"], mark.questID) }
-    if mark.level then lines[#lines + 1] = { text = format(L["Level %d"], mark.level), r = 1, g = 1, b = 1 } end
-    lines[#lines + 1] = { text = QuestData.MarkText(mark.mark), r = 1, g = 1, b = 1 }
+    if not (mark and QuestData) then return {} end
+    local title = QuestData.Title(mark.questID)
+    local line = QuestData.MarkLabel(mark.mark)
+    if mark.level then line = format(L["%s, %s"], format(L["Level %d"], mark.level), line) end
     if type(mark.note) == "string" and mark.note ~= "" then
-        lines[#lines + 1] = { text = (mark.note:gsub("^%l", string.upper)) .. ".", r = 1, g = 1, b = 1 }
+        line = format(L["%s. The source may not list every condition."], line)
     end
-    if onMap then
-        local Look = FGPS.UI.Look
-        local r, g, b = 0.5, 0.5, 0.5
-        if Look and Look.Color then r, g, b = Look.Color("grey") end
-        lines[#lines + 1] = { text = L["Shift-click: go there"], r = r, g = g, b = b }
+    if not title then
+        title = L["Unknown quest"]
+        line = format(L["Quest %d"], mark.questID) .. L[" - "] .. line
     end
-    return lines
+    return { title = title, line = line, hint = onMap and L["Shift-click to go there"] or nil }
 end
 
 local function showTooltip(owner, onMap)
-    if not GameTooltip then return end
-    GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
-    for i, line in ipairs(QuestMarks.TooltipLines(owner.fgpsMark, onMap)) do
-        if i == 1 then GameTooltip:AddLine(line.text) else GameTooltip:AddLine(line.text, line.r, line.g, line.b, true) end
-    end
-    GameTooltip:Show()
+    local Look = FGPS.UI.Look
+    if not (Look and Look.Tooltip) then return end
+    local tip = QuestMarks.TooltipLines(owner.fgpsMark, onMap)
+    Look.Tooltip(owner, tip.title, tip.line, tip.hint, "ANCHOR_RIGHT")
 end
 
 local function hideTooltip(owner)
@@ -305,6 +378,63 @@ function QuestMarks.OnCanvasClick(_, button)
     if pin.IsMouseOver and not pin:IsMouseOver() then return false end
     QuestMarks.GoTo(pin.fgpsMark.questID, pin.fgpsMark.giver)
     return true
+end
+
+
+
+
+
+
+
+
+function QuestMarks.NextLevelingPickup()
+    local Leveling = FGPS.Leveling
+    if not (Leveling and Leveling.Next and Leveling.Enabled and Leveling.Enabled()) then return nil end
+    local ok, steps = pcall(Leveling.Next)
+    if not ok then
+
+        if not QuestMarks.levelingFailed then
+            QuestMarks.levelingFailed = true
+            FGPS.Log:Error("The pick-up marks could not read the Optimized Leveling order: %s", tostring(steps))
+        end
+        return nil
+    end
+    local first = type(steps) == "table" and steps[1] or nil
+    if type(first) ~= "table" or first.action ~= "accept" then return nil end
+    return tonumber(first.questID)
+end
+
+
+
+
+local function ringOf(pin)
+    if pin.Ring then return pin.Ring end
+    local Look = FGPS.UI.Look
+    if not (Look and Look.TomeHas and Look.TomeHas("file", RING_FILE)) then
+        if Look and Look.NoteOnce then
+            Look.NoteOnce("questMarks:ring", "Pick-up marks: file %s missing; the next Optimized Leveling pick-up has no ring",
+                RING_FILE)
+        end
+        return nil
+    end
+
+
+    local ring = pin:CreateTexture(nil, "OVERLAY")
+    ring:SetTexture(RING_FILE)
+    ring:SetSize(RING_SIZE, RING_SIZE)
+    ring:SetPoint("CENTER", pin.art, "CENTER", 0, 0)
+    ring:SetVertexColor(Look.Color("gilt"))
+    pin.Ring = ring
+    return ring
+end
+
+local function wearRing(pin, on)
+    if on then
+        local ring = ringOf(pin)
+        if ring then ring:Show() end
+    elseif pin.Ring then
+        pin.Ring:Hide()
+    end
 end
 
 
@@ -360,7 +490,7 @@ end
 
 function QuestMarks:ClearDrawing()
     if self.pinPool then self.pinPool:ReleaseAll() end
-    self.lastCount, self.lastDrawMapID = 0, nil
+    self.lastCount, self.lastDrawMapID, self.ringQuest = 0, nil, nil
 end
 
 function QuestMarks:OnScaleChanged()
@@ -378,7 +508,13 @@ function QuestMarks:Redraw()
     if not (map and self.layer) then return end
     local mapID = self.live and not (map.IsShown and not map:IsShown()) and map:GetMapID() or nil
     local marks = mapID and QuestMarks.MarksFor(mapID, false, self.verdicts) or nil
-    if mapID then QuestMarks.skillRanks, QuestMarks.standings = skillRanks(), standings() end
+
+
+
+    if mapID and QuestMarks.seededFor ~= self.verdicts then
+        QuestMarks.skillRanks, QuestMarks.standings = skillRanks(), standings()
+        QuestMarks.seededFor = self.verdicts
+    end
     self:ClearDrawing()
     if not marks or #marks == 0 then return end
     if not self.pinPool then
@@ -387,6 +523,16 @@ function QuestMarks:Redraw()
     end
     local Perf, Coords = FGPS.Perf, FGPS.Coords
     if Perf then Perf:Begin("questMarks") end
+
+
+
+
+
+
+
+
+
+    local ringQuest = QuestMarks.NextLevelingPickup()
     local canvas = map:GetCanvas()
     local w, h, scale = canvas:GetWidth(), canvas:GetHeight(), canvasScale()
     local count = 0
@@ -397,12 +543,14 @@ function QuestMarks:Redraw()
             setupPin(pin)
             pin.fgpsMark, pin.fgpsQuestID, pin.fgpsGiver = mark, mark.questID, mark.giver
             pin.normalizedX, pin.normalizedY = mx, my
+
+            wearRing(pin, mark.questID == ringQuest)
             placePin(pin, canvas, w, h, scale)
             pin:Show()
             count = count + 1
         end
     end
-    self.lastCount, self.lastDrawMapID = count, mapID
+    self.lastCount, self.lastDrawMapID, self.ringQuest = count, mapID, ringQuest
     if Perf then Perf:End("questMarks") end
 end
 
@@ -503,13 +651,15 @@ end
 
 
 
+
 local function onSkillLines()
     local now = skillRanks()
     local prev = QuestMarks.skillRanks
     QuestMarks.skillRanks = now
-    if prev and sameRanks(prev, now) then return end
+    if prev and sameRanks(skillBands(prev), skillBands(now)) then return end
     onQuestEvent()
 end
+
 
 
 
@@ -517,7 +667,7 @@ local function onFactions()
     local now = standings()
     local prev = QuestMarks.standings
     QuestMarks.standings = now
-    if prev and sameRanks(prev, now) then return end
+    if prev and sameRanks(standingBands(prev), standingBands(now)) then return end
     onQuestEvent()
 end
 
@@ -530,6 +680,17 @@ local function onQuestsUpdated(_, count)
     onQuestEvent()
 end
 
+
+
+
+local function onLevelingUpdated()
+    if not (QuestMarks.lastDrawMapID and QuestMarks.pinPool) then return end
+    local ringQuest = QuestMarks.NextLevelingPickup()
+    if ringQuest == QuestMarks.ringQuest then return end
+    QuestMarks.ringQuest = ringQuest
+    for pin in QuestMarks.pinPool:EnumerateActive() do wearRing(pin, pin.fgpsQuestID == ringQuest) end
+end
+
 local function goLive(self)
     self.live = true
     local Events = FGPS.Events
@@ -537,6 +698,7 @@ local function goLive(self)
     Events:RegisterWoW("SKILL_LINES_CHANGED", onSkillLines, LIVE)
     Events:RegisterWoW("UPDATE_FACTION", onFactions, LIVE)
     Events:Register("QUESTS_UPDATED", onQuestsUpdated, LIVE)
+    Events:Register("LEVELING_UPDATED", onLevelingUpdated, LIVE)
 end
 
 
@@ -569,6 +731,11 @@ local function goIdle(self)
         self.clickHandler = nil
     end
     self.verdicts, self.logCount = {}, nil
+
+
+
+
+    self.skillRanks, self.standings, self.seededFor = nil, nil, nil
     self:ClearDrawing()
     self:ClearMinimap()
 end

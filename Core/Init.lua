@@ -28,6 +28,12 @@ end
 FGPS.version = metadata("Version") or "0.0.0-dev"
 FGPS.title = metadata("Title") or "Cabbie"
 
+function FGPS.IsForeverBuild(versionString, interface)
+    interface = tonumber(interface)
+    if interface and interface >= 16000 and interface < 17000 then return true end
+    return type(versionString) == "string" and versionString:match("^1%.6%d") ~= nil
+end
+
 do
     local versionString, buildNumber, buildDate, interface
     if GetBuildInfo then
@@ -41,7 +47,8 @@ do
         date = buildDate,
         interface = interface,
 
-        isForever = (interface == 16001) or (type(versionString) == "string" and versionString:sub(1, 4) == "1.60"),
+
+        isForever = FGPS.IsForeverBuild(versionString, interface),
     }
 end
 
@@ -131,7 +138,9 @@ function Util.FormatDistance(yards, units)
     if yards < 0 then yards = -yards end
     if units == "metric" then
         local metres = yards * FGPS.Const.METERS_PER_YARD
-        if metres < 1000 then return format("%d %s", floor(metres + 0.5), L.UNIT_METERS) end
+
+        local whole = floor(metres + 0.5)
+        if whole < 1000 then return format("%d %s", whole, L.UNIT_METERS) end
         return format("%.1f %s", metres / 1000, L.UNIT_KILOMETERS)
     end
     return format("%s %s", withThousands(yards), L.UNIT_YARDS)
@@ -262,6 +271,7 @@ function Util.Split(s, sep)
     local out = {}
     if type(s) ~= "string" then return out end
     sep = sep or " "
+    if sep == "" then out[1] = s return out end
     local pattern = "[^" .. sep:gsub("(%W)", "%%%1") .. "]+"
     for piece in s:gmatch(pattern) do out[#out + 1] = piece end
     return out
@@ -440,7 +450,8 @@ local function slashClear()
         return
     end
 
-    Navigator:Clear("user")
+
+    if not Navigator:Clear("user") then FGPS:Print(L["No route or stops to clear."]) end
 end
 Slash.Register("clear", slashClear, L["Clear everything Cabbie has set: the route, the preview, every stop and the map markers"])
 Slash.Register("stop", slashClear, L["Same as clear"])

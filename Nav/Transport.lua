@@ -35,7 +35,7 @@ local ADDON_NAME, FGPS = ...
 local L = FGPS.L
 local Events = FGPS.Events
 local Const = FGPS.Const
-local sqrt, type, pairs, ipairs, tostring, pcall, tonumber = math.sqrt, type, pairs, ipairs, tostring, pcall, tonumber
+local sqrt, type, ipairs, tostring, pcall = math.sqrt, type, ipairs, tostring, pcall
 
 
 local function plain(v)
@@ -431,7 +431,7 @@ local function endRide(t, arrived, atStop)
     state.onTransport, state.unknown, state.transportID, state.stopIndex = false, false, nil, nil
     state.since = t
     Transport.rideStart, Transport.slowSince, Transport.ridePhase, Transport.rideGround = nil, nil, nil, nil
-    Transport.suspectSince = nil
+    Transport.suspectSince, Transport.rideDead = nil, nil
     fireState()
 end
 
@@ -597,6 +597,19 @@ local function isGhost()
     return Social and Social.IsGhost and Social.IsGhost() or false
 end
 
+
+
+
+
+
+
+
+local function diedOnBoard()
+    local ghost = isGhost()
+    if Transport.rideDead == nil then Transport.rideDead = ghost return false end
+    return ghost and not Transport.rideDead
+end
+
 function Transport.OnPosition(pos)
     if not pos or not pos.x then return end
     local state = Transport.state
@@ -617,6 +630,12 @@ function Transport.OnPosition(pos)
     local speed
     if last and last.inst == pos.inst and last.time and t > last.time then
         speed = dist(pos.x, pos.y, last.x, last.y) / (t - last.time)
+    end
+
+    if state.onTransport and diedOnBoard() then
+        endRide(t)
+        rememberPosition(pos, t)
+        return
     end
 
     if state.onTransport and state.unknown then
@@ -755,7 +774,7 @@ function Transport.Reset()
     state.unknown = false
     Transport.dock, Transport.lastPos, Transport.rideStart = nil, nil, nil
     Transport.slowSince, Transport.ridePhase, Transport.rideGround = nil, nil, nil
-    Transport.suspectSince = nil
+    Transport.suspectSince, Transport.rideDead = nil, nil
 end
 
 
@@ -771,6 +790,14 @@ function Transport:Init()
     Events:Register("NAV_STATE", function(_, new) if new == "idle" then Transport.Reset() end end, self)
     Events:RegisterWoW("TAXIMAP_OPENED", function(_, system) Transport.OnTaxiMapOpened(plain(system)) end, self)
     Events:RegisterWoW("TAXIMAP_CLOSED", function() Transport.OnTaxiMapClosed() end, self)
+
+
+    Events:RegisterUnitWoW("UNIT_SPELLCAST_SUCCEEDED", "player", function(_, unit, _, spellID)
+        local spells = FGPS.Calibrate and FGPS.Calibrate.TELEPORT_SPELLS
+        if unit == "player" and Transport.state.onTransport and spells and spells[tonumber(plain(spellID)) or 0] then
+            endRide(now())
+        end
+    end, self)
     Events:RegisterWoW("PLAYER_CONTROL_LOST", function()
         local state = Transport.state
         if UnitOnTaxi and UnitOnTaxi("player") and not state.onTaxi then

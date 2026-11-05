@@ -37,6 +37,8 @@ local STATUS_TAG = {
 local SelfTest = {
     ROUTE_YARDS = 300,
     ROUTE_TIMEOUT = 5,
+    ROUTE_POLL = 0.5,
+    ROUTE_QUEUE_LIMIT = 30,
     COORD_TOLERANCE = 5,
     LOG_LINES = 10,
     last = nil,
@@ -104,6 +106,8 @@ local REQUIRED_MEMBERS = {
     { "C_Timer", "After", "NewTimer", "NewTicker" },
     { "C_AddOns", "GetAddOnMetadata" },
 }
+
+
 local OPTIONAL_MEMBERS = {
     { "C_TaxiMap", "GetTaxiNodesForMap", "GetAllTaxiNodes" },
     { "C_VoiceChat", "SpeakText", "GetTtsVoices" },
@@ -114,7 +118,10 @@ local OPTIONAL_MEMBERS = {
     { "C_SkillInfo", "GetSkillLineInfoByID" },
     { "C_MountJournal", "GetMountIDs", "GetMountInfoByID" },
     { "C_QuestLog", "GetNumQuestLogEntries", "GetInfo" },
-    { "C_Container", "PlayerHasHearthstone", "GetItemCooldown" },
+    { "C_Container", "GetItemCooldown" },
+
+    { "C_Container", "PlayerHasHearthstone",
+      alt = { "C_Container.GetContainerNumSlots", "C_Container.GetContainerItemID" } },
     { "C_Minimap", "GetViewRadius" },
     { "C_AddOnProfiler", "GetAddOnMetric" },
     { "C_EditMode", "GetLayouts" },
@@ -128,6 +135,18 @@ local OPTIONAL_MEMBERS = {
 local BOOT_EVENTS = {
     "ADDON_LOADED", "PLAYER_LOGIN", "PLAYER_ENTERING_WORLD", "PLAYER_REGEN_DISABLED", "PLAYER_REGEN_ENABLED",
 }
+
+local BOOT_EVENT_SET = {}
+for _, name in ipairs(BOOT_EVENTS) do BOOT_EVENT_SET[name] = true end
+
+
+
+local function clientLacksEvent(name)
+    local utils = C_EventUtils
+    if not (utils and utils.IsEventValid) then return false end
+    local ok, valid = pcall(utils.IsEventValid, name)
+    return ok and valid == false
+end
 
 
 
@@ -177,12 +196,24 @@ local function checkApi()
         if _G[name] == nil then degraded[#degraded + 1] = name end
     end
 
+    local function present(name)
+        local space, member = name:match("^([%w_]+)%.([%w_]+)$")
+        if space then return type(_G[space]) == "table" and _G[space][member] ~= nil end
+        return _G[name] ~= nil
+    end
+    local function standIn(group)
+        if not group.alt then return false end
+        for _, name in ipairs(group.alt) do
+            if not present(name) then return false end
+        end
+        return true
+    end
     local function members(groups, out)
         for _, group in ipairs(groups) do
-            local namespace = _G[group[1]]
+            local namespace, covered = _G[group[1]], standIn(group)
             for i = 2, #group do
                 checked = checked + 1
-                if type(namespace) ~= "table" or namespace[group[i]] == nil then
+                if not covered and (type(namespace) ~= "table" or namespace[group[i]] == nil) then
                     out[#out + 1] = group[1] .. "." .. group[i]
                 end
             end
@@ -194,7 +225,20 @@ local function checkApi()
     local events = registeredEvents()
     for _, name in ipairs(events) do
         checked = checked + 1
-        if not SelfTest.ProbeEvent(name) then missing[#missing + 1] = "event " .. name end
+
+
+        local Events = FGPS.Events
+        if Events and Events.ClientLacks and Events:ClientLacks(name) then
+            degraded[#degraded + 1] = "event " .. name
+        elseif not SelfTest.ProbeEvent(name) then
+
+
+            if not BOOT_EVENT_SET[name] and clientLacksEvent(name) then
+                degraded[#degraded + 1] = "event " .. name
+            else
+                missing[#missing + 1] = "event " .. name
+            end
+        end
     end
 
     if #missing > 0 then
@@ -267,19 +311,30 @@ local function checkData()
 
 
 
+
+
     local clientBuild = clientBuildString()
     local dataBuild = manifest.clientBuild and tostring(manifest.clientBuild) or nil
+    local buildNote
     if dataBuild and clientBuild and dataBuild ~= clientBuild then
-        return "warn", format("data was generated for client build %s, this client is %s: coordinates and flight points may be stale",
+        local dataVersion = dataBuild:match("^(.+)%.%d+$")
+        local clientVersion = FGPS.build and FGPS.build.version and tostring(FGPS.build.version)
+        if not (dataVersion and dataVersion == clientVersion) then
+            return "warn", format("data was generated for client build %s, this client is %s: coordinates and flight points may be stale",
+                dataBuild, clientBuild)
+        end
+        buildNote = format("data was generated for client build %s, this client is %s: the same version, another build number",
             dataBuild, clientBuild)
     end
     local dataInterface, clientInterface = tonumber(manifest.interface), FGPS.build and FGPS.build.interface
     if dataInterface and clientInterface and dataInterface ~= clientInterface then
         return "warn", format("data was generated for interface %d, this client reports %d", dataInterface, clientInterface)
     end
-    return "pass", format("version %s for build %s: %d nodes, %d POI, %d taxi node(s) over %d instance(s), %d zone map(s), %d of %d map folder(s) loaded",
+    local summary = format("version %s for build %s: %d nodes, %d POI, %d taxi node(s) over %d instance(s), %d zone map(s), %d of %d map folder(s) loaded",
         tostring(manifest.dataVersion), tostring(dataBuild or "unknown"), tonumber(counts.nodes) or 0,
         tonumber(counts.poi) or 0, tonumber(counts.taxiNodes) or 0, graphs, maps, loadedFolders, folders)
+    if buildNote then return "note", buildNote .. "; " .. summary end
+    return "pass", summary
 end
 
 
@@ -533,7 +588,7 @@ local function checkRoute(finish)
         end
     end
     local dest = { kind = "coord", inst = pos.inst, x = gx, y = gy, map = pos.map }
-    local answered, handle = false, nil
+    local answered, handle = false
     local started = GetTime and GetTime() or 0
 
     local function answer(status, detail)
@@ -570,11 +625,35 @@ local function checkRoute(finish)
         answer("fail", "the router did not answer at once and C_Timer is missing, so there is no way to wait")
         return
     end
-    C_Timer.After(SelfTest.ROUTE_TIMEOUT, function()
+
+
+
+
+
+    local waited = 0
+    local function behindAnother()
+        local running = Router.running
+        return type(running) == "table" and running ~= handle and not running.done
+    end
+    local function giveUp(detail)
         if answered then return end
         if handle then pcall(Router.Cancel, Router, handle) end
-        answer("fail", format("the router did not answer within %d s", SelfTest.ROUTE_TIMEOUT))
-    end)
+        answer("fail", detail)
+    end
+    local function waitTurn()
+        if answered then return end
+        if not behindAnother() then
+            C_Timer.After(SelfTest.ROUTE_TIMEOUT, function()
+                giveUp(format("the router did not answer within %d s", SelfTest.ROUTE_TIMEOUT))
+            end)
+        elseif waited >= SelfTest.ROUTE_QUEUE_LIMIT then
+            giveUp(format("the router was still busy with other routes after %.0f s", waited))
+        else
+            waited = waited + SelfTest.ROUTE_POLL
+            C_Timer.After(SelfTest.ROUTE_POLL, waitTurn)
+        end
+    end
+    waitTurn()
 end
 
 
@@ -1110,7 +1189,9 @@ local function onLogout()
     local boot = FGPS.Boot and FGPS.Boot.report
 
 
-    local keptRoutes = type(account.lastSession) == "table" and account.lastSession.routes or nil
+
+    local kept = type(account.lastSession) == "table" and account.lastSession or {}
+    local keptRoutes, keptLoads = kept.routes, kept.loads
     account.lastSession = {
         began = SelfTest.sessionStart,
         ended = stamp(),
@@ -1127,6 +1208,7 @@ local function onLogout()
 
         look = Util.DeepCopy(FGPS.UI and FGPS.UI.Look and FGPS.UI.Look.answers) or {},
         routes = keptRoutes,
+        loads = keptLoads,
         perf = perfCounters(),
         voice = voiceRecord(),
 
@@ -1170,7 +1252,12 @@ function SelfTest:Init()
         FGPS.Events:RegisterWoW("ADDON_ACTION_FORBIDDEN", onActionBlocked, self)
         FGPS.Events:RegisterWoW("LUA_WARNING", onLuaWarning, self)
         FGPS.Events:RegisterWoW("PLAYER_LOGOUT", onLogout, self)
-        for _, event in ipairs(SelfTest.PLACE_EVENTS) do FGPS.Events:RegisterWoW(event, onPlaceChanged, self) end
+
+
+
+        if FGPS:IsOwnerInstall() then
+            for _, event in ipairs(SelfTest.PLACE_EVENTS) do FGPS.Events:RegisterWoW(event, onPlaceChanged, self) end
+        end
         chainErrorHandler()
     end
 end

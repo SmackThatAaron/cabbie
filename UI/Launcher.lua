@@ -1,10 +1,17 @@
--- Cabbie/UI/Launcher.lua
--- A minimap button like other add-ons' ones, so the player can open search without typing
--- /cabbie (U31): round, in the game's minimap button border, on the minimap's edge. Left-click
--- opens search, right-click clears the trip the same way the world-map compass does, and a drag
--- with the left button moves it around the edge. Its place on the edge is settings.minimapButtonAngle
--- (degrees, counter-clockwise from the right, as math.atan2 gives it), so it stays there after a
--- reload. No library: LibDBIcon is not shipped, and this is the little of it Cabbie needs.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 local ADDON_NAME, FGPS = ...
 
 local L = FGPS.L
@@ -13,29 +20,32 @@ local rad, deg, cos, sin, atan2, sqrt, max, min = math.rad, math.deg, math.cos, 
 
 local Launcher = {
     button = nil,
-    BUTTON_SIZE = 31,           -- the game's minimap button: a 31 px button in a 53 px tracking border
+    BUTTON_SIZE = 31,
     BUTTON_ICON = "Interface\\AddOns\\Cabbie\\Media\\icon",
     BORDER = "Interface\\Minimap\\MiniMap-TrackingBorder",
     BACKGROUND = "Interface\\Minimap\\UI-Minimap-Background",
     HIGHLIGHT = "Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight",
-    DEFAULT_ANGLE = 225,        -- bottom left, where the button stood before it went on the edge
-    EDGE_OUTSET = 5,            -- pixels the button's centre sits outside the minimap's rim
+    DEFAULT_ANGLE = 225,
+    EDGE_OUTSET = 5,
 }
 FGPS.UI.Launcher = Launcher
 
-FGPS.UI.AddSettingDefault("minimapButton", true)
+
+
+FGPS.UI.AddSettingDefault("minimapButton", false)
 FGPS.UI.AddSettingDefault("minimapButtonAngle", Launcher.DEFAULT_ANGLE)
 
 local function settings()
     return FGPS.DB and FGPS.DB.settings or nil
 end
 
+
 local function wanted()
     local s = settings()
-    return not s or s.minimapButton ~= false
+    return s ~= nil and s.minimapButton == true
 end
 
--- The saved angle in [0, 360), or the default when nothing usable is saved.
+
 function Launcher.Angle()
     local s = settings()
     local angle = s and tonumber(s.minimapButtonAngle)
@@ -43,9 +53,9 @@ function Launcher.Angle()
     return angle % 360
 end
 
--- Where the button's centre goes for an angle, relative to the minimap's centre. On a round
--- minimap that is the rim; on a square one (GetMinimapShape() from a minimap add-on), the edge
--- of the square, reached by pushing the point out along the diagonal and clamping it.
+
+
+
 function Launcher.Offset(angle)
     local minimap = Minimap
     local w = (minimap and minimap.GetWidth and minimap:GetWidth() or 140) / 2 + Launcher.EDGE_OUTSET
@@ -68,7 +78,7 @@ function Launcher:Place(angle)
     button:SetPoint("CENTER", Minimap, "CENTER", x, y)
 end
 
--- The angle of the mouse around the minimap's centre, in degrees.
+
 function Launcher.CursorAngle()
     if not (Minimap and Minimap.GetCenter and GetCursorPosition) then return nil end
     local cx, cy = Minimap:GetCenter()
@@ -108,6 +118,8 @@ function Launcher:StopDrag()
     self:Place()
 end
 
+
+
 function Launcher:ClearAll()
     local WorldMap = FGPS.UI.WorldMap
     if WorldMap and WorldMap.ClearAll then
@@ -130,17 +142,106 @@ function Launcher:ToggleSearch()
     if Search.Show then Search:Show() end
 end
 
+
+
+
+function Launcher.ClickHint()
+    return L["Click to open"] .. " \194\183 " .. L["Right-click for options"]
+end
+
+
+
+local function somethingIsSet()
+    local WorldMap = FGPS.UI.WorldMap
+    if WorldMap and WorldMap.SomethingIsSet then return WorldMap.SomethingIsSet() and true or false end
+    local Navigator = FGPS.Navigator
+    if Navigator and Navigator.HasAnythingSet then
+        local ok, set = pcall(Navigator.HasAnythingSet, Navigator)
+        return ok and set and true or false
+    end
+    return false
+end
+
+
+
+
+
+
+function Launcher.MenuEntries()
+    local UI = FGPS.UI
+    return {
+        { label = L["Optimized Leveling"], onClick = function()
+            local QuestPanel = UI.QuestPanel
+            if QuestPanel and QuestPanel.Show then QuestPanel:Show({ tab = "leveling" }) end
+        end },
+        { label = L["Settings"], onClick = function()
+            local Settings = UI.Settings
+            if Settings and Settings.Open then Settings:Open() end
+        end },
+        { label = L["Stop Route"], onClick = function() Launcher:ClearAll() end,
+          disabled = not somethingIsSet() or nil, enabled = somethingIsSet, destructive = true },
+    }
+end
+
+
+
+
+
+
+
+
+local function generateMenu(_, root)
+    if type(root) ~= "table" or type(root.CreateButton) ~= "function" then return end
+    if type(root.CreateTitle) == "function" then root:CreateTitle(L["Cabbie"]) end
+    for _, entry in ipairs(Launcher.MenuEntries()) do
+        local create = root.CreateButton
+        if entry.destructive then
+            if type(root.CreateDivider) == "function" then root:CreateDivider() end
+            if type(root.CreateRedHighlightButton) == "function" then create = root.CreateRedHighlightButton end
+        end
+        local element = create(root, entry.label, entry.onClick)
+        local enabled = entry.enabled
+        if type(element) == "table" and type(element.SetEnabled) == "function" then
+            if type(enabled) == "function" then
+                element:SetEnabled(function()
+                    local ok, yes = pcall(enabled)
+                    return ok and yes and true or false
+                end)
+            elseif entry.disabled then
+                element:SetEnabled(false)
+            end
+        end
+    end
+end
+
+
+
+
+
+function Launcher:OpenMenu(owner)
+    local Look = FGPS.UI.Look
+    if not (Look and Look.TomeHas and Look.TomeHas("global", "MenuUtil")) then
+        if Look and Look.NoteOnce then
+            Look.NoteOnce("launcher:menu", "Launcher: no MenuUtil in this client; a right-click opens no menu")
+        end
+        return nil
+    end
+    if type(MenuUtil) ~= "table" or type(MenuUtil.CreateContextMenu) ~= "function" then return nil end
+    if GameTooltip and owner and GameTooltip.IsOwned and GameTooltip:IsOwned(owner) then GameTooltip:Hide() end
+    return MenuUtil.CreateContextMenu(owner, generateMenu)
+end
+
 local function createButton()
     if Launcher.button then return Launcher.button end
     local parent = Minimap
     if type(parent) ~= "table" then return nil end
-    -- No name: a named frame is a global, and nothing reads this one by name.
+
     local button = CreateFrame("Button", nil, parent)
     button:SetSize(Launcher.BUTTON_SIZE, Launcher.BUTTON_SIZE)
     if button.SetFrameStrata then button:SetFrameStrata("MEDIUM") end
     if button.SetFrameLevel then button:SetFrameLevel(8) end
-    -- The pieces and offsets of the game's own minimap buttons: a dark disc, the icon on it and the
-    -- round tracking border over both, its top left corner on the button's.
+
+
     button.Background = button:CreateTexture(nil, "BACKGROUND")
     button.Background:SetSize(20, 20)
     button.Background:SetTexture(Launcher.BACKGROUND)
@@ -158,23 +259,24 @@ local function createButton()
     end
     button:RegisterForClicks("LeftButtonUp", "RightButtonUp")
     button:RegisterForDrag("LeftButton")
-    button:SetScript("OnClick", function(_, mouseButton)
+    button:SetScript("OnClick", function(self, mouseButton)
         if mouseButton == "RightButton" then
-            Launcher:ClearAll()
+            Launcher:OpenMenu(self)
         else
             Launcher:ToggleSearch()
         end
     end)
     button:SetScript("OnDragStart", function() Launcher:StartDrag() end)
     button:SetScript("OnDragStop", function() Launcher:StopDrag() end)
+
+
+    button:SetScript("OnHide", function() if Launcher.dragging then Launcher:StopDrag() end end)
+
+
     button:SetScript("OnEnter", function(self)
-        if not GameTooltip or Launcher.dragging then return end
-        GameTooltip:SetOwner(self, "ANCHOR_LEFT")
-        GameTooltip:SetText(L["Cabbie"] or "Cabbie")
-        GameTooltip:AddLine(L["Open the Cabbie destination search"] or "Open search", 1, 1, 1, true)
-        GameTooltip:AddLine(L["Right-click: clear the route and every stop"], 0.8, 0.8, 0.8, true)
-        GameTooltip:AddLine(L["Drag: move the button around the minimap"], 0.8, 0.8, 0.8, true)
-        GameTooltip:Show()
+        local Look = FGPS.UI.Look
+        if Launcher.dragging or not (Look and Look.Tooltip) then return end
+        Look.Tooltip(self, L["Cabbie"], nil, Launcher.ClickHint(), "ANCHOR_LEFT")
     end)
     button:SetScript("OnLeave", function()
         if GameTooltip then GameTooltip:Hide() end
@@ -195,9 +297,68 @@ function Launcher:UpdateVisibility()
     return false
 end
 
+
+
+
+
+
+
+
+
+local function guarded(fn, ...)
+    local ok, err = pcall(fn, ...)
+    if not ok and FGPS.Log and FGPS.Log.Error then
+        pcall(FGPS.Log.Error, FGPS.Log, "Launcher: add-on compartment: %s", tostring(err))
+    end
+end
+
+local function compartmentClick(mouseButton)
+    if type(mouseButton) == "table" then mouseButton = mouseButton.buttonName end
+    if mouseButton ~= "RightButton" then
+        Launcher:ToggleSearch()
+        return
+    end
+
+
+
+    local timer = C_Timer
+    if type(timer) == "table" and type(timer.After) == "function" then
+        timer.After(0, function() guarded(Launcher.OpenMenu, Launcher, nil) end)
+    else
+        Launcher:OpenMenu(nil)
+    end
+end
+
+local function compartmentEnter(menuButton)
+    local Look = FGPS.UI.Look
+    if type(menuButton) ~= "table" or not (Look and Look.Tooltip) then return end
+
+
+    Look.Tooltip(menuButton, L["Cabbie"], nil, Launcher.ClickHint(), "ANCHOR_LEFT")
+end
+
+local function compartmentLeave(menuButton)
+    local tooltip = GameTooltip
+    if type(tooltip) ~= "table" or type(tooltip.Hide) ~= "function" then return end
+    if menuButton ~= nil and type(tooltip.IsOwned) == "function" and not tooltip:IsOwned(menuButton) then return end
+    tooltip:Hide()
+end
+
+function Cabbie_AddonCompartmentClick(_, mouseButton)
+    guarded(compartmentClick, mouseButton)
+end
+
+function Cabbie_AddonCompartmentEnter(_, menuButton)
+    guarded(compartmentEnter, menuButton)
+end
+
+function Cabbie_AddonCompartmentLeave(_, menuButton)
+    guarded(compartmentLeave, menuButton)
+end
+
 function Launcher:Init()
     self:UpdateVisibility()
-    -- Boot calls Init once, and a second call must not stack another settings handler.
+
     if self.eventsBound then return end
     local Events = FGPS.Events
     if Events and Events.Register then

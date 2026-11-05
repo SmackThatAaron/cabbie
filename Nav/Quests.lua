@@ -103,16 +103,24 @@ local function mapName(uiMapID)
 end
 
 
+
+
+local interiorAsked = nil
+
+
 local function isInteriorMap(uiMapID)
     if not uiMapID then return false end
     local data = FGPS.Data and FGPS.Data.maps and FGPS.Data.maps[uiMapID]
     if data and data.kind == DUNGEON_MAP_TYPE then return true end
+    if interiorAsked and interiorAsked[uiMapID] ~= nil then return interiorAsked[uiMapID] end
     local dungeonType = Enum and Enum.UIMapType and Enum.UIMapType.Dungeon or DUNGEON_MAP_TYPE
+    local interior = false
     if C_Map and C_Map.GetMapInfo then
         local ok, info = pcall(C_Map.GetMapInfo, uiMapID)
-        if ok and info and info.mapType == dungeonType then return true end
+        if ok and info and info.mapType == dungeonType then interior = true end
     end
-    return false
+    if interiorAsked then interiorAsked[uiMapID] = interior end
+    return interior
 end
 Quests.IsInteriorMap = isInteriorMap
 
@@ -686,7 +694,10 @@ local function noteAnswer(q, secret)
         answers.byID[q.questID] = entry
         local list = answers.list
         list[#list + 1] = entry
-        if #list > Quests.ANSWERS_MAX then table.remove(list, 1) end
+        if #list > Quests.ANSWERS_MAX then
+            local dropped = table.remove(list, 1)
+            if dropped and answers.byID[dropped.id] == dropped then answers.byID[dropped.id] = nil end
+        end
     end
     local pois, waypoint = 0, false
     for _, loc in ipairs(q.locations) do
@@ -698,7 +709,7 @@ local function noteAnswer(q, secret)
     entry.secret = entry.secret or secret
 end
 
-local function buildList()
+local function buildListOnce()
     local out, byID, nextOrder = {}, {}, {}
     if not (C_QuestLog and C_QuestLog.GetNumQuestLogEntries and C_QuestLog.GetInfo) then return out, byID, nextOrder end
     local okN, n = pcall(C_QuestLog.GetNumQuestLogEntries)
@@ -719,7 +730,7 @@ local function buildList()
             local questID = info.questID
             local title, titleKnown = titleOf(questID, info.title)
             local onMap = info.isOnMap and true or false
-            if C_QuestLog.IsOnMap then
+            if C_QuestLog and C_QuestLog.IsOnMap then
                 local okOn, on = pcall(C_QuestLog.IsOnMap, questID)
                 if okOn and on ~= nil then onMap = on and true or false end
             end
@@ -738,6 +749,14 @@ local function buildList()
     end
     kept.byQuest = blocks
     return out, byID, nextOrder, reader.byMap
+end
+
+local function buildList()
+    interiorAsked = {}
+    local ok, out, byID, nextOrder, byMap = pcall(buildListOnce)
+    interiorAsked = nil
+    if not ok then error(out, 0) end
+    return out, byID, nextOrder, byMap
 end
 
 
@@ -944,10 +963,11 @@ end
 
 
 
+
 local function openAreas(q)
     local out = {}
     local bundled = q and q.bundled
-    if not bundled or q.complete then return out end
+    if not bundled or q.complete or q.failed then return out end
     local objectives = q.objectives or {}
     local agree = (bundled.objectiveCount or 0) > 0 and bundled.objectiveCount == #objectives
     for index, area in ipairs(bundled.areas or {}) do
@@ -1636,7 +1656,7 @@ function Quests.FollowProgress()
                     if reason == "objective_unknown" then
                         tell(L["%s: that objective is done. Where the next one is found is not known, so the route to it has ended."], q.title)
                     elseif completed then
-                        tell(L["%s is complete, but no route can lead to where it is handed in: %s. The route to it has ended."], q.title, Quests.ReasonText(reason))
+                        tell(L["%s is complete, but no route can lead to where it is turned in: %s. The route to it has ended."], q.title, Quests.ReasonText(reason))
                     else
                         tell(L["%s: that objective is done, but no route can lead to the next step: %s. The route to it has ended."], q.title, Quests.ReasonText(reason))
                     end

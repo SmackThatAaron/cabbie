@@ -11,13 +11,15 @@ local pcall, type, ipairs = pcall, type, ipairs
 local Boot = {
     -- Core services that need saved settings; they run before the module list.
     coreOrder = { "Scheduler", "Perf", "DataLoad" },
-    -- Fixed module order from ARCHITECTURE.md section 4.
+    -- Fixed init order (ARCHITECTURE.md section 6). It keeps the TOC's order (section 4) by and large but
+    -- not exactly: ServiceSearch, Calibrate and Social before QuestData, Compat and Bindings before Cues,
+    -- SelfTest last.
     order = {
         "Coords", "Graph", "Access", "Cost", "Route", "Router", "Instructions", "Personal", "Transport",
-        "Destinations", "Quests", "ServiceSearch", "Calibrate", "Social", "QuestData", "QuestBatch", "Inside", "Navigator",
+        "Destinations", "Quests", "ServiceSearch", "Calibrate", "Social", "QuestData", "Leveling", "LevelingAuto", "QuestBatch", "Inside", "Navigator",
         "UI.Guide", "UI.RouteBlock", "UI.Callout", "UI.Go", "UI.Menus", "UI.SearchLine",
-        "UI.Skins", "UI.Frames", "UI.Positions", "UI.EditMode", "UI.WorldMap",
-        "UI.MapPlaces", "UI.Minimap", "UI.Launcher", "UI.QuestMap", "UI.QuestMarks", "UI.QuestPanel", "UI.Search", "UI.Preview", "UI.Favorites", "UI.Itinerary", "UI.Voice",
+        "UI.Skins", "UI.Frames", "UI.Positions", "UI.Tome", "UI.EditMode", "UI.WorldMap",
+        "UI.MapPlaces", "UI.Minimap", "UI.Launcher", "UI.QuestMap", "UI.QuestMarks", "UI.QuestPanel", "UI.LevelingMarks", "UI.Search", "UI.Preview", "UI.Favorites", "UI.Itinerary", "UI.Voice",
         "UI.InWorldPin", "UI.Settings", "UI.Setup", "UI.Compat", "UI.Bindings", "UI.Cues", "SelfTest",
     },
     report = nil,
@@ -71,7 +73,8 @@ local function onLogin()
     if #report.failed > 0 then FGPS:Print(L.BOOT_FAILED_MODULES, #report.failed) end
     FGPS.Log:Info("%s %s ready: %d module(s) initialised, %d skipped, %d failed", FGPS.name, FGPS.version,
         #report.initialised, #report.skipped, #report.failed)
-    if FGPS.Perf and FGPS.Perf.Sample then pcall(FGPS.Perf.Sample, FGPS.Perf) end
+    -- the login memory sample (UpdateAddOnMemoryUsage walks every add-on) only when instrumentation is on (CB-0014)
+    if FGPS.Perf and FGPS.Perf.enabled and FGPS.Perf.Sample then pcall(FGPS.Perf.Sample, FGPS.Perf) end
 end
 Boot.OnLogin = onLogin
 

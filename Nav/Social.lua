@@ -40,6 +40,7 @@ local Social = {
     NO_CORPSE_HOLD = 4,
     FOLLOW_ENDED_HOLD = 6,
     PREFIX = "CBB",
+    CHAT_MAX_BYTES = 255,
     VERSION = 1,
     MAX_PARTY = 4,
     MAX_RAID = 40,
@@ -302,11 +303,12 @@ local function ensureCorpsePopup()
     if StaticPopupDialogs[CORPSE_POPUP] then return true end
     StaticPopupDialogs[CORPSE_POPUP] = {
         text = "%s",
-        button1 = L["Go to corpse"],
-        button2 = L["Not now"],
+        button1 = L["Go to Corpse"],
+        button2 = L["Not Now"],
         timeout = 0,
         whileDead = 1,
         hideOnEscape = 1,
+        preferredIndex = 3,
         OnAccept = function() Social.GoToCorpse(true) end,
         OnCancel = function() end,
     }
@@ -436,15 +438,32 @@ function Social.GroupMembers()
 end
 
 
+
+
+
+local function foldName(s)
+    local r = Util.Lower(s):gsub("\195([\128-\158])", function(c)
+        local b = c:byte()
+        if b ~= 151 then return "\195" .. string.char(b + 32) end
+    end):gsub("\208([\128-\175])", function(c)
+        local b = c:byte()
+        if b < 144 then return "\209" .. string.char(b + 16) end
+        if b < 160 then return "\208" .. string.char(b + 32) end
+        return "\209" .. string.char(b - 32)
+    end)
+    return r
+end
+
+
 function Social.ResolveMember(text)
     if type(text) ~= "string" or text == "" then return nil end
-    local wanted = Util.Lower(Util.Trim(text))
+    local wanted = foldName(Util.Trim(text))
     local members = Social.GroupMembers()
     for _, m in ipairs(members) do
-        if Util.Lower(m.unit) == wanted or Util.Lower(m.name) == wanted then return m end
+        if Util.Lower(m.unit) == wanted or foldName(m.name) == wanted then return m end
     end
     for _, m in ipairs(members) do
-        if Util.Lower(m.name):sub(1, #wanted) == wanted then return m end
+        if foldName(m.name):sub(1, #wanted) == wanted then return m end
     end
     return nil
 end
@@ -616,6 +635,20 @@ function Social.Encode(dest)
 end
 
 
+local function cutBytes(s, n)
+    if #s <= n then return s end
+    local cut = n
+    while cut > 0 do
+        local b = s:byte(cut + 1)
+        if not b or b < 128 or b >= 192 then break end
+        cut = cut - 1
+    end
+    return s:sub(1, cut)
+end
+
+local MAX_ID = 2147483647
+
+
 
 
 function Social.Decode(text, name)
@@ -627,11 +660,21 @@ function Social.Decode(text, name)
     uiMapID, mx, my = tonumber(uiMapID), tonumber(mx), tonumber(my)
     if version ~= Social.VERSION or not inst or not x or not y then return nil end
     if x ~= x or y ~= y then return nil end
+
+    if inst < 0 or inst > MAX_ID or inst ~= math.floor(inst) then return nil end
+    if uiMapID and (uiMapID > MAX_ID or uiMapID ~= math.floor(uiMapID)) then uiMapID = 0 end
+
+    if math.abs(x) > 40000 or math.abs(y) > 40000 then return nil end
+    if mx then mx = math.max(0, math.min(1, mx)) end
+    if my then my = math.max(0, math.min(1, my)) end
     if uiMapID == 0 then uiMapID, mx, my = worldToMap(inst, x, y) end
     local zone = zoneName(uiMapID)
     local label = name
     if not label or label == "" then
-        label = text:match("^%s*Cabbie:%s*(.-)%s*<") or text:match("(.-)%s*<" .. Social.PREFIX)
+
+        local word = tostring(L["Cabbie:"]):gsub("(%W)", "%%%1")
+        label = text:match("^%s*" .. word .. "%s*(.-)%s*<") or text:match("^%s*Cabbie:%s*(.-)%s*<")
+            or text:match("(.-)%s*<" .. Social.PREFIX)
 
 
         local suffix = type(label) == "string" and type(zone) == "string" and zone ~= "" and " - " .. zone
@@ -640,6 +683,7 @@ function Social.Decode(text, name)
         end
     end
     if type(label) ~= "string" or label == "" then label = L["a shared destination"] end
+    label = cutBytes(label, 80)
     return { kind = "custom", type = "shared", name = label, inst = inst, x = x, y = y, map = uiMapID,
              mx = mx, my = my, zoneName = zone }
 end
@@ -656,14 +700,23 @@ end
 
 
 
+
+
+
+
 function Social.ShareText(dest)
     local tail = Social.Encode(dest)
     if not tail then return nil end
-    local name = type(dest.name) == "string" and dest.name ~= "" and dest.name
-    if not name then return format("%s %s %s", L["Cabbie:"], describe(dest), tail) end
-    local zone = dest.zoneName
-    if type(zone) == "string" and zone ~= "" and zone ~= name then name = name .. " - " .. zone end
-    return format("%s %s %s", L["Cabbie:"], name, tail)
+    local lead = tostring(L["Cabbie:"])
+    local room = Social.CHAT_MAX_BYTES - #lead - #tail - 2
+    local function clean(text) return (tostring(text):gsub("|", "")) end
+    local name = type(dest.name) == "string" and dest.name ~= "" and clean(dest.name)
+    if not name or name == "" then
+        return format("%s %s %s", lead, cutBytes(clean(describe(dest)), room), tail)
+    end
+    local zone = type(dest.zoneName) == "string" and clean(dest.zoneName) or ""
+    if zone ~= "" and zone ~= name and #name + 3 + #zone <= room then name = name .. " - " .. zone end
+    return format("%s %s %s", lead, cutBytes(name, room), tail)
 end
 
 
@@ -681,6 +734,29 @@ function Social.Share(channel)
         FGPS:Print(L["This destination has no position that can be shared."])
         return false, "bad_destination"
     end
+    if not channel and type(IsInGroup) == "function" and not IsInGroup() then
+        FGPS:Print(L["You are not in a group; nobody would see the shared destination."])
+        return false, "no_group"
+    end
+
+
+
+    local C = FGPS.Coords
+    if C and C.IsInstanced and C.IsInstanced() then
+        FGPS:Print(L["Inside a dungeon, raid or battleground the game does not let add-ons post to chat. Share the destination again once you are outside."])
+        return false, "in_instance"
+    end
+
+
+
+    local lockdown = C_ChatInfo and C_ChatInfo.InChatMessagingLockdown
+    if lockdown then
+        local okLock, locked = pcall(lockdown)
+        if okLock and plain(locked) then
+            FGPS:Print(L["The game is not letting add-ons post to chat at the moment. Share the destination again in a little while."])
+            return false, "chat_lockdown"
+        end
+    end
     channel = channel or (unitName("raid1") and "RAID" or "PARTY")
     if not SendChatMessage then
         FGPS:Print(L["This client does not let add-ons post to chat."])
@@ -696,10 +772,26 @@ end
 
 
 
+local function ownLine(sender, me)
+    local name, realm = sender:match("^([^-]+)-(.+)$")
+    if not name then return sender == me end
+    if name ~= me then return false end
+    if type(GetNormalizedRealmName) ~= "function" then return true end
+    local ok, mine = pcall(GetNormalizedRealmName)
+    mine = ok and plain(mine) or nil
+    if type(mine) ~= "string" or mine == "" then return true end
+    return realm == mine
+end
+
+
+
+
+
 function Social.OnChatMessage(text, sender)
-    if type(text) ~= "string" then return nil end
+    if type(text) ~= "string" or plain(text) == nil then return nil end
+    if sender ~= nil and plain(sender) == nil then return nil end
     local me = unitName("player")
-    if sender and me and sender:match("^[^-]+") == me then return nil end
+    if type(sender) == "string" and me and ownLine(sender, me) then return nil end
     local dest = Social.Decode(text)
     if not dest then return nil end
     Social.offer = { dest = dest, sender = sender or L["someone in your group"], at = now() }
@@ -783,7 +875,8 @@ local function slashAccept()
 end
 
 local function slashDecline()
-    Social.DeclineOffer()
+
+    if not Social.DeclineOffer() then FGPS:Print(L["Nobody has shared a destination with you recently."]) end
 end
 
 

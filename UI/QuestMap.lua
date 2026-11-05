@@ -123,13 +123,25 @@ end
 
 
 
+
+
 function QuestMap.MarkersFor(questID, accepted, opts)
     local QuestData = questData()
     if not QuestData then return {} end
     local _, quests = settings()
     local out = {}
-    local title = (FGPS.UI.QuestPanel and FGPS.UI.QuestPanel.TitleFor and FGPS.UI.QuestPanel.TitleFor(questID))
-        or format(L["Quest %d"], questID)
+
+
+    local QuestPanel = FGPS.UI.QuestPanel
+    local title, known
+    if QuestPanel and QuestPanel.TitleFor then
+        title, known = QuestPanel.TitleFor(questID)
+    else
+        title = QuestData.Title and QuestData.Title(questID) or nil
+        known = type(title) == "string" and title ~= ""
+        if not known then title = L["Unknown quest"] end
+    end
+    local unknownQuest = not known and questID or nil
 
 
 
@@ -151,7 +163,7 @@ function QuestMap.MarkersFor(questID, accepted, opts)
     if start and not start.interior and not accepted then
         out[#out + 1] = { kind = "giver", questID = questID, inst = start.inst, x = start.x, y = start.y,
                           label = QuestData.StartLabel and QuestData.StartLabel(title, start) or format(L["%s (start)"], title), mark = mark,
-                          accepted = accepted }
+                          accepted = accepted, unknownQuest = unknownQuest }
     end
     local turnIn = QuestData.TurnIn(questID)
 
@@ -167,7 +179,7 @@ function QuestMap.MarkersFor(questID, accepted, opts)
 
         out[#out + 1] = { kind = "turnin", questID = questID, inst = turnIn.inst, x = turnIn.x, y = turnIn.y,
                           label = format(turnIn.later and L["%s (turn-in, from later records)"] or L["%s (turn-in)"], title), mark = mark,
-                          accepted = accepted }
+                          accepted = accepted, unknownQuest = unknownQuest }
     end
     if not (opts and opts.areas == false) and not (quests and quests.objectiveAreas == false) then
         local drawn = 0
@@ -227,6 +239,29 @@ local function ensurePools()
     return true
 end
 
+
+
+
+
+
+
+
+local function showPinTooltip(pin)
+    local Look = FGPS.UI.Look
+    if not (Look and Look.Tooltip) then return false end
+    local stage = type(pin.fgpsStage) == "string" and pin.fgpsStage ~= "" and pin.fgpsStage or nil
+    local line = stage
+    if pin.fgpsUnverified then
+        line = stage and format(L["%s, place not confirmed"], stage) or L["Place not confirmed"]
+    end
+    local title = pin.fgpsLabel or L["Quest"]
+    if pin.fgpsUnknownQuest then
+        local number = format(L["Quest %d"], pin.fgpsUnknownQuest)
+        line = line and (number .. L[" - "] .. line) or number
+    end
+    return Look.Tooltip(pin, title, line)
+end
+
 local function setupPin(pin)
     if pin.fgpsReady then return end
     pin.fgpsReady = true
@@ -241,18 +276,7 @@ local function setupPin(pin)
 
     pin:EnableMouse(true)
     if pin.SetMouseClickEnabled then pin:SetMouseClickEnabled(false) end
-    pin:SetScript("OnEnter", function(self)
-        if not GameTooltip then return end
-        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:AddLine(self.fgpsLabel or L["Quest"])
-        if self.fgpsStage and self.fgpsStage ~= "" then
-            GameTooltip:AddLine(self.fgpsStage, 1, 1, 1, true)
-        end
-        if self.fgpsUnverified then
-            GameTooltip:AddLine(L["Unconfirmed place"], 1, 0.85, 0.4, true)
-        end
-        GameTooltip:Show()
-    end)
+    pin:SetScript("OnEnter", showPinTooltip)
     pin:SetScript("OnLeave", function(self)
         if GameTooltip and (not GameTooltip.IsOwned or GameTooltip:IsOwned(self)) then GameTooltip:Hide() end
     end)
@@ -271,10 +295,8 @@ local function setupDisc(disc)
     disc:EnableMouse(true)
     if disc.SetMouseClickEnabled then disc:SetMouseClickEnabled(false) end
     disc:SetScript("OnEnter", function(self)
-        if not GameTooltip then return end
-        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:AddLine(self.fgpsLabel or L["Quest"])
-        GameTooltip:Show()
+        local Look = FGPS.UI.Look
+        if Look and Look.Tooltip then Look.Tooltip(self, self.fgpsLabel or L["Quest"]) end
     end)
     disc:SetScript("OnLeave", function(self)
         if GameTooltip and (not GameTooltip.IsOwned or GameTooltip:IsOwned(self)) then GameTooltip:Hide() end
@@ -297,6 +319,7 @@ local function stylePin(pin, marker)
     end
     local unverified = (marker.mark or 0) <= 1
     pin.fgpsUnverified = unverified
+    pin.fgpsUnknownQuest = marker.unknownQuest
     local name = unverified and "routeUnverified" or "routeVerified"
     local r, g, b = skinColor(name)
     if unverified then
@@ -368,7 +391,20 @@ function QuestMap:OnScaleChanged()
     end
 end
 
+
+
+local function gather(flag, opts)
+    QuestMap[flag] = true
+    local ok, markers = pcall(QuestMap.AllMarkers, opts)
+    QuestMap[flag] = nil
+    if not ok then error(markers, 0) end
+    return markers
+end
+
 function QuestMap:Redraw()
+
+
+    if self.gatheringMap then return end
     local map = WorldMapFrame
     if not map or not self.overlay then return end
     if not ensurePools() then return end
@@ -381,7 +417,7 @@ function QuestMap:Redraw()
 
 
 
-    local markers = mapID and QuestMap.AllMarkers() or nil
+    local markers = mapID and gather("gatheringMap") or nil
     self:ClearDrawing()
     if not markers then return end
     local Perf = FGPS.Perf
@@ -458,12 +494,13 @@ function QuestMap:ClearMinimap()
 end
 
 function QuestMap:RefreshMinimap()
+    if self.gatheringMinimap then return end
     local _, quests = settings()
     local wanted = self.pins ~= nil and not (quests and (quests.enabled == false or quests.minimapPins == false))
         and not (FGPS.Perf and FGPS.Perf.guidanceEnabled == false)
 
 
-    local markers = wanted and QuestMap.AllMarkers({ areas = false }) or nil
+    local markers = wanted and gather("gatheringMinimap", { areas = false }) or nil
     self:ClearMinimap()
     if not markers then return end
     if not self.minimapPool then
@@ -583,9 +620,19 @@ end
 
 
 
+
+
+
+local refreshing = false
 local function refreshBoth()
-    QuestMap:Redraw()
-    QuestMap:RefreshMinimap()
+    if refreshing then return end
+    refreshing = true
+    local ok, err = pcall(function()
+        QuestMap:Redraw()
+        QuestMap:RefreshMinimap()
+    end)
+    refreshing = false
+    if not ok then error(err, 0) end
 end
 
 

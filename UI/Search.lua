@@ -33,43 +33,69 @@
 
 
 
+
+
+
+
 local ADDON_NAME, FGPS = ...
 
 local L = FGPS.L
 local Util = FGPS.Util
 local type, ipairs, pairs, tostring, tonumber, format = type, ipairs, pairs, tostring, tonumber, string.format
 
+
+local function resultsText(n)
+    return format(n == 1 and L["%d result"] or L["%d results"], n)
+end
+
 local Search = {
-    window = nil,
-    list = nil,
-    tab = "search",
     filter = "towns",
     query = "",
+    only = nil,
     items = {},
     selectedIndex = 0,
     addStopMode = false,
+    routesAsked = 0,
     serviceResults = nil,
     serviceQuery = nil,
-    listCategory = nil,
-    listSub = nil,
-    listQuery = "",
     searchGeneration = 0,
     pendingQuery = nil,
 }
 FGPS.UI.Search = Search
 
-local WINDOW_KEY = "search"
+
+
+
+
+
+
+
+
+
+
+
+
+
+Search.placesPage = { sections = {}, selected = nil, picked = nil }
+local page = Search.placesPage
+
+Search.PAGE = "places"
+Search.PAGE_ICON = "Interface\\Icons\\INV_Misc_Map_01"
 local DEBOUNCE_SECONDS = 0.15
-local ROW_HEIGHT = 20
 local RESULT_LIMIT = 25
 local MIN_QUERY = 2
 
 
+local BOX_HEIGHT, STATUS_HEIGHT, HEAD_HEIGHT = 22, 14, 16
+local RIGHT_SHARE = 0.32
 
 
-local TABS = { "search", "favorites", "recent", "quests", "poi" }
-local TAB_LABELS = { search = "Search", favorites = "Favorites", recent = "Recent", quests = "Quest", poi = "Points of interest" }
-local TAB_WIDTH = { search = 60, favorites = 78, recent = 62, quests = 54, poi = 144 }
+
+Search.SECTION_ORDER = { nearest = 10, ornament = 15, favorites = 20, recent = 30, matches = 1000 }
+local BREAK_FILE, BREAK_HEIGHT = "Interface\\QuestFrame\\UI-HorizontalBreak", 16
+local WHEEL_ROWS = 3
+
+Search.NEAREST = { "inn", "flightmaster", "bank", "mailbox" }
 
 
 
@@ -90,40 +116,45 @@ local SERVICE_LABELS = {
     bank = "Bank", auction = "Auction house", trainer = "Trainer", stable = "Stable master",
 }
 
-
-
-
 local LIST_LIMIT = 40
 
 local LIST_FILTER_LIMIT = 2000
-local LIST_CATEGORIES = {
-    { key = "towns", label = "Towns", subs = {
-        { key = "capitals", label = "Capitals", types = { 5 } },
-        { key = "towns", label = "Towns", types = { 1 } },
-        { key = "landmarks", label = "Landmarks", types = { 2 } },
-    } },
-    { key = "dungeons", label = "Dungeons", subs = {
-        { key = "dungeons", label = "Dungeons", types = { 3 } },
-        { key = "raids", label = "Raids", types = { 4 } },
 
-    } },
-    { key = "travel", label = "Travel", subs = {
-        { key = "flight", label = "Flight masters", types = { 6 }, nearest = "flightmaster" },
-        { key = "docks", label = "Docks", types = { 14 } },
-        { key = "tram", label = "Tram", types = { 15 } },
-        { key = "portals", label = "Portals", types = { 17 } },
-    } },
+
+
+
+local function isLiftLanding(dest)
+    local P = FGPS.Data and FGPS.Data.poi
+    local src = P and P.src and type(dest) == "table" and dest.poiIndex and P.src[dest.poiIndex]
+    local id = type(src) == "string" and src:match("^transport:(%d+):stop:%d+$")
+    local records = id and FGPS.Data.transports
+    local rec = records and records[tonumber(id)]
+    return type(rec) == "table" and rec.kind == "elevator"
+end
+
+
+
+
+
+
+local KINDS = {
+    { key = "towns", label = "Towns", types = { 5, 1, 2 } },
+    { key = "dungeons", label = "Dungeons", types = { 3, 4 }, insideFirst = true },
+    { key = "travel", label = "Travel", types = { 6, 14, 15, 17 }, skip = isLiftLanding },
     { key = "vendor", label = "Vendors", types = { 8 }, nearest = "vendor" },
     { key = "repair", label = "Repair", types = { 9 }, nearest = "repair" },
     { key = "inn", label = "Inn", types = { 7 }, nearest = "inn" },
     { key = "mailbox", label = "Mailbox", types = { 10 }, nearest = "mailbox" },
     { key = "bank", label = "Bank", types = { 11 }, nearest = "bank" },
-    { key = "auction", label = "Auction house", types = { 12 }, nearest = "auction" },
-    { key = "trainer", label = "Trainer", trainerMenu = true },
-    { key = "weapons", label = "Weapon master", service = "trainer:weapons", nearest = "trainer:weapons" },
-    { key = "stable", label = "Stable master", types = { 20 }, nearest = "stable" },
+    { key = "auction", label = "Auction House", types = { 12 }, nearest = "auction" },
+    { key = "trainer", label = "Trainer", service = "trainer", nearest = "trainer" },
+    { key = "weapons", label = "Weapon Master", service = "trainer:weapons", nearest = "trainer:weapons",
+      inTrainerMenu = true },
+    { key = "stable", label = "Stable Master", types = { 20 }, nearest = "stable" },
     { key = "graveyard", label = "Graveyard", types = { 16 } },
 }
+Search.KINDS = KINDS
+
 
 
 local TRAINER_LABELS = {
@@ -153,6 +184,22 @@ end
 
 
 
+
+local function kindAt(key)
+    for _, kind in ipairs(KINDS) do
+        if kind.key == key then return kind end
+    end
+    local sub = type(key) == "string" and key:match("^trainer:(.+)$")
+    if not sub or sub == "weapons" or not (TRAINER_LABELS[sub] or sub:match("^%u+$")) then return nil end
+    return { key = key, label = trainerKindLabel(sub), named = true, service = key, nearest = key }
+end
+local function kindLabel(kind)
+    return kind.named and kind.label or L[kind.label]
+end
+
+
+
+
 Search.STRAIGHT_FLAG_TEXT = "(open ground)"
 Search.STRAIGHT_FLAG = "|cffffa633" .. Search.STRAIGHT_FLAG_TEXT .. "|r"
 
@@ -167,8 +214,6 @@ function Search.RefreshStraightFlag()
     Search.STRAIGHT_FLAG = format("|cff%02x%02x%02x%s|r", byte(c[1]), byte(c[2]), byte(c[3]), L[Search.STRAIGHT_FLAG_TEXT])
     return Search.STRAIGHT_FLAG
 end
-Search.SERVICES_HINT = "Nearest by route distance: the closest candidates by direct distance are routed and sorted by "
-    .. "route length. A result marked (open ground) could not be routed; its distance is a direct estimate."
 
 
 
@@ -181,127 +226,50 @@ local function settings()
     return FGPS.DB and FGPS.DB.settings or nil
 end
 
-
-
-
-
-
 local function Look()
     return FGPS.UI.Look
 end
 
-
-
-local function labelFont(kind, color)
-    if color == "textDim" then return Look().Font("hint") end
-    if color == "title" or color == "accent" then return Look().Font("listTitle") end
-    return Look().Font(kind == "small" and "rowSmall" or "row")
+local function pageText(parent, role, color, justify)
+    local look = Look()
+    local text = parent:CreateFontString(nil, "OVERLAY", look.Font(role))
+    text:SetTextColor(look.Color(color))
+    text:SetJustifyH(justify or "LEFT")
+    if text.SetWordWrap then text:SetWordWrap(false) end
+    text:SetText("")
+    return text
 end
 
 
-local function makeLabel(parent, kind, text, color)
-    local fs = parent:CreateFontString(nil, "OVERLAY", labelFont(kind, color))
-    fs:SetText(text or "")
-    if fs.SetJustifyH then fs:SetJustifyH("LEFT") end
-    return fs
-end
-
-
-local function makeButton(parent, text, onClick, width, height)
-    local button = Look().Button(parent, text, width or 90, height or 22)
-    if onClick then button:SetScript("OnClick", onClick) end
-    return button
-end
-
-
-local function markButton(button)
-    local mark = button:CreateTexture(nil, "OVERLAY")
-    mark:SetPoint("TOPLEFT", button, "TOPLEFT", 4, -3)
-    mark:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -4, 3)
-    Look().Highlight(mark)
-    mark:Hide()
-    button.fgpsMark = mark
-    return button
-end
-
-local function setButtonText(button, text)
-    if button.SetLabel then button:SetLabel(text) else button:SetText(text) end
-end
-
-local function setButtonOnClick(button, fn)
-    if button.SetOnClick then button:SetOnClick(fn) else button:SetScript("OnClick", fn) end
-end
-
-local function setButtonEnabled(button, enabled)
-    if button.SetEnabledState then button:SetEnabledState(enabled) elseif enabled then button:Enable() else button:Disable() end
-end
-
-
-
-
-
-
-local EDIT_TEMPLATES = { "SearchBoxTemplate", "InputBoxTemplate" }
-local function makeEditBox(parent, opts)
-    local box, template = Look().EditBox(parent, EDIT_TEMPLATES)
-    box.fgpsTemplate = template
-    box:SetSize(opts.width or 160, opts.height or 22)
-    if box.SetMaxLetters then box:SetMaxLetters(opts.maxLetters or 80) end
-
-    box.Placeholder = box.Instructions
-    if not box.Placeholder then
-        box.Placeholder = box:CreateFontString(nil, "OVERLAY", Look().Font("hint"))
-        box.Placeholder:SetPoint("LEFT", box, "LEFT", 8, 0)
+local function pageSize(frame)
+    local look = Look()
+    local tokens, edge = look.TOKENS, look.TOME_FRAME
+    local width, height = frame and frame:GetWidth(), frame and frame:GetHeight()
+    if type(width) ~= "number" or width <= 0 then
+        width = tokens.windowWidth - edge.sheetLeft - edge.sheetRight - 2 * tokens.pad
     end
-    box.Placeholder:SetText(opts.placeholder or "")
-    local function report(self, text, userInput)
-        local ok, err = pcall(opts.onChanged, self, text, userInput)
-        if not ok and FGPS.Log then FGPS.Log:Error("Search box handler failed: %s", tostring(err)) end
+    if type(height) ~= "number" or height <= 0 then
+        height = tokens.windowHeight - edge.sheetTop - edge.sheetBottom - 2 * tokens.pad - tokens.rowQuest - tokens.gapWide
     end
-    box:SetScript("OnEnterPressed", function(self)
-        if opts.onEnter then
-            local ok, err = pcall(opts.onEnter, self, self:GetText())
-            if not ok and FGPS.Log then FGPS.Log:Error("Search box handler failed: %s", tostring(err)) end
-        end
-    end)
-    box:SetScript("OnEscapePressed", function(self)
-        self:ClearFocus()
-        if opts.onEscape then pcall(opts.onEscape, self) end
-    end)
-    box:HookScript("OnTextChanged", function(self, userInput)
-        local text = self:GetText() or ""
-        self.Placeholder:SetShown(text == "")
-        if opts.onChanged then report(self, text, userInput) end
-    end)
-
-
-    if box.ClearButton and box.ClearButton.HookScript and opts.onChanged then
-        box.ClearButton:HookScript("OnClick", function() report(box, "", true) end)
-    end
-    return box
+    return width, height
 end
 
-local function makeList(parent, rowHeight, renderFn, onClick)
-    local F = Frames()
-    if F and F.CreateScrollList then
-        local ok, list = pcall(F.CreateScrollList, parent, rowHeight, renderFn, { onClick = onClick })
-        if ok and type(list) == "table" then return list end
-        FGPS.Log:Error("Frames.CreateScrollList failed: %s", tostring(list))
-    end
-    return nil
+
+local function textWidth(text)
+    local width = text.GetUnboundedStringWidth and text:GetUnboundedStringWidth() or text:GetStringWidth()
+    return type(width) == "number" and width or 0
 end
 
-local function setListItems(list, items)
-    if not list then return end
-    if list.SetItems then list:SetItems(items)
-    elseif list.SetData then list:SetData(items)
-    elseif list.Update then list:Update(items) end
+local function hideTip(owner)
+    if GameTooltip and GameTooltip.IsOwned and GameTooltip:IsOwned(owner) then GameTooltip:Hide() end
 end
 
-local function contentFrame(window)
-    local content = window.Content or window.content or window
-    local top = (content == window) and 30 or 0
-    return content, top
+
+local function pageHas(file, without)
+    local look = Look()
+    if look.TomeHas("file", file) then return true end
+    look.NoteOnce("tome:places:" .. file, "Tome: %s missing; %s", file, without)
+    return false
 end
 
 local function playerPos()
@@ -323,7 +291,7 @@ function Search.DistanceText(dest, pos, yards)
         text = Util.FormatDistance(yards, units)
     else
         pos = pos or playerPos()
-        if not pos or type(dest) ~= "table" or not dest.x or not dest.y then return "" end
+        if not pos or type(dest) ~= "table" or type(dest.x) ~= "number" or type(dest.y) ~= "number" then return "" end
         if dest.inst ~= nil and pos.inst ~= nil and dest.inst ~= pos.inst then return "" end
         local Coords = FGPS.Coords
         if Coords and Coords.Distance then
@@ -349,6 +317,32 @@ local function describe(dest)
     local name = dest.name or L["Map position"]
     if dest.zoneName then return name .. " - " .. dest.zoneName end
     return name
+end
+
+
+local function placeMap(at)
+    if type(at) ~= "table" then return nil end
+    local map = tonumber(at.map)
+    if map then return map end
+    local Coords = FGPS.Coords
+    if Coords and Coords.WorldToMap and at.inst and at.x and at.y then
+        local ok, mapID = pcall(Coords.WorldToMap, at.inst, at.x, at.y)
+        if ok and tonumber(mapID) then return tonumber(mapID) end
+    end
+    return nil
+end
+
+
+
+local function mapClosed()
+    return type(OpenWorldMap) ~= "function" or (InCombatLockdown ~= nil and InCombatLockdown() == true)
+end
+
+
+local function samePlace(a, b)
+    if type(a) ~= "table" or type(b) ~= "table" then return false end
+    if a == b then return true end
+    return a.inst == b.inst and a.x == b.x and a.y == b.y and (a.name == nil or b.name == nil or a.name == b.name)
 end
 
 
@@ -391,6 +385,8 @@ function Search.GoTo(dest, mode, opts)
         end
         return true
     end
+
+    Search.routesAsked = Search.routesAsked + 1
     if mode == "start" then
         Navigator:SetDestination(dest, { start = true, quiet = opts.quiet == true })
         return true
@@ -442,6 +438,15 @@ end
 
 
 
+local function reasonText(code, fallback)
+    local Compat = FGPS.UI.Compat
+    if Compat and Compat.ReasonText then return Compat.ReasonText(code, fallback) end
+    return tostring(code or fallback or L["unknown reason"])
+end
+
+
+
+
 local function resolveItem(item, quiet)
     if type(item) ~= "table" then return nil end
     if item.dest then return item.dest end
@@ -461,6 +466,10 @@ end
 function Search:SelectedItem()
     local item = self.items[self.selectedIndex]
     if item and (item.dest or item.resolve) then return item end
+
+
+
+    if item and item.kind ~= "header" and item.kind ~= "back" then return nil end
     for _, candidate in ipairs(self.items) do
         if candidate.dest or candidate.resolve then return candidate end
     end
@@ -468,12 +477,40 @@ function Search:SelectedItem()
 end
 
 
+local refreshFooter
+
+
+function Search:ShowingMatches()
+    return self.only ~= nil or Util.Trim(self.query or "") ~= ""
+end
+
+
+
+
+function Search:PickedPlace(quiet)
+    if self:ShowingMatches() then return resolveItem(self:SelectedItem(), quiet) end
+    return page.selected
+end
+
+
+
+function Search:PickChanged()
+    if self:ShowingMatches() then
+        local dest = resolveItem(self:SelectedItem(), true)
+        page.selected = dest
+        page.picked = dest and "matches" or nil
+    end
+    refreshFooter()
+end
+
+
+
+
 
 
 
 function Search:Act(mode)
-    local item = self:SelectedItem()
-    local dest, why = resolveItem(item, true)
+    local dest, why = self:PickedPlace(true)
     if not dest then
         local Guide = FGPS.UI.Guide
         if Guide and Guide.Say then Guide.Say(why or L["Select a destination first."], Search.REFUSED_SECONDS) end
@@ -485,13 +522,13 @@ function Search:Act(mode)
     end
 
 
-    return Search.GoTo(dest, mode, { quiet = true })
+    return Search.GoTo(dest, mode or "start", { quiet = true })
 end
 
-function Search:ToggleFavorite()
+
+function Search:ToggleFavorite(dest)
     local Destinations = FGPS.Destinations
-    local item = self:SelectedItem()
-    local dest = resolveItem(item)
+    if type(dest) ~= "table" then dest = self:PickedPlace() end
     if not dest or not Destinations then
         FGPS:Print(L["Select a destination first."])
         return false
@@ -512,152 +549,275 @@ function Search:ToggleFavorite()
     elseif Destinations.AddFavorite then
         local ok, reason = Destinations.AddFavorite(dest)
         if ok == false then
-            FGPS:Print(L["Could not add favorite (%s)."], FGPS.UI.Compat.ReasonText(reason, L["unknown reason"]))
+            FGPS:Print(L["Could not add favorite (%s)."], reasonText(reason, L["unknown reason"]))
         else
             FGPS:Print(L["Added to favorites: %s"], describe(dest))
         end
     end
-    if self.tab == "favorites" or self.tab == "search" or self.tab == "recent" then self:Refresh() end
-    self:UpdateFavoriteButton()
+
+
+    self:RefreshDistances()
+    self:PickChanged()
     return true
 end
 
-function Search:UpdateFavoriteButton()
-    local window = self.window
-    local btn = window and window.fgpsButtons and window.fgpsButtons.favorite
-    if not btn then return end
-    local Destinations = FGPS.Destinations
-    local dest = resolveItem(self:SelectedItem(), true)
-    local isFav = dest and Destinations and Destinations.IsFavorite and Destinations.IsFavorite(dest)
-    setButtonText(btn, isFav and L["Unfavorite"] or L["Favorite"])
-end
 
 
 
 
-Search.ICON = 14
-
-local SERVICE_ICON = {
-    vendor = "vendor", repair = "repair", flightmaster = "flight", flight = "flight", travel = "flight", inn = "inn",
-    mailbox = "mail", bank = "bank", auction = "auction", trainer = "trainer", weapons = "trainer", stable = "stable",
-    towns = "place", capitals = "place", landmarks = "place", dungeons = "dungeon", raids = "dungeon",
-}
 
 
-local function iconKind(item)
-    if item.kind == "quest" then return type(item.quest) == "table" and item.quest.complete and "questReady" or "quest" end
-    if item.kind == "dest" and type(item.dest) == "table" then
-        local Rows = FGPS.UI.SearchRows
-        return Rows and Rows.TYPE_ICON and Rows.TYPE_ICON[item.dest.type] or "place"
+
+
+
+local function dressPlaceRow(row)
+    local tokens = Look().TOKENS
+    row.Icon = row:CreateTexture(nil, "ARTWORK")
+    row.Icon:SetSize(tokens.iconBox, tokens.iconBox)
+    row.Icon:SetPoint("LEFT", row, "LEFT", 0, 0)
+    row.Name = pageText(row, "pageBody", "ink")
+    row.Name:SetHeight(tokens.rowPlace)
+    row.Zone = pageText(row, "pageSub", "inkGrey")
+    row.Zone:SetPoint("LEFT", row.Name, "RIGHT", tokens.gap, 0)
+    row.Zone:SetHeight(tokens.rowPlace)
+    row.Right = pageText(row, "pageSub", "inkGrey", "RIGHT")
+    row.Right:SetPoint("RIGHT", row, "RIGHT", 0, 0)
+    row.Right:SetHeight(tokens.rowPlace)
+
+    if row.Text then
+        row.Text:SetText("")
+        row.Text:Hide()
     end
-    if item.kind == "service" and type(item.service) == "string" then return SERVICE_ICON[item.service:match("^%a+")] end
-    return nil
+end
+Search.DressPlaceRow = dressPlaceRow
+
+local function iconOf(item)
+    if item.icon then return item.icon end
+    local Rows = FGPS.UI.SearchRows
+    local dest = item.dest
+    local kind = type(dest) == "table" and Rows and Rows.TYPE_ICON and Rows.TYPE_ICON[dest.type] or nil
+    return kind or "place"
+end
+
+local function paintPlaceRow(row, item, width)
+    local look = Look()
+    local tokens = look.TOKENS
+    row.entry = item
+    row.Name:ClearAllPoints()
+    if item.kind == "header" then
+        row.Icon:Hide()
+        row.Name:SetPoint("LEFT", row, "LEFT", 0, 0)
+        row.Name:SetFontObject(look.Font("pageSub"))
+        row.Name:SetTextColor(look.Color("rubric"))
+        row.Name:SetText(item.label or "")
+        row.Name:SetWidth(width)
+        row.Zone:SetText("")
+        row.Right:SetText("")
+        return
+    end
+    local icon = iconOf(item)
+    if row.fgpsIcon ~= icon then
+        look.Icon(row.Icon, icon, tokens.iconBox)
+        row.fgpsIcon = icon
+    end
+    row.Icon:Show()
+    row.Name:SetPoint("LEFT", row, "LEFT", tokens.iconBox + tokens.gap, 0)
+    row.Name:SetFontObject(look.Font("pageBody"))
+    row.Name:SetTextColor(look.Color(item.otherFaction and "inkGrey" or "ink"))
+    local dest = item.dest
+    local name = type(dest) == "table" and type(dest.name) == "string" and dest.name or item.label or ""
+    local Rows = FGPS.UI.SearchRows
+    local typed = item.marked and Search.query or ""
+    local text = Rows and Rows.Mark and Rows.Mark(name, typed, "rubric") or name
+    if item.favorite then text = L["*"] .. " " .. text end
+    row.Name:SetText(text)
+    local zone = type(dest) == "table" and dest.zoneName or nil
+    if zone == name then zone = nil end
+    row.Zone:SetText(zone or "")
+    row.Right:SetText(item.right or "")
+    local rightWidth = math.floor(width * RIGHT_SHARE)
+    row.Right:SetWidth(rightWidth)
+    local room = math.max(0, width - rightWidth - tokens.iconBox - tokens.gap - tokens.gapWide)
+    local nameWidth = math.min(textWidth(row.Name), room)
+    row.Name:SetWidth(nameWidth)
+    row.Zone:SetWidth(math.max(0, room - nameWidth - tokens.gap))
+end
+Search.PaintPlaceRow = paintPlaceRow
+
+
+local function placeTooltip(row, item)
+    if type(item) ~= "table" or item.kind ~= "dest" or type(item.dest) ~= "table" then
+        hideTip(row)
+        return
+    end
+    Look().Tooltip(row, describe(item.dest), nil,
+        L["Double-click to be guided there"] .. " \194\183 " .. L["Right-click for options"])
 end
 
 
+
+function Search.OpenPlaceMenu(owner, item)
+    local Menus = FGPS.UI.Menus
+    if not (Menus and Menus.OpenRowMenu) or type(item) ~= "table" or item.kind == "header" then return nil end
+    local dest = resolveItem(item, true)
+    if type(dest) ~= "table" then return nil end
+    local Destinations = FGPS.Destinations
+    local favorite = Destinations and Destinations.IsFavorite and Destinations.IsFavorite(dest) and true or false
+    local map = placeMap(dest)
+    return Menus.OpenRowMenu(owner, {
+        title = type(dest.name) == "string" and dest.name or describe(dest),
+        entries = {
+            { label = L["Go"], onClick = function() Search.GoTo(dest, "start", { quiet = true }) end },
+            { label = L["Add as a Stop"], onClick = function() Search.GoTo(dest, "addStop") end },
+            { label = favorite and L["Remove from Favorites"] or L["Add to Favorites"],
+              onClick = function() Search:ToggleFavorite(dest) end },
+            { label = L["Show on Map"], onClick = function() Menus.ShowOnMap(map) end, disabled = map == nil or mapClosed },
+        },
+    })
+end
+
+
+function Search:IsPicked(dest, key)
+    if key ~= nil and page.picked ~= key then return false end
+    return samePlace(page.selected, dest)
+end
+
+local layoutPage
+
+
+function Search:PickPlace(dest, key)
+    if type(dest) ~= "table" then return false end
+    page.selected, page.picked = dest, key
+    Look().PlaySound("IG_QUEST_LIST_SELECT")
+    layoutPage()
+    refreshFooter()
+    return true
+end
 
 local function paintGlow(row)
-    row.fgpsGlow:SetShown(row.fgpsSelected == true or row.fgpsHover == true)
+    if not row.Glow then return end
+    local entry = row.entry
+    local picked = type(entry) == "table" and Search:IsPicked(entry.dest, row.fgpsSection)
+    row.Glow:SetShown(picked or row.fgpsHover == true)
 end
 
-local function ensureRowWidgets(row)
-    if row.fgpsReady then return end
-    row.fgpsReady = true
-    if row.Bg and row.Bg.SetAlpha then row.Bg:SetAlpha(0) end
-    row.fgpsGlow = row:CreateTexture(nil, "BACKGROUND")
-    row.fgpsGlow:SetAllPoints(row)
-    Look().Highlight(row.fgpsGlow)
-    row.fgpsGlow:Hide()
-    if row.HookScript then
-        row:HookScript("OnEnter", paintGlow)
-        row:HookScript("OnLeave", paintGlow)
-    end
-    row.icon = row:CreateTexture(nil, "ARTWORK")
-    row.icon:SetPoint("CENTER", row, "LEFT", 4 + Search.ICON / 2, 0)
-    row.icon:Hide()
-    row.text = row.Text or makeLabel(row, "normal", "", "text")
-    row.text:ClearAllPoints()
-    row.text:SetPoint("LEFT", row, "LEFT", 6, 0)
-    row.right = makeLabel(row, "small", "", "text")
-    row.right:SetPoint("RIGHT", row, "RIGHT", -6, 0)
-    if row.right.SetJustifyH then row.right:SetJustifyH("RIGHT") end
-    row.text:SetPoint("RIGHT", row.right, "LEFT", -6, 0)
-    row.action = makeButton(row, "", nil, 64, 18)
-    row.action:SetPoint("RIGHT", row, "RIGHT", -4, 0)
-    row.action:Hide()
+
+local function onSectionsWheel(_, delta)
+    if type(delta) ~= "number" then return end
+    Search:ScrollSections(-delta * WHEEL_ROWS * Look().TOKENS.rowPlace)
 end
 
 
 
-function Search.RenderRow(row, item, index)
-    ensureRowWidgets(row)
-    local look = Look()
-    row.item, row.index = item, index
-    local gold = item.kind == "back" or item.kind == "header"
-    row.text:SetFontObject(look.Font(gold and "listTitle" or "row"))
-    row.right:SetFontObject(look.Font("rowSmall"))
-    row.text:SetText(item.label or "")
-    if row.text.SetWordWrap then row.text:SetWordWrap(false) end
-    if row.text.SetMaxLines then row.text:SetMaxLines(1) end
-    if gold then
-        row.text:SetTextColor(look.Color("header"))
-    elseif item.otherFaction then
 
-        row.text:SetTextColor(look.Color("grey"))
-    else
-        row.text:SetTextColor(look.Color("name"))
-    end
-    row.right:SetTextColor(look.Color("name"))
 
-    if row.Bg and row.Bg.SetAlpha then row.Bg:SetAlpha(0) end
-    paintGlow(row)
-    local icon = iconKind(item)
-    if icon then
-        if row.iconKind ~= icon then
-            look.Icon(row.icon, icon, Search.ICON)
-            row.iconKind = icon
+function Search.NewPlaceRow(parent, key, menu)
+    local row = CreateFrame("Button", nil, parent)
+    row:SetHeight(Look().TOKENS.rowPlace)
+    row.Glow = row:CreateTexture(nil, "BACKGROUND")
+    row.Glow:SetAllPoints(row)
+    Look().Highlight(row.Glow)
+    row.Glow:Hide()
+    dressPlaceRow(row)
+    row.fgpsSection = key
+    row.fgpsMenu = type(menu) == "function" and menu or nil
+    row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    row:SetScript("OnClick", function(self, button)
+        if button == "RightButton" then
+            (self.fgpsMenu or Search.OpenPlaceMenu)(self, self.entry)
+            return
         end
-        row.icon:Show()
-    else
-        row.icon:Hide()
-    end
-    local left = icon and (8 + Search.ICON) or 6
-    row.text:ClearAllPoints()
-    row.text:SetPoint("LEFT", row, "LEFT", left, 0)
-    if item.actionLabel then
-        setButtonText(row.action, item.actionLabel)
-        setButtonOnClick(row.action, function() if item.action then item.action(item) end end)
-        row.action:Show()
-        row.right:SetText("")
-        row.right:Hide()
+        local entry = self.entry
+        if type(entry) == "table" and not Search:IsPicked(entry.dest, self.fgpsSection) then
+            Search:PickPlace(entry.dest, self.fgpsSection)
+        end
+    end)
+    row:SetScript("OnDoubleClick", function(self, button)
+        if button == "RightButton" then
+            (self.fgpsMenu or Search.OpenPlaceMenu)(self, self.entry)
+            return
+        end
+        local entry = self.entry
+        if type(entry) ~= "table" or type(entry.dest) ~= "table" then return end
+        if not Search:IsPicked(entry.dest, self.fgpsSection) then Search:PickPlace(entry.dest, self.fgpsSection) end
+        Search:Act()
+    end)
+    row:SetScript("OnEnter", function(self)
+        self.fgpsHover = true
+        paintGlow(self)
+        placeTooltip(self, self.entry)
+    end)
+    row:SetScript("OnLeave", function(self)
+        self.fgpsHover = false
+        paintGlow(self)
+        hideTip(self)
+    end)
+    row:EnableMouseWheel(true)
+    row:SetScript("OnMouseWheel", onSectionsWheel)
+    return row
+end
+Search.PaintPick = paintGlow
 
-        row.text:SetPoint("RIGHT", row.action, "LEFT", -6, 0)
-    else
-        row.action:Hide()
-        row.right:Show()
-        row.right:SetText(item.right or "")
-        row.text:SetPoint("RIGHT", row.right, "LEFT", -6, 0)
-    end
-    row:SetScript("OnDoubleClick", function() if item.dest or item.resolve then Search:Act() end end)
+
+
+
+local function paintMatchGlow(row)
+    if row.fgpsGlow then row.fgpsGlow:SetShown(row.fgpsSelected == true or row.fgpsHover == true) end
 end
 
-local function onRowClick(item, index, button)
+local function renderMatchRow(row, item, _, list)
+    if not row.Name then
+        dressPlaceRow(row)
+        if row.Bg and row.Bg.SetAlpha then row.Bg:SetAlpha(0) end
+        row.fgpsGlow = row:CreateTexture(nil, "BACKGROUND")
+        row.fgpsGlow:SetAllPoints(row)
+        Look().Highlight(row.fgpsGlow)
+    end
+    local width = list:GetWidth() or 0
+    if list.Bar and list.Bar.IsShown and list.Bar:IsShown() then width = width - (list.Bar:GetWidth() or 0) - 2 end
+    paintPlaceRow(row, item, math.max(0, width))
+    paintMatchGlow(row)
+end
+
+local function onMatchClick(item, index)
     if type(item) ~= "table" then return end
-    if item.kind == "back" then
-        Search:ServiceBack()
+    if item.kind == "header" then
+
+        local list = page.list
+        if list and list.SetSelected then list:SetSelected(Search.selectedIndex > 0 and Search.selectedIndex or nil) end
         return
     end
-    if item.kind == "header" then return end
+    if Search.selectedIndex ~= index then
+        Search.selectedIndex = index
+        Look().PlaySound("IG_QUEST_LIST_SELECT")
+    end
+    Search:PickChanged()
+end
 
-    Search.listKeysArmed = true
-    Search.selectedIndex = index
-    Search:UpdateFavoriteButton()
-
-    if type(item.open) == "function" and button ~= "RightButton" then
-        item.open(item)
+local function onMatchDoubleClick(item, index)
+    if type(item) ~= "table" or not (item.dest or item.resolve) then
+        onMatchClick(item, index)
         return
     end
-    if button == "RightButton" then Search:Act() end
+    if Search.selectedIndex ~= index then
+        Search.selectedIndex = index
+        Search:PickChanged()
+    end
+    Search:Act()
+end
+
+local function onMatchRightClick(item, _, row)
+    Search.OpenPlaceMenu(row, item)
+end
+
+local function onMatchEnter(item, _, row)
+    paintMatchGlow(row)
+    placeTooltip(row, item)
+end
+
+local function onMatchLeave(_, _, row)
+    paintMatchGlow(row)
+    hideTip(row)
 end
 
 function Search:Select(index)
@@ -668,19 +828,21 @@ function Search:Select(index)
     if index < 1 then index = 1 end
     if index > #self.items then index = #self.items end
     self.selectedIndex = index
-    local list = self.list
+    local list = page.list
     if list and list.SetSelected then list:SetSelected(index) end
     if list and list.ScrollTo then list:ScrollTo(index) end
-    self:UpdateFavoriteButton()
+    self:PickChanged()
 end
 
 
 local function isSkippable(item)
-    return type(item) ~= "table" or item.kind == "header" or item.kind == "back"
+    return type(item) ~= "table" or item.kind == "header"
 end
+
 
 function Search:MoveSelection(delta)
     if #self.items == 0 then return end
+    local before = self.selectedIndex
     local index = self.selectedIndex + delta
     if self.selectedIndex == 0 and delta > 0 then index = 1 end
     if index < 1 then index = 1 end
@@ -695,9 +857,10 @@ function Search:MoveSelection(delta)
     if isSkippable(self.items[index]) then
 
         self:SelectEdge(delta >= 0 and -1 or 1)
-        return
+    else
+        self:Select(index)
     end
-    self:Select(index)
+    if self.selectedIndex ~= before then Look().PlaySound("IG_QUEST_LIST_SELECT") end
 end
 
 
@@ -712,92 +875,10 @@ end
 
 
 
-function Search:PageSize()
-    local list = self.list
-    local visible = list and list.VisibleCount and list:VisibleCount() or 0
-    if type(visible) ~= "number" or visible < 2 then return 5 end
-    return visible - 1
-end
-
-
-
 
 function Search:Activate()
-    local item = self.items[self.selectedIndex]
-    if type(item) == "table" then
-        if item.kind == "back" then
-            self:ServiceBack()
-            return true
-        end
-        local shift = IsShiftKeyDown and IsShiftKeyDown()
-        if type(item.open) == "function" and not (shift and type(item.action) == "function") then
-            item.open(item)
-            return true
-        end
-        if type(item.action) == "function" then
-            item.action(item)
-            return true
-        end
-    end
+    self:FlushPending()
     return self:Act()
-end
-
-
-
-
-
-
-
-
-local function searchEditAcceptsKeys()
-    local edit = Search.window and Search.window.fgpsEdit
-    if not edit then return false end
-    if edit.IsShown and not edit:IsShown() then return false end
-    if edit.HasFocus and not edit:HasFocus() then return false end
-    return true
-end
-
-local function listKeysAllowed()
-    if searchEditAcceptsKeys() then return true end
-    return Search.listKeysArmed == true
-end
-
-function Search:HandleKey(key)
-    if key == "ENTER" or key == "NUMPADENTER" or key == "TAB" then
-        if not searchEditAcceptsKeys() then return false end
-    elseif key == "UP" or key == "DOWN" or key == "PAGEUP" or key == "PAGEDOWN" or key == "HOME" or key == "END" then
-        if not listKeysAllowed() then return false end
-    end
-    if key == "UP" then
-        self:MoveSelection(-1)
-    elseif key == "DOWN" then
-        self:MoveSelection(1)
-    elseif key == "PAGEUP" then
-        self:MoveSelection(-self:PageSize())
-    elseif key == "PAGEDOWN" then
-        self:MoveSelection(self:PageSize())
-    elseif key == "HOME" then
-        self:SelectEdge(1)
-    elseif key == "END" then
-        self:SelectEdge(-1)
-    elseif key == "ENTER" or key == "NUMPADENTER" then
-        self:Activate()
-    elseif key == "TAB" then
-        self:CycleTab(IsShiftKeyDown and IsShiftKeyDown() and -1 or 1)
-    else
-        return false
-    end
-    return true
-end
-
-
-function Search:CycleTab(step)
-    local index = 1
-    for i, key in ipairs(TABS) do if key == self.tab then index = i end end
-    index = index + (step or 1)
-    while index < 1 do index = index + #TABS end
-    while index > #TABS do index = index - #TABS end
-    self:SetTab(TABS[index])
 end
 
 function Search:SetItems(items, status)
@@ -805,12 +886,11 @@ function Search:SetItems(items, status)
     if self.selectedIndex > #self.items then self.selectedIndex = 0 end
     if self.addStopMode then
         local banner = L["Adding stops. Pick a place; the window stays open."]
-        status = status and (banner .. "  " .. status) or banner
+        status = status and status ~= "" and (banner .. "  " .. status) or banner
     end
-    if self.window and self.window.fgpsStatus then self.window.fgpsStatus:SetText(status or "") end
-    setListItems(self.list, self.items)
-    if self.list and self.list.SetSelected then self.list:SetSelected(self.selectedIndex > 0 and self.selectedIndex or nil) end
-    self:UpdateFavoriteButton()
+    page.status = status or ""
+    layoutPage()
+    self:PickChanged()
 end
 
 
@@ -831,15 +911,21 @@ local function destItems(list, pos)
     local Destinations = FGPS.Destinations
     local items = {}
     for _, entry in ipairs(list or {}) do
-        local dest = entry.dest or entry
-        local label = entry.label or describe(dest)
 
-        if Destinations and Destinations.IsFavorite and Destinations.IsFavorite(dest) then
-            label = L["*"] .. " " .. label
+
+
+        local dest = type(entry) == "table" and (entry.dest or entry) or nil
+        if type(dest) == "table" then
+            local label = entry.label or describe(dest)
+
+            local favorite = Destinations and Destinations.IsFavorite and Destinations.IsFavorite(dest) and true or false
+            if favorite then
+                label = L["*"] .. " " .. label
+            end
+            items[#items + 1] = { kind = "dest", dest = dest, label = label,
+                                  right = Search.DistanceText(dest, pos, entry.distance), otherFaction = entry.otherFaction,
+                                  favorite = favorite }
         end
-        items[#items + 1] = { kind = "dest", dest = dest, label = label,
-                              right = Search.DistanceText(dest, pos, entry.distance), otherFaction = entry.otherFaction,
-                              favorite = Destinations and Destinations.IsFavorite and Destinations.IsFavorite(dest) and true or false }
     end
     return items
 end
@@ -871,15 +957,31 @@ local function withPlaceHeaders(items)
     return out
 end
 
+
+local function firstPlace(items)
+    for i, item in ipairs(items or {}) do
+        if item.kind == "dest" then return i end
+    end
+    return 0
+end
+
+
+
 function Search:RunSearch(text)
     local Destinations = FGPS.Destinations
     text = Util.Trim(text or "")
     self.query = text
+    if self.only then
+        self:ShowKind()
+        return
+    end
 
 
     if #text == 0 then
         self.selectedIndex = 0
-        self:SetItems({}, L["Type a place name."])
+        if page.picked == "matches" then page.selected, page.picked = nil, nil end
+        self:SetItems({}, "")
+        self:RefreshNearest()
         return
     end
     if #text < MIN_QUERY then
@@ -904,13 +1006,11 @@ function Search:RunSearch(text)
         return
     end
     local items = withPlaceHeaders(destItems(results, playerPos()))
-    self.selectedIndex = 0
-    for i, item in ipairs(items) do
-        if item.kind == "dest" then self.selectedIndex = i break end
-    end
+    for _, item in ipairs(items) do item.marked = true end
+    self.selectedIndex = firstPlace(items)
     local n = 0
     for _, item in ipairs(items) do if item.kind == "dest" then n = n + 1 end end
-    self:SetItems(items, n == 0 and L["No matching destinations."] or format(L["%d result(s)"], n))
+    self:SetItems(items, n == 0 and L["No matching destinations."] or resultsText(n))
 end
 
 function Search:ScheduleSearch(text)
@@ -924,176 +1024,25 @@ function Search:ScheduleSearch(text)
             Search:RunSearch(text)
         end)
     else
+        self.pendingQuery = nil
         self:RunSearch(text)
     end
 end
 
 
-local function filterList()
-    Search:CancelServiceSearch()
-    Search.serviceResults = nil
-    Search:Refresh()
-end
 
-function Search:ScheduleListFilter(text)
+
+function Search:FlushPending()
+    local query = self.pendingQuery
+    if query == nil then return false end
     self.searchGeneration = self.searchGeneration + 1
-    local generation = self.searchGeneration
-    self.listQuery = text or ""
-    if C_Timer and C_Timer.After then
-        C_Timer.After(DEBOUNCE_SECONDS, function()
-            if generation ~= Search.searchGeneration then return end
-            if Search.tab ~= "poi" then return end
-            filterList()
-        end)
-    else
-        filterList()
-    end
+    self.pendingQuery = nil
+    self:RunSearch(query)
+    return true
 end
 
 
 
-local function questReasonText(Quests, reason)
-    if type(Quests.ReasonText) == "function" then
-        local ok, text = pcall(Quests.ReasonText, reason)
-        if ok and type(text) == "string" and text ~= "" then return text end
-    end
-    return L["no map location is known for this quest"]
-end
-
-
-
-
-local function questLocationLabel(title, loc, n, total)
-    local where = format(L["%s (%d of %d)"], tostring(loc.zoneName or L["Unknown zone"]), n, total)
-    if loc.waypoint then where = where .. " " .. L["(next)"] end
-    local objective = loc.objectiveText
-    if type(objective) == "string" and objective ~= "" then
-        return format(L["%s - %s: %s"], title, where, objective)
-    end
-    return format(L["%s - %s"], title, where)
-end
-
-
-
-
-
-
-
-local function questItem(Quests, q, title, label, locationHandle)
-    local questID = q.questID
-    local function destination()
-        local dest, reason = Quests.DestinationFor(questID, locationHandle)
-        if dest then return dest end
-        return nil, questReasonText(Quests, reason)
-    end
-    return {
-        kind = "quest", label = label, quest = q, locationHandle = locationHandle, actionLabel = L["Go"],
-        resolve = destination,
-        action = function()
-            local dest, why = destination()
-            if dest then
-
-
-                if Search.addStopMode then
-                    Search.GoTo(dest, "addStop")
-                else
-                    Search.GoTo(dest, "start", { quiet = true })
-                end
-            else
-                local Guide = FGPS.UI.Guide
-                if Guide and Guide.Say then Guide.Say(format(L["%s: %s"], title, why), Search.REFUSED_SECONDS) end
-            end
-        end,
-    }
-end
-
-
-
-
-
-local function questTitle(q)
-    if type(q.title) == "string" and q.title ~= "" then return q.title end
-    local QuestData = FGPS.QuestData
-    if QuestData and QuestData.Title then
-        local ok, title = pcall(QuestData.Title, q.questID)
-        if ok and type(title) == "string" and title ~= "" then return title end
-    end
-    return format(L["Quest %d"], tonumber(q.questID) or 0)
-end
-
-
-
-local function questStepWhere(step, pos)
-    local zone = step.zoneName
-    if type(zone) ~= "string" or zone == "" then return nil end
-    if not pos then return zone end
-    local distance = Search.DistanceText(step, pos)
-    if distance == "" then distance = L["another continent"] end
-    return format(L["%s, %s"], zone, distance)
-end
-
-local function questItems()
-    local Quests = FGPS.Quests
-    local items = {}
-    if not Quests or not Quests.List then
-        return items, L["Quest lookup is not available right now."]
-    end
-    local ok, list = pcall(Quests.List)
-    if not ok then
-        FGPS.Log:Error("Quests.List failed: %s", tostring(list))
-        return items, L["Quest lookup failed; type /cabbie log for details."]
-    end
-    local pos = playerPos()
-    for _, q in ipairs(list or {}) do
-        local title = questTitle(q)
-        if q.complete then title = title .. " " .. L["(complete)"] end
-        local outdoor = type(q.outdoor) == "table" and q.outdoor or {}
-        if #outdoor > 1 then
-
-
-            for n, loc in ipairs(outdoor) do
-                items[#items + 1] = questItem(Quests, q, title, questLocationLabel(title, loc, n, #outdoor), loc.key or loc.index)
-            end
-        else
-
-
-
-
-            local step, why
-            if type(Quests.NextStep) == "function" then
-                local okStep, found, reason = pcall(Quests.NextStep, q.questID)
-                if okStep then step, why = found, reason end
-            end
-            local label = title
-            local where = step and questStepWhere(step, pos) or nil
-            local objective = outdoor[1] and outdoor[1].objectiveText or q.objectiveText
-            local hasObjective = type(objective) == "string" and objective ~= ""
-            if where and hasObjective then
-                label = format(L["%s - %s: %s"], title, where, objective)
-            elseif where then
-                label = format(L["%s - %s"], title, where)
-            elseif hasObjective then
-                label = format(L["%s - %s"], title, objective)
-            end
-            local item = questItem(Quests, q, title, label, nil)
-            if not step and why == "objective_unknown" then
-
-
-
-                item.actionLabel, item.action = nil, nil
-                item.right = L["objective place not known"]
-            end
-            items[#items + 1] = item
-        end
-    end
-    return items, #items == 0 and L["No quests with a known location."] or nil
-end
-
-local function listCategoryAt(key)
-    for i, cat in ipairs(LIST_CATEGORIES) do
-        if cat.key == key then return i, cat end
-    end
-end
 
 
 local LIST_ROW_DEST = { reachability = false }
@@ -1111,57 +1060,22 @@ local function candidateDest(c)
              faction = (s.fac ~= 0) and s.fac or nil, learned = true }
 end
 
+
 local function listQueryText()
-    return Util.Trim(Search.listQuery or ""):lower()
+    return Util.Trim(Search.query or ""):lower()
 end
 
-local function listHit(text)
-    local query = listQueryText()
+
+
+local function listHit(text, query)
+    query = query or listQueryText()
     if query == "" then return true end
-    local plain = tostring(text or ""):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):lower()
-    return plain:find(query, 1, true) ~= nil
-end
+    local plain = tostring(text or "")
 
-local function subsOf(cat)
-    if type(cat.subs) == "table" then
-
-
-        local Inside = cat.key == "dungeons" and FGPS.Inside or nil
-        local map = Inside and Inside.Map and Inside.Map() or nil
-        local rec = map and FGPS.Data and FGPS.Data.insideMaps and FGPS.Data.insideMaps[map] or nil
-        if not rec then return cat.subs end
-        local subs = { { key = "inside", label = format(L["In %s"], rec.name), named = true, inside = map } }
-        for _, sub in ipairs(cat.subs) do subs[#subs + 1] = sub end
-        return subs
+    if plain:find("|", 1, true) then
+        plain = plain:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
     end
-    if not cat.trainerMenu then return nil end
-    local ServiceSearch = FGPS.ServiceSearch
-    if not ServiceSearch or not ServiceSearch.TrainerKinds then return {} end
-    local ok, kinds = pcall(ServiceSearch.TrainerKinds, playerPos(), 1e9)
-    if not ok or type(kinds) ~= "table" then return {} end
-    local mine = ServiceSearch.PlayerClass and ServiceSearch.PlayerClass() or nil
-    local rows = {}
-    for _, entry in ipairs(kinds) do
-        local label = trainerKindLabel(entry.kind)
-        if entry.kind == mine then label = format(L["%s (your class)"], label) end
-        local query = "trainer:" .. entry.kind
-        rows[#rows + 1] = { key = entry.kind, label = label, service = query, nearest = query, count = entry.count, named = true }
-    end
-
-    rows[#rows + 1] = { key = "any", label = L["Any trainer"], service = "trainer", nearest = "trainer", named = true }
-    return rows
-end
-
-local function subAt(subs, key)
-    for i, sub in ipairs(subs or {}) do
-        if sub.key == key then return i, sub end
-    end
-end
-
-local function subLabel(sub)
-    local text = sub.named and sub.label or L[sub.label]
-    if sub.count then text = format("%s  |cff999999%d|r", text, sub.count) end
-    return text
+    return plain:lower():find(query, 1, true) ~= nil
 end
 
 local function placesFor(cat, limit)
@@ -1193,148 +1107,50 @@ local function placesFor(cat, limit)
         return ok and type(rows) == "table" and rows or {}
     end
     if not cat.types or not Destinations or not Destinations.Browse then return {} end
-    local ok, rows = pcall(Destinations.Browse, { types = cat.types, limit = limit })
+
+
+    local ask = cat.skip and LIST_FILTER_LIMIT or limit
+    local ok, rows = pcall(Destinations.Browse, { types = cat.types, limit = ask })
     if not ok or type(rows) ~= "table" then return {} end
+    if not cat.skip then return rows end
+    local kept = {}
+    for _, row in ipairs(rows) do
+        if #kept >= limit then break end
+        if not cat.skip(row.dest) then kept[#kept + 1] = row end
+    end
+    return kept
+end
+
+
+
+
+local function placesOfKind(kind, limit)
+    local rows = {}
+    if kind.insideFirst then
+        local Inside = FGPS.Inside
+        local map = Inside and Inside.Map and Inside.Map() or nil
+        local rec = map and FGPS.Data and FGPS.Data.insideMaps and FGPS.Data.insideMaps[map] or nil
+        if rec then
+            for _, row in ipairs(placesFor({ inside = map }, limit)) do rows[#rows + 1] = row end
+        end
+    end
+    for _, row in ipairs(placesFor(kind, limit)) do rows[#rows + 1] = row end
     return rows
 end
 
-function Search:NextList(step)
-    step = step or 1
-    local i, cat = listCategoryAt(self.listCategory)
-    if not i then
-        self.listCategory = LIST_CATEGORIES[1].key
-        self.listSub = nil
-        self:Refresh()
-        return
-    end
-    local subs = self.listSub and subsOf(cat) or nil
-    local si = subs and subAt(subs, self.listSub) or nil
-    if si then
-        si = si + step
-        if si < 1 then si = #subs end
-        if si > #subs then si = 1 end
-        self.listSub = subs[si].key
-    else
-        i = i + step
-        if i < 1 then i = #LIST_CATEGORIES end
-        if i > #LIST_CATEGORIES then i = 1 end
-        self.listCategory = LIST_CATEGORIES[i].key
-        self.listSub = nil
-    end
-    self:Refresh()
-end
-
-local function matchingPlaces(cat)
-    local filtering = listQueryText() ~= ""
-    local rows = placesFor(cat, filtering and LIST_FILTER_LIMIT or LIST_LIMIT)
+local function matchingPlaces(kind)
+    local query = listQueryText()
+    local filtering = query ~= ""
+    local rows = placesOfKind(kind, filtering and LIST_FILTER_LIMIT or LIST_LIMIT)
     if not filtering then return rows end
     local matched = {}
     for _, row in ipairs(rows) do
         local dest = row.dest
-        if listHit(row.label) or (dest and (listHit(dest.name) or listHit(dest.zoneName))) then
+        if listHit(row.label, query) or (dest and (listHit(dest.name, query) or listHit(dest.zoneName, query))) then
             matched[#matched + 1] = row
         end
     end
     return matched
-end
-
-
-
-local function openRow(entry, label, open)
-    local row = { kind = "service", service = entry.key, label = label, open = open }
-    if entry.nearest then
-        local query = entry.nearest
-        row.actionLabel, row.action = L["Nearest"], function() Search:FindNearest(query) end
-    else
-        row.actionLabel, row.action = entry.trainerMenu and L["Choose"] or L["Open"], open
-    end
-    return row
-end
-
-local function listItems()
-    local index = listCategoryAt(Search.listCategory)
-    if not index then
-        local items = {}
-        for _, cat in ipairs(LIST_CATEGORIES) do
-            local label = L[cat.label]
-            if listHit(label) then
-                items[#items + 1] = openRow(cat, label, function()
-                    Search.listCategory = cat.key
-                    Search.listSub = nil
-                    Search:Refresh()
-                end)
-            end
-        end
-        local status = L["Pick a category. The list is the nearest places of that kind."]
-        if listQueryText() ~= "" then
-            status = #items == 0 and L["No matching destinations."] or format(L["%d result(s)"], #items)
-        end
-        return items, status
-    end
-    local cat = LIST_CATEGORIES[index]
-    local subs = subsOf(cat)
-
-    if subs and Search.listSub and not subAt(subs, Search.listSub) then Search.listSub = nil end
-    if subs and not Search.listSub then
-        local items = {
-            { kind = "back", label = L["< Back to categories"] },
-            { kind = "service", label = L[cat.label], actionLabel = L["Next"],
-              action = function() Search:NextList(1) end },
-        }
-        for _, sub in ipairs(subs) do
-            local label = subLabel(sub)
-            if listHit(label) then
-                items[#items + 1] = openRow(sub, label, function()
-                    Search.listSub = sub.key
-                    Search:Refresh()
-                end)
-            end
-        end
-        local n = #items - 2
-        local status = L["Pick a list."]
-        if listQueryText() ~= "" then
-            status = n == 0 and L["No matching destinations."] or format(L["%d result(s)"], n)
-        elseif n == 0 then
-            status = L["No matching destinations."]
-        elseif cat.trainerMenu and #subs == 1 then
-
-            status = L["No trainers are known on this continent for your faction."]
-        end
-        return items, status
-    end
-    local leaf = cat
-    local title = L[cat.label]
-    local back = L["< Back to categories"]
-    if subs then
-        local _, sub = subAt(subs, Search.listSub)
-        leaf = sub or cat
-        if sub then title = sub.named and sub.label or L[sub.label] end
-        back = L["< Back to lists"]
-    end
-    local items = {
-        { kind = "back", label = back },
-        { kind = "service", label = title, actionLabel = L["Next"],
-          action = function() Search:NextList(1) end },
-    }
-    for _, row in ipairs(destItems(matchingPlaces(leaf), playerPos())) do
-        items[#items + 1] = row
-    end
-    local n = #items - 2
-    local status = n == 0 and L["No matching destinations."] or format(L["%d result(s)"], n)
-    return items, status
-end
-
-
-
-function Search:ServiceBack()
-    if self.serviceResults then
-        self.serviceResults = nil
-    elseif self.listSub then
-        self.listSub = nil
-    else
-        self.listCategory = nil
-    end
-    self:Refresh()
 end
 
 
@@ -1344,7 +1160,9 @@ end
 
 
 function Search:CancelServiceSearch(redraw)
-    if not self.serviceQuery then return false end
+
+    local chain = self:CancelNearest(redraw and "route" or nil)
+    if not self.serviceQuery then return chain end
     self.serviceQuery = nil
     local ServiceSearch = FGPS.ServiceSearch
     local cancelled = false
@@ -1352,8 +1170,11 @@ function Search:CancelServiceSearch(redraw)
         local ok, result = pcall(ServiceSearch.Cancel)
         cancelled = ok and result == true
     end
-    if redraw and self.tab == "poi" and self:IsShown() then self:Refresh() end
-    return cancelled
+    if redraw and self.only and self:IsShown() then
+        self.serviceResults = { kind = kindAt(self.only) and kindAt(self.only).nearest, list = {}, cancelled = true }
+        self:Refresh()
+    end
+    return cancelled or chain
 end
 
 function Search:FindNearest(kind)
@@ -1404,14 +1225,8 @@ function Search.ServiceResultText(entry, pos, units)
 end
 
 
-local function resultsBackLabel()
-    if not Search.listCategory then return L["< Back to categories"] end
-    if Search.listCategory == "trainer" then return L["< Back to trainer kinds"] end
-    return L["< Back to lists"]
-end
-
 local function serviceResultItems(results)
-    local items = { { kind = "back", label = resultsBackLabel() } }
+    local items = {}
     local pos = playerPos()
     local s = settings()
     local units = s and s.units or "yards"
@@ -1426,9 +1241,8 @@ local function serviceResultItems(results)
     local label = serviceLabel(results.kind)
     local status
     if #results.list == 0 then
-        local why = results.reason and (SERVICE_REASONS[results.reason] and L[SERVICE_REASONS[results.reason]] or FGPS.UI.Compat.ReasonText(results.reason, L["nothing of that kind is known within range"])) or L["nothing of that kind is known within range"]
+        local why = results.reason and (SERVICE_REASONS[results.reason] and L[SERVICE_REASONS[results.reason]] or reasonText(results.reason, L["nothing of that kind is known within range"])) or L["nothing of that kind is known within range"]
         status = format(L["No %s found: %s."], label, why)
-        status = status .. " " .. L["Try Favorites, or Search for a town."]
     elseif straightCount > 0 then
         status = format(L["Nearest %s by route distance; %d of %d could not be routed and show open ground."], label, straightCount, #results.list)
     else
@@ -1438,49 +1252,649 @@ local function serviceResultItems(results)
 end
 
 
-function Search:Refresh()
-    if not self.window then return end
-    local Destinations = FGPS.Destinations
-    local tab = self.tab
-    local items, status
-    if tab == "search" then
+
+
+function Search:ShowKind()
+    local kind = kindAt(self.only)
+    if not kind then
+        self.only = nil
         self:RunSearch(self.query)
         return
-    elseif tab == "favorites" then
-        local list = Destinations and Destinations.Favorites and Destinations.Favorites() or {}
-        items = destItems(list, playerPos())
-        status = #items == 0 and L["No favorites yet. Select a result and press Favorite."] or nil
-    elseif tab == "recent" then
-        local list = Destinations and Destinations.Recents and Destinations.Recents() or {}
-        items = destItems(list, playerPos())
-        status = #items == 0 and L["No recent destinations."] or nil
-    elseif tab == "quests" then
-        items, status = questItems()
-    elseif tab == "poi" then
-        if self.serviceResults then
-            items, status = serviceResultItems(self.serviceResults)
-        else
-            items, status = listItems()
+    end
+    local items, status
+    local results = self.serviceResults
+    if listQueryText() == "" and kind.nearest and not (results and results.cancelled) then
+        if not (results and results.kind == kind.nearest) then
+            if self.serviceQuery ~= kind.nearest then
+                self.items, self.selectedIndex = {}, 0
+                self:FindNearest(kind.nearest)
+            end
+            return
         end
-    end
-    self.selectedIndex = 0
-    for i, item in ipairs(items or {}) do
-        if item.kind == "dest" then self.selectedIndex = i break end
-    end
-    if self.selectedIndex == 0 then
+        items, status = serviceResultItems(results)
+    else
 
-
-        for i, item in ipairs(items or {}) do
-            if not isSkippable(item) then self.selectedIndex = i break end
-        end
+        if self.serviceQuery then self:CancelServiceSearch() end
+        items = destItems(matchingPlaces(kind), playerPos())
+        for _, item in ipairs(items) do item.marked = true end
+        status = #items == 0 and L["No matching destinations."] or resultsText(#items)
+        status = format(L["%s: %s"], kindLabel(kind), status)
     end
+    self.selectedIndex = firstPlace(items)
     self:SetItems(items, status)
 end
 
 
 
+function Search:SetOnly(key)
+    if key ~= nil and not kindAt(key) then return false end
+
+
+    self:CancelNearest("kind")
+    self:CancelServiceSearch()
+    self.serviceResults = nil
+    self.only = key
+    self.searchGeneration = self.searchGeneration + 1
+    self.pendingQuery = nil
+    self.selectedIndex = 0
+    local box = page.Box
+    self:RunSearch(box and box:GetText() or self.query)
+    return true
+end
+
+local function showOnlyEntry(label, key)
+    return { label = label, onClick = function() Search:SetOnly(key) end, disabled = Search.only == key }
+end
+
+
+
+
+
+local function trainerEntries()
+    local ServiceSearch = FGPS.ServiceSearch
+    local pos = playerPos()
+    local kinds = {}
+    if ServiceSearch and ServiceSearch.TrainerKinds and pos then
+        local ok, list = pcall(ServiceSearch.TrainerKinds, pos, 1e9)
+        if ok and type(list) == "table" then kinds = list end
+    end
+    local mine
+    if ServiceSearch and ServiceSearch.PlayerClass then
+        local ok, token = pcall(ServiceSearch.PlayerClass)
+        if ok then mine = token end
+    end
+    local entries, rest = {}, {}
+    for _, k in ipairs(kinds) do
+        local kind = type(k) == "table" and k.kind
+        if type(kind) == "string" and kind ~= "weapons" and kindAt("trainer:" .. kind) then
+            if kind == mine then
+                entries[#entries + 1] = showOnlyEntry(format(L["%s (your class)"], trainerKindLabel(kind)), "trainer:" .. kind)
+            else
+                rest[#rest + 1] = showOnlyEntry(trainerKindLabel(kind), "trainer:" .. kind)
+            end
+        end
+    end
+    for _, entry in ipairs(rest) do entries[#entries + 1] = entry end
+    entries[#entries + 1] = showOnlyEntry(L["Any Trainer"], "trainer")
+    for _, kind in ipairs(KINDS) do
+        if kind.inTrainerMenu then entries[#entries + 1] = showOnlyEntry(L[kind.label], kind.key) end
+    end
+    return entries
+end
+
+
+
+function Search.OpenShowOnlyMenu(owner)
+    local Menus = FGPS.UI.Menus
+    if not (Menus and Menus.OpenRowMenu) then return nil end
+    local entries = { showOnlyEntry(L["Everything"], nil) }
+    for _, kind in ipairs(KINDS) do
+        if kind.key == "trainer" then
+            entries[#entries + 1] = { label = L[kind.label], entries = trainerEntries() }
+        elseif not kind.inTrainerMenu then
+            entries[#entries + 1] = showOnlyEntry(L[kind.label], kind.key)
+        end
+    end
+    return Menus.OpenRowMenu(owner, { title = L["Show Only"], entries = entries })
+end
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+local nearest = { rows = {}, state = nil, step = 0, generation = 0, asking = nil, retries = 0 }
+Search.nearestState = nearest
+Search.NEAREST_LIMIT = 3
+Search.NEAREST_RETRIES = 3
+
+local function nearestItem(row)
+    local s = settings()
+    local units = s and s.units or "yards"
+    return { kind = "dest", dest = row.dest, label = describe(row.dest), icon = row.icon,
+             right = Search.ServiceResultText({ yards = row.yards, straight = row.straight }, nil, units),
+             unverified = row.straight == true }
+end
+
+local function askNearest(generation)
+    if generation ~= nearest.generation or nearest.state ~= "running" then return end
+    nearest.step = nearest.step + 1
+    local service = Search.NEAREST[nearest.step]
+    local Rows = FGPS.UI.SearchRows
+    if not service or not (Rows and Rows.Nearest) then
+        nearest.state, nearest.asking = "done", nil
+        layoutPage()
+        return
+    end
+    nearest.asking = service
+    layoutPage()
+    local answered = false
+    local ok, err = pcall(Rows.Nearest, service, service, function(rows, why, known)
+        answered = true
+        if generation ~= nearest.generation or nearest.state ~= "running" then return end
+        if why == "cancelled" then
+
+
+            local guess = type(known) == "table" and known[1] or nil
+            local function keepGuess()
+                if guess and type(guess.dest) == "table" then nearest.rows[#nearest.rows + 1] = nearestItem(guess) end
+            end
+            nearest.retries = nearest.retries + 1
+            if nearest.retries <= Search.NEAREST_RETRIES and C_Timer and C_Timer.After then
+                nearest.step = nearest.step - 1
+                C_Timer.After(0, function()
+                    if generation ~= nearest.generation or nearest.state ~= "running" then return end
+                    local ServiceSearch = FGPS.ServiceSearch
+                    if not (ServiceSearch and ServiceSearch.IsSearching and ServiceSearch.IsSearching()) then
+                        askNearest(generation)
+                        return
+                    end
+                    FGPS.Log:Info("Nearest %s: another service search is running; the section waits", tostring(service))
+                    keepGuess()
+                    nearest.state, nearest.asking = "paused", nil
+                    layoutPage()
+                end)
+                return
+            end
+            FGPS.Log:Info("Nearest %s: cut short %d times in a row; the direct estimate stands", tostring(service),
+                nearest.retries)
+            nearest.retries = 0
+            keepGuess()
+            askNearest(generation)
+            return
+        end
+        nearest.retries = 0
+        local first = type(rows) == "table" and rows[1] or nil
+        if first and type(first.dest) == "table" then nearest.rows[#nearest.rows + 1] = nearestItem(first) end
+        askNearest(generation)
+    end, Search.NEAREST_LIMIT)
+    if not ok then
+        FGPS.Log:Error("Nearest %s failed: %s", tostring(service), tostring(err))
+        nearest.state, nearest.asking = "done", nil
+        layoutPage()
+        return
+    end
+
+    if not answered and err ~= true then askNearest(generation) end
+end
+
+
+
+function Search:RefreshNearest(force)
+    if nearest.state ~= nil and nearest.state ~= "paused" and not force then return false end
+    if not page.frame then return false end
+    nearest.generation = nearest.generation + 1
+    nearest.rows, nearest.state, nearest.step, nearest.asking, nearest.retries = {}, "running", 0, nil, 0
+    askNearest(nearest.generation)
+    return true
+end
+
+
+
+
+function Search:CancelNearest(why)
+    if why == "route" and nearest.state == "paused" then nearest.state = "cancelled" end
+    if nearest.state ~= "running" then return false end
+    nearest.state, nearest.asking = why == "kind" and "paused" or "cancelled", nil
+    nearest.generation = nearest.generation + 1
+    local ServiceSearch = FGPS.ServiceSearch
+    if ServiceSearch and ServiceSearch.Cancel then pcall(ServiceSearch.Cancel) end
+    layoutPage()
+    return true
+end
+
+local function buildNearest(frame)
+    frame.Head = pageText(frame, "pageSub", "rubric")
+    frame.Head:SetText(L["Nearest"])
+    frame.Head:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
+    frame.Head:SetHeight(HEAD_HEIGHT)
+    frame.Rows = {}
+    for i = 1, #Search.NEAREST do frame.Rows[i] = Search.NewPlaceRow(frame, "nearest") end
+    frame.Line = pageText(frame, "pageSub", "inkGrey")
+    frame.Line:SetHeight(STATUS_HEIGHT)
+    return function(f)
+        local tokens = Look().TOKENS
+        local width = pageSize(page.frame)
+        local y = HEAD_HEIGHT
+        for i, row in ipairs(f.Rows) do
+            local item = nearest.rows[i]
+            if item then
+                row:ClearAllPoints()
+                row:SetPoint("TOPLEFT", f, "TOPLEFT", 0, -y)
+                row:SetSize(width, tokens.rowPlace)
+                paintPlaceRow(row, item, width)
+                paintGlow(row)
+                row:Show()
+                y = y + tokens.rowPlace
+            else
+                row.entry = nil
+                row:Hide()
+            end
+        end
+        local line
+        if nearest.state == "running" and nearest.asking then
+            line = format(L["Searching for the nearest %s..."], serviceLabel(nearest.asking))
+        elseif nearest.state == "done" and #nearest.rows == 0 then
+            line = L["No innkeeper, flight master, bank or mailbox is known nearby."]
+        end
+        if line then
+            f.Line:SetText(line)
+            f.Line:ClearAllPoints()
+            f.Line:SetPoint("TOPLEFT", f, "TOPLEFT", 0, -y)
+            f.Line:SetWidth(width)
+            f.Line:Show()
+            y = y + STATUS_HEIGHT
+        else
+            f.Line:Hide()
+        end
+        if #nearest.rows == 0 and not line then return 0 end
+        return y
+    end
+end
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+local pending = {}
+
+local function buildSection(section)
+    if section.key == "matches" then return end
+    local ok, paint = pcall(section.builder, section.frame, page)
+    if not ok then
+        FGPS.Log:Error("Places section %s failed to build: %s", tostring(section.key), tostring(paint))
+        section.paint = nil
+        return
+    end
+    section.paint = type(paint) == "function" and paint or nil
+end
+
+local function sortSections()
+    table.sort(page.sections, function(a, b)
+        if a.order ~= b.order then return a.order < b.order end
+        return a.key < b.key
+    end)
+end
+
+local function placeSection(key, order, builder)
+    for _, section in ipairs(page.sections) do
+        if section.key == key then
+            section.order, section.builder = order, builder
+            buildSection(section)
+            sortSections()
+            return section
+        end
+    end
+    local frame = CreateFrame("Frame", nil, page.Content or page.frame)
+    frame:Hide()
+    local section = { key = key, order = order, builder = builder, frame = frame }
+    page.sections[#page.sections + 1] = section
+    buildSection(section)
+    sortSections()
+    return section
+end
+
+function Search:AddSection(key, order, builder)
+    if type(key) ~= "string" or key == "" or key == "matches" then return false end
+    if type(order) ~= "number" or type(builder) ~= "function" then return false end
+    if not page.frame then
+        pending[key] = { order = order, builder = builder }
+        return true
+    end
+    placeSection(key, order, builder)
+    layoutPage()
+    return true
+end
+
+
+function Search:RefreshSections()
+    layoutPage()
+end
+
+
+
+
+function Search:ShowSection(key)
+    if type(key) ~= "string" then return false end
+    page.anchor = key
+    layoutPage()
+    for _, section in ipairs(page.sections) do
+        if section.key == key then return section.top ~= nil end
+    end
+    return false
+end
+
+
+
+function Search:ScrollSections(pixels)
+    if type(pixels) ~= "number" then return false end
+    page.anchor = nil
+    page.scroll = (page.scroll or 0) + pixels
+    layoutPage()
+    return true
+end
+
+
+
+function Search:Unpick(key)
+    if key == nil or page.picked ~= key then return false end
+    page.selected, page.picked = nil, nil
+    refreshFooter()
+    return true
+end
+
+
+function Search.PageWidth()
+    return (pageSize(page.frame))
+end
+
+
+
+
+layoutPage = function()
+    local frame = page.frame
+    if not frame then return end
+    local tokens = Look().TOKENS
+    local width, height = pageSize(frame)
+    local y = BOX_HEIGHT + tokens.gap
+    local status = page.status or ""
+    page.Status:SetText(status)
+    page.Status:ClearAllPoints()
+    page.Status:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, -y)
+    page.Status:SetWidth(width)
+    page.Status:SetShown(status ~= "")
+    if status ~= "" then y = y + STATUS_HEIGHT + tokens.gap end
+
+
+
+
+    local body, content = page.Body, page.Content
+    local tall = math.max(tokens.rowPlace, height - y)
+    body:ClearAllPoints()
+    body:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, -y)
+    body:SetSize(width, tall)
+    local matches = Search:ShowingMatches()
+    local ornament = Search.SECTION_ORDER.ornament
+    local top, above, breakTop = 0, false, nil
+    for _, section in ipairs(page.sections) do
+        local f = section.frame
+        section.top = nil
+        if section.key == "matches" then
+            if matches then
+                section.top = 0
+                f:SetSize(width, tall)
+                f:Show()
+                local list = page.list
+                if list then
+                    list:SetSize(width, tall)
+                    list.selected = Search.selectedIndex > 0 and Search.selectedIndex or nil
+                    list:SetItems(Search.items)
+                end
+                top = tall
+            else
+                f:Hide()
+            end
+        elseif matches or not section.paint then
+            f:Hide()
+        else
+            local ok, painted = pcall(section.paint, f, page)
+            if not ok then
+                FGPS.Log:Error("Places section %s failed to paint: %s", tostring(section.key), tostring(painted))
+                painted = 0
+            end
+            if type(painted) == "number" and painted > 0 then
+                if above and not breakTop and section.order > ornament then
+                    breakTop = top
+                    top = top + (page.Break and BREAK_HEIGHT or tokens.gapWide)
+                end
+                if section.order < ornament then above = true end
+                section.top = top
+                f:SetSize(width, painted)
+                f:Show()
+                top = top + painted + tokens.gapWide
+            else
+                f:Hide()
+            end
+        end
+    end
+    local scroll = 0
+    if not matches then
+        scroll = page.scroll or 0
+        for _, section in ipairs(page.sections) do
+            if page.anchor ~= nil and section.key == page.anchor and section.top then scroll = section.top end
+        end
+        scroll = math.max(0, math.min(scroll, top - tall))
+    end
+    page.scroll = scroll
+    content:SetSize(width, math.max(top, tall))
+    for _, section in ipairs(page.sections) do
+        if section.top then
+            section.frame:ClearAllPoints()
+            section.frame:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -section.top)
+        end
+    end
+    if page.Break then
+        page.Break:ClearAllPoints()
+        if breakTop then
+            page.Break:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -breakTop)
+            page.Break:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, -breakTop)
+        end
+        page.Break:SetShown(breakTop ~= nil)
+    end
+    if body.SetVerticalScroll then body:SetVerticalScroll(scroll) end
+end
+
+
+
+function Search.PlacesFooter(win)
+    local picked = Search:PickedPlace(true) ~= nil
+    local why = L["Pick a place first"]
+    win:SetFooterButtons({
+        { label = L["Add Stop"], onClick = function() Search:Act("addStop") end, enabled = picked, why = why },
+        { label = L["Go"], onClick = function() Search:Act("start") end, enabled = picked, why = why },
+    })
+    if win.FooterNote then win.FooterNote:SetText("") end
+end
+
+refreshFooter = function()
+    local Tome = FGPS.UI.Tome
+    if Tome and Tome.window and Tome.Current and Tome:Current() == Search.PAGE then Search.PlacesFooter(Tome.window) end
+end
+
+local function buildPage(frame)
+    local look = Look()
+    local F = Frames()
+    page.frame = frame
+    local width = pageSize(frame)
+
+    page.Box = look.SearchBox(frame, {
+        width = width, height = BOX_HEIGHT, maxLetters = 80, placeholder = L["Search a town, a person or 42.5 65.1"],
+
+        onChanged = function(_, text, userInput)
+            if userInput then Search:ScheduleSearch(text or "") end
+        end,
+
+
+
+
+        onEnter = function(box, text)
+            local asked = Search.routesAsked
+            local acted
+            if not Search.only and Search.ParseCoordinates(text) then
+                acted = Search:GoToCoordinates(text)
+            else
+                acted = Search:Activate()
+            end
+            if (acted == false or Search.routesAsked ~= asked) and box and box.ClearFocus then box:ClearFocus() end
+        end,
+    })
+    page.Box:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
+    page.Box:HookScript("OnEnter", function(self)
+        Look().Tooltip(self, L["Places"], L["Search a town, a person or 42.5 65.1"], L["Right-click for options"])
+    end)
+    page.Box:HookScript("OnLeave", hideTip)
+
+    page.Box:HookScript("OnMouseUp", function(self, button)
+        if button == "RightButton" then Search.OpenShowOnlyMenu(self) end
+    end)
+
+    page.Box:SetScript("OnArrowPressed", function(_, key)
+        if key == "UP" then Search:MoveSelection(-1) elseif key == "DOWN" then Search:MoveSelection(1) end
+    end)
+
+    page.Status = pageText(frame, "pageSub", "inkGrey")
+    page.Status:SetHeight(STATUS_HEIGHT)
+
+
+
+
+    page.Body = CreateFrame("ScrollFrame", nil, frame)
+    page.Content = CreateFrame("Frame", nil, page.Body)
+    page.Content:SetSize(width, 1)
+    page.Body:SetScrollChild(page.Content)
+    page.Body:EnableMouseWheel(true)
+    page.Body:SetScript("OnMouseWheel", onSectionsWheel)
+    page.scroll, page.anchor = 0, nil
+    page.Break = nil
+    if pageHas(BREAK_FILE, "a gap stands for the ornament over Favorites") then
+        page.Break = page.Content:CreateTexture(nil, "ARTWORK")
+        page.Break:SetTexture(BREAK_FILE)
+        page.Break:SetHeight(BREAK_HEIGHT)
+        page.Break:Hide()
+    end
+
+    local matches = placeSection("matches", Search.SECTION_ORDER.matches, function() end)
+    if F and F.CreateScrollList then
+        local ok, list = pcall(F.CreateScrollList, matches.frame, look.TOKENS.rowPlace, renderMatchRow, {
+            width = width, onClick = onMatchClick, onDoubleClick = onMatchDoubleClick,
+            onRightClick = onMatchRightClick, onEnter = onMatchEnter, onLeave = onMatchLeave,
+        })
+        if ok and type(list) == "table" then
+            list:SetPoint("TOPLEFT", matches.frame, "TOPLEFT", 0, 0)
+            page.list = list
+        else
+            FGPS.Log:Error("Frames.CreateScrollList failed: %s", tostring(list))
+        end
+    end
+    placeSection("nearest", Search.SECTION_ORDER.nearest, buildNearest)
+    for key, section in pairs(pending) do placeSection(key, section.order, section.builder) end
+    pending = {}
+
+
+
+    frame:HookScript("OnHide", function(self)
+        local Tome = FGPS.UI.Tome
+        local win = Tome and Tome.window
+        if self:IsShown() and win and win:IsShown() then return end
+        Search:OnPageHidden()
+    end)
+end
+
+
+
+local function showPage(_, opts)
+    page.live = true
+    if type(opts) ~= "table" then
+        Search:Refresh()
+        return
+    end
+    Search.addStopMode = opts.mode == "addStop"
+    Search:CancelServiceSearch()
+    Search.only, Search.serviceResults = nil, nil
+    Search.searchGeneration = Search.searchGeneration + 1
+    Search.pendingQuery = nil
+    nearest.state = nil
+    local text = type(opts.query) == "string" and Util.Trim(opts.query) or ""
+    if page.Box then page.Box:SetText(text) end
+    Search.selectedIndex = 0
+    page.selected, page.picked = nil, nil
+
+
+    page.scroll, page.anchor = 0, type(opts.section) == "string" and opts.section or nil
+    Search:RunSearch(text)
+
+
+    if page.Box and page.Box.SetFocus and not opts.noFocus then page.Box:SetFocus() end
+end
+
+
+function Search:OnPageHidden()
+    if not page.live then return end
+    page.live = false
+    self:CancelServiceSearch()
+    self.addStopMode = false
+    self.serviceResults = nil
+    if page.Box and page.Box.ClearFocus then page.Box:ClearFocus() end
+
+
+    local Itinerary = FGPS.UI.Itinerary
+    if Itinerary and Itinerary.SearchClosed then
+        local ok, err = pcall(Itinerary.SearchClosed, Itinerary)
+        if not ok and FGPS.Log then FGPS.Log:Error("Stops window on closing the Places page failed: %s", tostring(err)) end
+    end
+end
+
+
+function Search:Refresh()
+    if not page.frame then return end
+    self:RunSearch(self.query)
+end
+
+
+
+
 function Search:RefreshDistances()
     if not self:IsShown() then return end
+    if not self:ShowingMatches() then
+        layoutPage()
+        return
+    end
 
 
     if self.serviceQuery then return end
@@ -1497,54 +1911,29 @@ function Search:RefreshDistances()
             restored = i
             break
         end
-        if kept.label and item.label == kept.label and item.kind == kept.kind then
-            restored = i
-            break
+    end
+
+
+    if restored == 0 and kept.label then
+        for i, item in ipairs(self.items) do
+            if item.label == kept.label and item.kind == kept.kind then
+                restored = i
+                break
+            end
         end
     end
     if restored == 0 and keep <= #self.items then restored = keep end
     if restored > 0 then
         self.selectedIndex = restored
-        if self.list and self.list.SetSelected then self.list:SetSelected(restored) end
-        self:UpdateFavoriteButton()
+        local list = page.list
+        if list and list.SetSelected then list:SetSelected(restored) end
+        self:PickChanged()
     end
-end
-
-function Search:SetTab(tab)
-    if not TAB_LABELS[tab] then return end
-    self:CancelServiceSearch()
-    self.searchGeneration = self.searchGeneration + 1
-    self.pendingQuery = nil
-    self.listCategory = nil
-    self.listSub = nil
-    self.listQuery = ""
-    self.tab = tab
-    self.serviceResults = nil
-    local w = self.window
-    if w then
-        for key, button in pairs(w.fgpsTabs) do
-            local on = key == tab
-            if button.SetAlpha then button:SetAlpha(on and 1 or 0.45) end
-            if button.fgpsMark and button.fgpsMark.SetShown then button.fgpsMark:SetShown(on) end
-        end
-        local isSearch = tab == "search"
-        local isPoi = tab == "poi"
-        w.fgpsEdit:SetShown(isSearch or isPoi)
-        if w.fgpsEdit.Placeholder and w.fgpsEdit.Placeholder.SetText then
-            w.fgpsEdit.Placeholder:SetText(L[isPoi and "Filter this list" or "Town, NPC, or 42.5 65.1"])
-        end
-        w.fgpsEdit:SetText(isPoi and (self.listQuery or "") or (self.query or ""))
-        if w.fgpsCoordTip then w.fgpsCoordTip:SetShown(isSearch) end
-        if w.fgpsHint then w.fgpsHint:SetShown(isPoi) end
-        if w.fgpsQuestPanel then w.fgpsQuestPanel:SetShown(tab == "quests") end
-    end
-    if tab == "search" then self.filter = "towns" end
-    self:Refresh()
 end
 
 function Search:SetFilter(key)
     self.filter = key
-    if self.tab == "search" then self:RunSearch(self.query) end
+    if not self.only then self:RunSearch(self.query) end
 end
 
 
@@ -1609,270 +1998,33 @@ function Search:GoToCoordinates(text)
         return false
     end
     if not dest then
-        FGPS:Print(L["Could not resolve those coordinates%s"], err and (": " .. FGPS.UI.Compat.ReasonText(err)) or ".")
+        FGPS:Print(L["Could not resolve those coordinates%s"], err and (": " .. reasonText(err)) or ".")
         return false
     end
-    return Search.GoTo(dest, self.addStopMode and "addStop" or nil)
+    return Search.GoTo(dest, self.addStopMode and "addStop" or "start", { quiet = true })
 end
 
 
 
-
-
-
-
-
-
-
-
-local function dressListNow(list)
-    local look = Look()
-    local bar = list.Bar
-    if bar then
-        if bar.Track then bar.Track:SetColorTexture(0, 0, 0, 0.35) end
-        if bar.fgpsThumb then look.ScrollKnob(bar.fgpsThumb) end
-    end
-    if list.Empty then
-        list.Empty:SetFontObject(look.Font("hint"))
-        list.Empty:SetTextColor(look.Color("grey"))
-    end
-end
-
-
-
-function Search.DressList(list)
-    if type(list) ~= "table" then return end
-    dressListNow(list)
-    local F = Frames()
-    if F and F.Register and not list.fgpsDressed then
-        list.fgpsDressed = true
-        local skinPass = list.fgpsApplySkin
-        F.Register(list, function(l, skin)
-            if skinPass then skinPass(l, skin) end
-            dressListNow(l)
-            if l.Refresh then l:Refresh() end
-        end)
-    end
-end
-
-local function buildWindow()
-    local F = Frames()
-    if not F or not F.CreateWindow then
-        FGPS.Log:Error("UI.Frames.CreateWindow is unavailable; the search window cannot be built")
-        return nil
-    end
-    local ok, window = pcall(F.CreateWindow, WINDOW_KEY, {
-        title = L["Where to"], width = 440, height = 500,
-        onClose = function() Search:OnWindowHidden() end,
-
-
-        onKey = function(_, key) return Search:HandleKey(key) end,
-    })
-    if not ok or type(window) ~= "table" then
-        FGPS.Log:Error("Frames.CreateWindow failed: %s", tostring(window))
-        return nil
-    end
-    Look().DressWindow(window)
-
-
-    local cog = Look().SettingsButton(window, function() FGPS.UI.Settings:Open() end)
-    cog:SetPoint("RIGHT", window.fgpsClose, "LEFT", -2, 0)
-    local function raiseCog()
-        if cog.SetFrameLevel and window.fgpsClose.GetFrameLevel then cog:SetFrameLevel(window.fgpsClose:GetFrameLevel()) end
-    end
-    raiseCog()
-    if window.HookScript then window:HookScript("OnShow", raiseCog) end
-    if Frames().Tooltip then pcall(Frames().Tooltip, cog, L["Settings"]) end
-    window.fgpsSettings = cog
-    local content, top = contentFrame(window)
-    window.fgpsContent = content
-
-
-    window.fgpsTabs = {}
-    local previous
-    for _, key in ipairs(TABS) do
-        local button = markButton(makeButton(content, L[TAB_LABELS[key]], function() Search:SetTab(key) end, TAB_WIDTH[key], 24))
-        if previous then button:SetPoint("LEFT", previous, "RIGHT", 2, 0)
-        else button:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -top) end
-        window.fgpsTabs[key] = button
-        previous = button
-    end
-
-
-    local edit = makeEditBox(content, {
-        width = 410, height = 26, maxLetters = 80,
-        placeholder = L["Town, NPC, or 42.5 65.1"],
-        onChanged = function(_, text, userInput)
-            if userInput == false then return end
-            if Search.tab == "poi" then
-                Search:ScheduleListFilter(text or "")
-                return
-            end
-            Search:ScheduleSearch(text or "")
-        end,
-        onEnter = function(_, text)
-            if Search.tab ~= "poi" and Search.ParseCoordinates(text) then Search:GoToCoordinates(text) return end
-            Search:Activate()
-        end,
-        onEscape = function() Search:Hide() end,
-        keepFocusOnEnter = true,
-    })
-    edit:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -(top + 28))
-    edit:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, -(top + 28))
-    if edit.SetHeight then edit:SetHeight(26) end
-
-
-    edit:SetScript("OnArrowPressed", function(_, key) Search:HandleKey(key) end)
-    edit:SetScript("OnTabPressed", function()
-        Search:CycleTab(IsShiftKeyDown and IsShiftKeyDown() and -1 or 1)
-    end)
-    window.fgpsEdit = edit
-    window.fgpsEditTemplate = edit.fgpsTemplate
-
-
-    local listAnchor = CreateFrame("Frame", nil, content)
-    listAnchor:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -(top + 58))
-    listAnchor:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, 78)
-    window.fgpsListAnchor = listAnchor
-    local list = makeList(listAnchor, ROW_HEIGHT, Search.RenderRow, onRowClick)
-    if list and list.SetAllPoints then list:SetAllPoints(listAnchor) end
-    Search.DressList(list)
-    Search.list = list
-
-
-    local status = makeLabel(content, "small", "", "textDim")
-    status:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", 6, 64)
-    status:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", -6, 64)
-    window.fgpsStatus = status
-
-
-    local hint = makeLabel(content, "small", L[Search.SERVICES_HINT], "textDim")
-    hint:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", 6, 32)
-    hint:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", -6, 32)
-    if hint.SetWordWrap then hint:SetWordWrap(true) end
-    if hint.SetJustifyV then hint:SetJustifyV("BOTTOM") end
-    hint:Hide()
-    window.fgpsHint = hint
-
-
-    local tip = makeLabel(content, "small", L["Tip: type 42.5 65.1 to go to map coordinates"], "textDim")
-    tip:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", 4, 36)
-    tip:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", -4, 36)
-    tip:Hide()
-    window.fgpsCoordTip = tip
-
-
-
-
-
-
-    local questPanel = makeButton(content, L["Open the quest panel"], function()
-        local QuestPanel = FGPS.UI.QuestPanel
-        if not (QuestPanel and QuestPanel.Show) then
-            FGPS:Print(L["The quest panel is not available right now."])
-            return
-        end
-
-        local item = Search.items[Search.selectedIndex]
-        local questID = type(item) == "table" and item.kind == "quest" and type(item.quest) == "table"
-            and item.quest.questID or nil
-        Search:Hide()
-        if questID and QuestPanel.ShowQuest then
-            QuestPanel:ShowQuest(questID)
-        else
-            QuestPanel:Show()
-        end
-    end, 200, 22)
-    questPanel:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", 2, 34)
-    questPanel:Hide()
-    window.fgpsQuestPanel = questPanel
-
-
-
-
-
-    local specs = {
-        { key = "start", label = "Start", width = 76, fn = function() Search:Act("start") end },
-        { key = "addStop", label = "Add stop", width = 74, fn = function() Search:Act("addStop") end },
-        { key = "favorite", label = "Favorite", width = 74, fn = function() Search:ToggleFavorite() end },
-        { key = "preview", label = "Show route", width = 80, fn = function() Search:Act("showRoute") end },
-    }
-    window.fgpsButtons = {}
-    previous = nil
-    for _, spec in ipairs(specs) do
-        local button = makeButton(content, L[spec.label], spec.fn, spec.width, 24)
-        if previous then button:SetPoint("LEFT", previous, "RIGHT", 4, 0)
-        else button:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", 2, 2) end
-        window.fgpsButtons[spec.key] = button
-        previous = button
-    end
-    local clear = makeButton(content, L["Clear route"], function() Search:ClearAll() end, 90, 24)
-    clear:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", -2, 2)
-    if F.Tooltip then
-        pcall(F.Tooltip, clear, L["Removes the route, the preview, every stop and their markers. Nothing stays set."])
-    end
-    window.fgpsButtons.clear = clear
-    if F.ApplySkin then pcall(F.ApplySkin, window) end
-    return window
-end
-
-function Search:EnsureWindow()
-    if self.window then return self.window end
-    self.window = buildWindow()
-    if self.window then
-        self.filter = "towns"
-        self:SetTab(self.tab)
-    end
-    return self.window
-end
 
 
 
 
 
 function Search:Show(opts)
-    local window = self:EnsureWindow()
-    if not window then
+    local Tome = FGPS.UI.Tome
+    if not (Tome and Tome.Open and Tome.pages and Tome.pages[Search.PAGE]) then
         FGPS:Print(L["The search window is unavailable; use /cabbie go <x> <y> [zone] instead."])
         return false
     end
-
-
-    local parent = window.GetParent and window:GetParent()
-    if parent and parent.IsVisible and not parent:IsVisible() then return false end
-    opts = opts or {}
-    self.addStopMode = opts.mode == "addStop"
+    if UIParent and UIParent.IsVisible and not UIParent:IsVisible() then return false end
+    opts = type(opts) == "table" and opts or {}
 
 
     local dock = opts.dock
-    if not dock and self.docked and window:IsShown() then dock = self.dockFrame end
-    self:ApplyDock(window, dock)
-    window:Show()
-
-    Look().NoteOnce("surface:window", "Search surface window: box %s, ground %s", window.fgpsEditTemplate or "plain",
-        tostring(window.fgpsGround))
-    self:UpdateClearButton()
-    if opts.query then
-        self.query = opts.query
-        window.fgpsEdit:SetText(opts.query)
-    else
-
-
-
-        self.query = ""
-        self.listQuery = ""
-        window.fgpsEdit:SetText("")
-    end
-    if opts.tab then
-        self:SetTab(opts.tab)
-    elseif opts.query and self.tab ~= "search" then
-        self:SetTab("search")
-    else
-        self:Refresh()
-    end
-
-
-    if window.fgpsEdit.SetFocus and self.tab == "search" and not opts.noFocus then window.fgpsEdit:SetFocus() end
+    if not dock and self.docked and self:IsShown() then dock = self.dockFrame end
+    if not Tome:Open(Search.PAGE, opts) then return false end
+    self:ApplyDock(Tome.window, dock)
     return true
 end
 
@@ -1881,6 +2033,7 @@ end
 
 
 function Search:ApplyDock(window, dock)
+    if not window then return end
     if type(dock) == "table" and dock.GetRight then
         local screen = UIParent and UIParent.GetWidth and UIParent:GetWidth() or 0
         local ratio = 1
@@ -1889,6 +2042,9 @@ function Search:ApplyDock(window, dock)
             if type(mine) == "number" and mine > 0 and type(theirs) == "number" then ratio = theirs / mine end
         end
         local right = (dock:GetRight() or 0) * ratio
+        if not self.docked then
+            self.undockedStrata = window.GetFrameStrata and window:GetFrameStrata() or nil
+        end
         window:ClearAllPoints()
         if right + (window:GetWidth() or 0) + 8 <= screen then
             window:SetPoint("TOPLEFT", dock, "TOPRIGHT", 4, 0)
@@ -1897,55 +2053,59 @@ function Search:ApplyDock(window, dock)
             window:SetPoint("TOPRIGHT", dock, "TOPRIGHT", -12, -64)
             self.dockedInside = true
         end
-
-
         window.fgpsEscape = true
         if window.SetFrameStrata then pcall(window.SetFrameStrata, window, "FULLSCREEN_DIALOG") end
         self.docked = true
         self.dockFrame = dock
+        if not window.fgpsSearchUndock and window.HookScript then
+            window.fgpsSearchUndock = true
+            window:HookScript("OnHide", function(w)
+
+                if w.IsShown and w:IsShown() then return end
+                Search:Undock(w)
+            end)
+        end
     elseif self.docked then
-        self.docked = false
-        self.dockFrame = nil
-        self.dockedInside = nil
-        window.fgpsEscape = true
-        if window.SetFrameStrata then pcall(window.SetFrameStrata, window, "HIGH") end
-        if window.RestorePosition then window:RestorePosition() end
+        self:Undock(window)
     end
 end
 
-function Search:Hide()
-    if self.window and self.window:IsShown() then self.window:Hide() end
-    self.addStopMode = false
-end
 
-function Search:OnWindowHidden()
-    Search.listKeysArmed = false
-    self:CancelServiceSearch()
-    self.addStopMode = false
-    self.serviceResults = nil
-    local window = self.window
-    local wasDocked = self.docked
+function Search:Undock(window)
+    if not self.docked then return false end
     self.docked = false
     self.dockFrame = nil
     self.dockedInside = nil
+    window = window or (FGPS.UI.Tome and FGPS.UI.Tome.window)
     if window then
         window.fgpsEscape = true
-        if wasDocked then
-            if window.SetFrameStrata then pcall(window.SetFrameStrata, window, "HIGH") end
-            if window.RestorePosition then window:RestorePosition() end
-        end
-        if window.fgpsEdit and window.fgpsEdit.ClearFocus then window.fgpsEdit:ClearFocus() end
+        if window.SetFrameStrata then pcall(window.SetFrameStrata, window, self.undockedStrata or "HIGH") end
+        if window.RestorePosition then window:RestorePosition() end
     end
+    self.undockedStrata = nil
+    return true
 end
 
-function Search:IsShown()
-    return self.window ~= nil and self.window:IsShown()
+
+function Search:Hide()
+    self.addStopMode = false
+    local Tome = FGPS.UI.Tome
+    if self:IsShown() then Tome.window:Hide() end
+    self:OnPageHidden()
+    self:Undock()
 end
+
+
+function Search:IsShown()
+    local Tome = FGPS.UI.Tome
+    return Tome ~= nil and Tome.Current ~= nil and Tome:Current() == Search.PAGE
+end
+
 
 
 function Search:Toggle()
     if self:IsShown() then
-        self:Hide()
+        FGPS.UI.Tome:Close()
         return true
     end
     return self:Show()
@@ -1954,38 +2114,31 @@ end
 
 
 
-
-
-
-function Search:UpdateClearButton()
-    local button = self.window and self.window.fgpsButtons and self.window.fgpsButtons.clear
-    if not button then return false end
-    local Navigator = FGPS.Navigator
-    local set = false
-    if Navigator and Navigator.HasAnythingSet then
-        local ok, result = pcall(Navigator.HasAnythingSet, Navigator)
-        set = ok and result == true
-    end
-    if set ~= button:IsEnabled() then setButtonEnabled(button, set) end
-    return set
-end
-
 function Search:ClearAll()
     local Navigator = FGPS.Navigator
     if Navigator and Navigator.Clear then Navigator:Clear("user") end
 
     self.addStopMode = false
-    self:UpdateClearButton()
 end
 
 
 
 
-local function onListsChanged(event)
+
+
+local function onListsChanged()
     if not Search:IsShown() then return end
-    if (event == "FAVORITES_CHANGED" and Search.tab == "favorites") or (event == "RECENTS_CHANGED" and Search.tab == "recent") then
-        Search:Refresh()
-    end
+    Search:RefreshDistances()
+end
+
+
+
+function Search.RegisterPlacesPage()
+    local Tome = FGPS.UI.Tome
+    if not (Tome and Tome.RegisterPage) then return false end
+    local icon = pageHas(Search.PAGE_ICON, "the Places tab shows no picture") and Search.PAGE_ICON or nil
+    return Tome.RegisterPage(Search.PAGE, { label = L["Places"], icon = icon, order = 1, build = buildPage, show = showPage,
+                                            footer = Search.PlacesFooter })
 end
 
 function Search:Init()
@@ -2004,12 +2157,7 @@ function Search:Init()
         if Search:IsShown() then Search:Refresh() end
     end, self)
     Search.RefreshStraightFlag()
-
-
-    local function onSetStateChanged() if Search:IsShown() then Search:UpdateClearButton() end end
-    for _, event in ipairs({ "ITINERARY_CHANGED", "NAV_STATE", "ROUTE_PREVIEW", "NAV_CANCELLED" }) do
-        Events:Register(event, onSetStateChanged, self)
-    end
+    Search.RegisterPlacesPage()
     FGPS.Slash.Register("search", function(args)
         Search:Show({ query = Util.Trim(args) ~= "" and Util.Trim(args) or nil })
     end, L["Open the destination search (optionally with a query)"])

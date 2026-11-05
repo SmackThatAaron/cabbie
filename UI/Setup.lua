@@ -21,7 +21,7 @@ Setup.WIDTH = 440
 Setup.HEIGHT = 286
 Setup.GAP = 10
 
-local FOLLOW_TIP = "A quest route moves on to the next objective and the hand-in, and a click on the round marker beside a quest in the quest list or on the map starts the way to it."
+local FOLLOW_TIP = "A quest route moves on to the next objective and the turn-in, and a click on the round marker beside a quest in the quest list or on the map starts the way to it."
 
 local function Look()
     return FGPS.UI.Look
@@ -69,9 +69,9 @@ function Setup:Create()
 
     win.Follow = look.CheckButton(content, L["Follow my quests"])
     win.Follow:SetPoint("TOPLEFT", win.Intro, "BOTTOMLEFT", -2, -Setup.GAP)
-    win.Follow:SetScript("OnClick", function(self)
+    win.Follow:SetScript("OnClick", function(button)
         local Quests = FGPS.Quests
-        if Quests and Quests.SetFollowsMine then Quests.SetFollowsMine(self:GetChecked() and true or false) end
+        if Quests and Quests.SetFollowsMine then Quests.SetFollowsMine(button:GetChecked() and true or false) end
     end)
 
     win.FollowTip = text(content, "hint")

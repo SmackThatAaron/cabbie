@@ -90,6 +90,7 @@ end
 
 
 
+
 local function makeIcon(size, r, g, b, a, withBorder)
     local parent = _G and _G.Minimap or UIParent
     local icon = CreateFrame("Frame", nil, parent)
@@ -102,11 +103,9 @@ local function makeIcon(size, r, g, b, a, withBorder)
     icon.fill = icon:CreateTexture(nil, "ARTWORK")
     icon.fill:SetTexture("Interface\\Buttons\\WHITE8X8")
     icon.fill:SetVertexColor(r, g, b, a)
-    icon.fgpsInset = nil
     if withBorder then
         icon.fill:SetPoint("TOPLEFT", icon, "TOPLEFT", 1, -1)
         icon.fill:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT", -1, 1)
-        icon.fgpsInset = 1
     else
         icon.fill:SetAllPoints(icon)
     end
@@ -117,42 +116,106 @@ end
 
 
 
-local DOT_SIZE, DOT_INSET = 5, 1
-local DOT_SIZE_UNVERIFIED, DOT_INSET_UNVERIFIED = 8, 2
 
-local function setDotInset(icon, inset)
-    if icon.fgpsInset == inset then return end
-    icon.fgpsInset = inset
-    icon.fill:ClearAllPoints()
-    icon.fill:SetPoint("TOPLEFT", icon, "TOPLEFT", inset, -inset)
-    icon.fill:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT", -inset, inset)
+
+
+
+
+local DOT_SIZE = 5
+local DOT_SIZE_UNVERIFIED = 8
+local HALO_GROWTH = 2
+
+
+
+
+local DOT_TEXTURE = "Interface\\AddOns\\Cabbie\\Media\\dot"
+local INK_ALPHA = 0.95
+
+local function makeDot()
+    local parent = _G and _G.Minimap or UIParent
+    local icon = CreateFrame("Frame", nil, parent)
+    icon:SetSize(DOT_SIZE, DOT_SIZE)
+    icon:EnableMouse(false)
+    local ring = FGPS.UI.WorldMap.STOP_RING
+
+    icon.Halo = icon:CreateTexture(nil, "BACKGROUND")
+    icon.Halo:SetPoint("CENTER", icon, "CENTER", 0, 0)
+    icon.Halo:SetTexture(ring)
+    icon.Fill = icon:CreateTexture(nil, "BORDER")
+    icon.Fill:SetPoint("CENTER", icon, "CENTER", 0, 0)
+    icon.Fill:SetTexture(DOT_TEXTURE)
+
+    icon.Ring = icon:CreateTexture(nil, "ARTWORK")
+    icon.Ring:SetPoint("CENTER", icon, "CENTER", 0, 0)
+    icon.Ring:SetTexture(ring)
+    icon:Hide()
+    return icon
 end
 
 
 
-local function styleDot(icon, unverified, vr, vg, vb, ur, ug, ub)
-    icon.unverified = unverified and true or false
+
+
+local function styleDot(icon, unverified, vr, vg, vb, ur, ug, ub, pr, pg, pb)
+    unverified = unverified and true or false
+    icon.unverified = unverified
+    if pr == nil then pr, pg, pb = FGPS.UI.Look.Color("paleRing") end
+    if icon.fgpsKind ~= unverified then
+        icon.fgpsKind = unverified
+        local size = unverified and DOT_SIZE_UNVERIFIED or DOT_SIZE
+        local ringBox = FGPS.UI.WorldMap.RING_BOX
+        icon:SetSize(size, size)
+        icon.Fill:SetSize(size, size)
+        icon.Ring:SetSize(size * ringBox, size * ringBox)
+        icon.Halo:SetSize((size + HALO_GROWTH) * ringBox, (size + HALO_GROWTH) * ringBox)
+        icon.Fill:SetShown(not unverified)
+        icon.Halo:SetShown(unverified)
+    end
     if unverified then
-        icon:SetSize(DOT_SIZE_UNVERIFIED, DOT_SIZE_UNVERIFIED)
-        setDotInset(icon, DOT_INSET_UNVERIFIED)
-        icon.border:SetVertexColor(ur, ug, ub, 0.95)
-        icon.fill:SetVertexColor(0, 0, 0, 0.55)
+        icon.Ring:SetVertexColor(ur, ug, ub, INK_ALPHA)
+        icon.Halo:SetVertexColor(pr, pg, pb, 1)
     else
-        icon:SetSize(DOT_SIZE, DOT_SIZE)
-        setDotInset(icon, DOT_INSET)
-        icon.border:SetVertexColor(0, 0, 0, 0.8)
-        icon.fill:SetVertexColor(vr, vg, vb, 0.9)
+        icon.Fill:SetVertexColor(vr, vg, vb, INK_ALPHA)
+        icon.Ring:SetVertexColor(pr, pg, pb, 1)
     end
 end
 Minimap.StyleDot = styleDot
 
+local function rgbOf(c)
+    if type(c) ~= "table" then return nil end
+    local r, g, b = c[1] or c.r, c[2] or c.g, c[3] or c.b
+    if r and g and b then return r, g, b end
+    return nil
+end
+
+
+
+
+
+
+local function dotColors()
+    local Look = FGPS.UI.Look
+    local ir, ig, ib = Look.Color("route")
+    local vr, vg, vb, ur, ug, ub = ir, ig, ib, ir, ig, ib
+    local Skins = FGPS.UI.Skins
+    if Skins and Skins.ColorScheme then
+        local ok, scheme = pcall(Skins.ColorScheme)
+        local colors = ok and type(scheme) == "table" and scheme.colors or nil
+        if type(colors) == "table" then
+            local r, g, b = rgbOf(colors.routeVerified)
+            if r then vr, vg, vb = r, g, b end
+            r, g, b = rgbOf(colors.routeUnverified)
+            if r then ur, ug, ub = r, g, b end
+        end
+    end
+    local pr, pg, pb = Look.Color("paleRing")
+    return vr, vg, vb, ur, ug, ub, pr, pg, pb
+end
+
 local function ensureIcons()
     if Minimap.dotPool then return true end
     if not CreateObjectPool then return false end
-    Minimap.dotPool = CreateObjectPool(function()
-        local r, g, b = skinColor("routeVerified", 0.25, 0.80, 1.00)
-        return makeIcon(DOT_SIZE, r, g, b, 0.9, true)
-    end, function(_, icon)
+    Minimap.dotPool = CreateObjectPool(makeDot, function(_, icon)
         icon:Hide()
     end)
     local ar, ag, ab = skinColor("accent", 0.31, 0.76, 0.97)
@@ -164,10 +227,9 @@ end
 
 local function applyColors()
     if not Minimap.dotPool then return end
-    local vr, vg, vb = skinColor("routeVerified", 0.25, 0.80, 1.00)
-    local ur, ug, ub = skinColor("routeUnverified", 1.00, 0.55, 0.10)
+    local vr, vg, vb, ur, ug, ub, pr, pg, pb = dotColors()
     for icon in Minimap.dotPool:EnumerateActive() do
-        styleDot(icon, icon.unverified, vr, vg, vb, ur, ug, ub)
+        styleDot(icon, icon.unverified, vr, vg, vb, ur, ug, ub, pr, pg, pb)
     end
     local ar, ag, ab = skinColor("accent", 0.31, 0.76, 0.97)
     if Minimap.destPin then Minimap.destPin.fill:SetVertexColor(ar, ag, ab, 1) end
@@ -447,6 +509,7 @@ function Minimap:Clear()
     if self.dotPool then self.dotPool:ReleaseAll() end
     if self.nextPin then self.nextPin:Hide() end
     if self.destPin then self.destPin:Hide() end
+    self.placedDots, self.placedNext, self.placedDest, self.placedWith = nil, nil, nil, nil
     self.active = false
     self.lastDotCount = 0
     self.drawn = nil
@@ -460,6 +523,16 @@ local function playerPos(progress)
         if ok and type(pos) == "table" then return pos end
     end
     return nil
+end
+
+
+local function trimDots(pins, pool, placedDots, keep)
+    for i = #placedDots, keep + 1, -1 do
+        local icon = placedDots[i]
+        placedDots[i] = nil
+        pins:RemoveMinimapIcon(REF, icon)
+        pool:Release(icon)
+    end
 end
 
 function Minimap:Refresh()
@@ -479,8 +552,20 @@ function Minimap:Refresh()
     local Perf = FGPS.Perf
     if Perf then Perf:Begin("minimap") end
     local pins = self.pins
-    if self.active then pins:RemoveAllMinimapIcons(REF) end
-    self.dotPool:ReleaseAll()
+
+
+
+
+    local placedDots = self.placedDots
+    local pool = self.dotPool
+    if not (self.active and placedDots and self.placedWith == pins and pins.RemoveMinimapIcon
+            and pool.GetNumActive and pool:GetNumActive() == #placedDots) then
+        if self.active then pins:RemoveAllMinimapIcons(REF) end
+        pool:ReleaseAll()
+        placedDots = {}
+        self.placedNext, self.placedDest = nil, nil
+    end
+    self.placedDots, self.placedWith = placedDots, pins
     local route = self.route
     local progress = self.progress
     local pos = playerPos(progress)
@@ -501,28 +586,46 @@ function Minimap:Refresh()
 
         self.dotBuffer = self.dotBuffer or {}
         local dots, dotCount = Minimap.SampleDots(route, self.progress, pos, radius, MAX_DOTS, self.dotBuffer)
-        local vr, vg, vb = skinColor("routeVerified", 0.25, 0.80, 1.00)
-        local ur, ug, ub = skinColor("routeUnverified", 1.00, 0.55, 0.10)
+        local vr, vg, vb, ur, ug, ub, pr, pg, pb = dotColors()
         for i = 1, dotCount do
             local dot = dots[i]
-            local icon = self.dotPool:Acquire()
-            styleDot(icon, dot.unverified, vr, vg, vb, ur, ug, ub)
+            local icon = placedDots[i]
+            if not icon then
+                icon = pool:Acquire()
+                placedDots[i] = icon
+            end
+            styleDot(icon, dot.unverified, vr, vg, vb, ur, ug, ub, pr, pg, pb)
             pins:AddMinimapIconWorld(REF, icon, dot.inst, dot.x, dot.y, false)
             placed = placed + 1
         end
+        trimDots(pins, pool, placedDots, dotCount)
         local ninst, nx, ny = nextPointOf(route, self.progress, pos)
         if ninst then
             pins:AddMinimapIconWorld(REF, self.nextPin, ninst, nx, ny, false)
+            self.placedNext = true
             placed = placed + 1
         else
+            if self.placedNext then pins:RemoveMinimapIcon(REF, self.nextPin) end
+            self.placedNext = nil
             self.nextPin:Hide()
         end
+    else
+        trimDots(pins, pool, placedDots, 0)
+        if self.placedNext then pins:RemoveMinimapIcon(REF, self.nextPin) end
+        self.placedNext = nil
     end
     local dinst, dx, dy = destinationOf(route)
+    local was = self.placedDest
     if dinst then
-        pins:AddMinimapIconWorld(REF, self.destPin, dinst, dx, dy, true)
+
+        if not (was and was.inst == dinst and was.x == dx and was.y == dy) then
+            pins:AddMinimapIconWorld(REF, self.destPin, dinst, dx, dy, true)
+            self.placedDest = { inst = dinst, x = dx, y = dy }
+        end
         placed = placed + 1
     else
+        if was then pins:RemoveMinimapIcon(REF, self.destPin) end
+        self.placedDest = nil
         self.destPin:Hide()
     end
     self.active = placed > 0

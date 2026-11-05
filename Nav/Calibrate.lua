@@ -173,11 +173,14 @@ end
 
 
 
-local function capEntries(container, cap)
+local function capEntries(container, cap, keep)
     local keys, n = {}, 0
     for k in pairs(container) do n = n + 1 keys[n] = k end
     if n <= cap then return 0 end
     table.sort(keys, function(a, b)
+
+        if a == keep then return false end
+        if b == keep then return true end
         local na = (type(container[a]) == "table" and tonumber(container[a].n)) or 0
         local nb = (type(container[b]) == "table" and tonumber(container[b].n)) or 0
         if na ~= nb then return na < nb end
@@ -190,6 +193,9 @@ local function capEntries(container, cap)
     end
     return removed
 end
+
+
+
 
 
 local function invalidateRoutes()
@@ -310,12 +316,8 @@ function Calibrate.NotePosition(pos)
 
     local ceiling = (Const.MOUNT_100 or 14) * 1.6
     if speed > ceiling then return nil end
-    local store = charStore().ground
-    local before = tonumber(store[state] and store[state].v)
-    local est = record(store, state, speed)
-    local after = est and tonumber(est.v)
 
-    if after and (not before or math.abs(after - before) > 0.25) then invalidateRoutes() end
+    record(charStore().ground, state, speed)
     return speed, state
 end
 
@@ -382,8 +384,7 @@ function Calibrate.OnTaxiState(onTaxi)
     if not playerNear(ride.inst, ride.landing, Calibrate.LANDING_YARDS) then return nil end
     local flights = accountStore().flights
     record(flights, key, seconds)
-    capEntries(flights, Calibrate.MAX_FLIGHTS)
-    invalidateRoutes()
+    capEntries(flights, Calibrate.MAX_FLIGHTS, key)
     return seconds, key
 end
 
@@ -426,7 +427,6 @@ function Calibrate.NoteDeparture(transportID, stopIndex, departureTime)
     entry.at = wall - elapsed
     entry.n = (tonumber(entry.n) or 0) + 1
     entry.realm = realmName()
-    invalidateRoutes()
     return entry.at
 end
 
@@ -548,7 +548,7 @@ local function fileTeleport(pending, load)
     local entry, store = teleportEntry(pending.id)
     if castOk then record(entry, "cast", cast) end
     if load then record(entry, "load", load) end
-    capEntries(store, Calibrate.MAX_TELEPORTS)
+    capEntries(store, Calibrate.MAX_TELEPORTS, pending.id)
     invalidateRoutes()
     return cast
 end
@@ -592,9 +592,43 @@ end
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+local function refreshWaits(route)
+    local Transport = FGPS.Transport
+    if not (Transport and Transport.NextDeparture and Transport.LegStopIndex) then return route end
+    local reachAt = now()
+    for _, leg in ipairs(route.legs) do
+        local timed = tonumber(leg.waitSeconds)
+        if leg.measured == "transport" and timed then
+            local stopIndex = Transport.LegStopIndex(leg, "stopFrom")
+            local okWait, wait = false, nil
+            if stopIndex then okWait, wait = pcall(Transport.NextDeparture, leg.transportID, stopIndex, reachAt) end
+            local before = tonumber(leg.seconds) or 0
+            local after = okWait and type(wait) == "number" and before - timed + wait or nil
+            if after and after >= 0 then
+                leg.seconds = after
+                leg.waitSeconds, leg.wait = wait, wait
+                route.totalSeconds = (tonumber(route.totalSeconds) or 0) + (after - before)
+            end
+        end
+        reachAt = reachAt + (tonumber(leg.seconds) or 0)
+    end
+    return route
+end
+
 function Calibrate.ApplyToRoute(route)
     if type(route) ~= "table" or type(route.legs) ~= "table" then return route end
-    if route.calibrated then return route end
+    if route.calibrated then return refreshWaits(route) end
     route.calibrated = true
     local Transport = FGPS.Transport
     local Cost = FGPS.Cost
@@ -789,8 +823,8 @@ local function printReport()
             FGPS:Print(L["  %s: nothing measured yet"], label)
         end
     end
-    FGPS:Print(L["  flights: %d path(s) timed from %d real ride(s)"], r.flights, r.flightSamples)
-    FGPS:Print(L["  transports: departure times known for %d dock(s)"], r.transports)
+    FGPS:Print(L["  flights: timed paths: %d, from real rides: %d"], r.flights, r.flightSamples)
+    FGPS:Print(L["  transports: docks with known departure times: %d"], r.transports)
     local teleports = 0
     for _ in pairs(r.teleports) do teleports = teleports + 1 end
     FGPS:Print(L["  teleports: cast and loading times for %d of them"], teleports)

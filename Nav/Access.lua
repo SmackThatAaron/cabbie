@@ -404,11 +404,22 @@ local function mountJournal()
     return usable, collected
 end
 
-local function mountState(routing)
-    local rank, line = ridingRank()
+
+
+
+local mountRead = nil
+
+local function mountState(routing, reuse)
+    local read = reuse and mountRead or nil
+    if not read then
+        local rank, line = ridingRank()
+        local usable, collected = mountJournal()
+        read = { rank, line, usable, collected }
+        mountRead = read
+    end
+    local rank, line, usable, collected = read[1], read[2], read[3], read[4]
     local speed = 0
     if rank >= 150 then speed = 1.0 elseif rank >= 75 then speed = 0.6 end
-    local usable, collected = mountJournal()
     local hasMount
     if usable == nil then
         hasMount = speed > 0
@@ -526,7 +537,7 @@ local function teleportDigest(entry)
     return { entry.inst, Util.Round(entry.x or 0), Util.Round(entry.y or 0), entry.ready or entry.cdRemaining < Const.TELEPORT_MAX_WAIT, entry.id or entry.itemID or entry.spellID }
 end
 
-local function build()
+local function build(cooldownsOnly)
     local s = settings()
     local routing = s and s.routing or {}
     local transportsSetting = s and s.transports or {}
@@ -566,7 +577,7 @@ local function build()
         end
     end
 
-    local mountSpeed, hasMount, ridingRankValue, ridingLine = mountState(routing)
+    local mountSpeed, hasMount, ridingRankValue, ridingLine = mountState(routing, cooldownsOnly)
     local canMount = canMountHere()
 
     local transports = {}
@@ -663,13 +674,16 @@ function Access:Snapshot()
     charDB()
     local current = self.current
     if current and current.expiresAt and (GetTime and GetTime() or 0) >= current.expiresAt then self.dirty = true end
-    if current and not self.dirty then return current end
+
+
+    local cooldownsOnly = current ~= nil and not self.dirty and self.cooldownDirty == true
+    if current and not self.dirty and not cooldownsOnly then return current end
     if self.building then
 
         return self.current or fallbackSnapshot("re-entrant")
     end
     self.building = true
-    local ok, access = pcall(build)
+    local ok, access = pcall(build, cooldownsOnly)
     self.building = false
     if not ok then
         if FGPS.Log then FGPS.Log:Error("Access snapshot failed: %s", tostring(access)) end
@@ -680,6 +694,7 @@ function Access:Snapshot()
     local previous = self.current
     self.current = access
     self.dirty = false
+    self.cooldownDirty = false
     if FGPS.Events and (not previous or previous.hash ~= access.hash) then
         FGPS.Events:Fire("ACCESS_CHANGED", access.hash, previous and previous.hash or nil)
     end
@@ -724,11 +739,15 @@ end
 
 
 local INVALIDATE_EVENTS = {
-    "SKILL_LINES_CHANGED", "NEW_MOUNT_ADDED", "MOUNT_JOURNAL_USABILITY_CHANGED", "BAG_UPDATE_COOLDOWN", "BAG_UPDATE_DELAYED",
-    "SPELL_UPDATE_COOLDOWN", "PLAYER_LEVEL_UP", "ZONE_CHANGED_NEW_AREA", "ZONE_CHANGED_INDOORS",
+    "SKILL_LINES_CHANGED", "NEW_MOUNT_ADDED", "MOUNT_JOURNAL_USABILITY_CHANGED", "BAG_UPDATE_DELAYED",
+    "PLAYER_LEVEL_UP", "ZONE_CHANGED_NEW_AREA", "ZONE_CHANGED_INDOORS",
     "HEARTHSTONE_BOUND", "PLAYER_ENTERING_WORLD", "UNIT_FACTION",
     "PLAYER_DEAD", "PLAYER_ALIVE", "PLAYER_UNGHOST",
 }
+
+
+
+local COOLDOWN_EVENTS = { "BAG_UPDATE_COOLDOWN", "SPELL_UPDATE_COOLDOWN" }
 
 function Access:Init()
     if self.initialized then return end
@@ -737,6 +756,9 @@ function Access:Init()
     if not Events then return end
     for _, event in ipairs(INVALIDATE_EVENTS) do
         Events:RegisterWoW(event, function() Access.dirty = true end, self)
+    end
+    for _, event in ipairs(COOLDOWN_EVENTS) do
+        Events:RegisterWoW(event, function() Access.cooldownDirty = true end, self)
     end
 
 

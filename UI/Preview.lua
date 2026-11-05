@@ -694,12 +694,11 @@ function Preview:ToggleAlternatives()
     end
     if self.window then setStatus(self.window, L["Computing alternatives..."]) end
     local reference = self.route
-    local ok, err = pcall(Navigator.RequestAlternatives, Navigator, function(list, requestErr)
+
+
+    local ok, err = pcall(Navigator.RequestAlternatives, Navigator, function(list)
         if Preview.route ~= reference then return end
         Preview.alternatives = type(list) == "table" and list or {}
-        if requestErr and Preview.window then
-            setStatus(Preview.window, errorMessage(requestErr), 1, 0.3, 0.3)
-        end
         Preview:Render()
     end)
     if not ok then
@@ -778,7 +777,11 @@ local function buildWindow()
         FGPS.Log:Error("UI.Frames.CreateWindow is unavailable; the preview window cannot be built")
         return nil
     end
-    local ok, window = pcall(F.CreateWindow, WINDOW_KEY, { title = L["Route preview"], width = 400, height = 470 })
+
+
+
+    local ok, window = pcall(F.CreateWindow, WINDOW_KEY, { title = L["Route preview"], width = 400, height = 470,
+        onClose = function() Preview.listMode = "steps" end })
     if not ok or type(window) ~= "table" then
         FGPS.Log:Error("Frames.CreateWindow failed: %s", tostring(window))
         return nil
@@ -839,15 +842,15 @@ local function buildWindow()
         { key = "start", label = "Start", fn = function() Preview:Start() end },
         { key = "alternatives", label = "Alternatives", fn = function() Preview:ToggleAlternatives() end },
         { key = "addStop", label = "Add stop", fn = function() Preview:AddStop() end },
-        { key = "cancel", label = "Clear route", fn = function() Preview:Cancel() end },
+        { key = "cancel", label = "Stop Route", fn = function() Preview:Cancel() end },
     }
     window.fgpsButtons = {}
-    local previous
+    local previousButton
     for _, spec in ipairs(specs) do
         local button = makeButton(content, L[spec.label], spec.fn, 92, 22)
-        if previous then button:SetPoint("LEFT", previous, "RIGHT", 3, 0) else button:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", 2, 2) end
+        if previousButton then button:SetPoint("LEFT", previousButton, "RIGHT", 3, 0) else button:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", 2, 2) end
         window.fgpsButtons[spec.key] = button
-        previous = button
+        previousButton = button
     end
     if F.ApplySkin then pcall(F.ApplySkin, window) end
     return window
@@ -1089,6 +1092,18 @@ function Preview:Init()
     end, self)
     Events:Register("SETTINGS_CHANGED", function(_, key)
         if (key == "units" or key == "*") and Preview:IsShown() then Preview:Render() end
+    end, self)
+
+
+
+
+
+    Events:Register("FLIGHTS_KNOWN", function()
+        Preview.alternatives = nil
+        if Preview.listMode == "alternatives" and Preview:IsShown() then
+            Preview.listMode = "steps"
+            Preview:ToggleAlternatives()
+        end
     end, self)
     FGPS.Slash.Register("preview", function()
         local Navigator = FGPS.Navigator

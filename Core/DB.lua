@@ -24,13 +24,17 @@
 
 
 
+
+
+
+
 local ADDON_NAME, FGPS = ...
 
 local Util = FGPS.Util
 local type, pairs, ipairs, tonumber, tostring = type, pairs, ipairs, tonumber, tostring
 
 local DB = {
-    VERSION = 5,
+    VERSION = 7,
     initialized = false,
 }
 FGPS.DB = DB
@@ -54,12 +58,18 @@ local settingsDefaults = {
                 arrowAlpha = 1,
                 arrowColor = "ffd030",
                 arrowStyle = "arrow",
-                showWords = true,
-                showDistance = true,
+                turnPulse = true,
+
+
+                showWords = false,
+                showDistance = false,
                 textSize = 1 },
     worldMapLine = true,
     minimapLine = true,
     inWorldPin = true,
+
+
+    windowSounds = true,
     mapClickModifier = "CTRL_RIGHT",
     combatMode = "visuals_only",
 
@@ -71,10 +81,17 @@ local settingsDefaults = {
 
 
 
-    quests = { enabled = true, mapPins = true, minimapPins = true, objectiveAreas = true,
-               searchForever = true, serverLookup = true, followProgress = true, pickupMarks = true,
 
-               batchRadius = 600 },
+
+    quests = { enabled = false, mapPins = true, minimapPins = false, objectiveAreas = true,
+               searchForever = true, serverLookup = true, followProgress = true, pickupMarks = false,
+
+               batchRadius = 600,
+
+
+               leveling = true,
+
+               levelingMarks = true },
 
 
     perf = { instrument = true, frameBudgetMs = 4, spareFrame = true, frameBudgetMaxMs = 12 },
@@ -209,6 +226,20 @@ DB.defaultChanges = {
 
 
     [4] = { { path = "routeBlock.enabled", from = true } },
+
+
+
+
+
+    [5] = { { path = "callout.showWords", from = true }, { path = "callout.showDistance", from = true } },
+
+
+
+
+
+
+    [6] = { { path = "quests.enabled", from = true }, { path = "quests.minimapPins", from = true },
+            { path = "quests.pickupMarks", from = true } },
 }
 
 

@@ -1,6 +1,7 @@
--- Cabbie/Nav/QuestBatch.lua
--- A short list of quests the player can take nearby. Accept sets those places as stops.
--- It never starts the route: the player presses Start. Nothing here moves the character.
+
+
+
+
 
 local ADDON_NAME, FGPS = ...
 
@@ -9,12 +10,12 @@ FGPS.QuestBatch = QuestBatch
 
 local L = FGPS.L
 
--- Six is the length of the list. It is not a setting. The one setting is the radius.
+
 QuestBatch.MAX_STOPS = 6
--- Yards added to the rank for each level outside [player - 4, player + 2]. Lower rank is kept.
+
 QuestBatch.LEVEL_YARDS = 40
 QuestBatch.DEFAULT_RADIUS = 600
--- A quest this many levels above the player is red in the game's quest log: not one to fetch.
+
 QuestBatch.TOO_HIGH = 5
 
 local generation = 0
@@ -32,7 +33,7 @@ function QuestBatch.Radius()
     return n
 end
 
--- 0 inside the band a player of this level would still want. Grows outside it.
+
 function QuestBatch.LevelPenalty(questLevel, playerLevel)
     questLevel = tonumber(questLevel)
     playerLevel = tonumber(playerLevel)
@@ -57,7 +58,7 @@ local function playerLevel()
     return 0
 end
 
--- A notice in the call-out, 6 s (Guide.Say is called with a dot: text, seconds).
+
 local function say(text)
     local guide = FGPS.UI and FGPS.UI.Guide
     if guide and guide.Say then guide.Say(L[text], 6) end
@@ -75,6 +76,8 @@ local function publish(stops, status, seconds, radius, origin, line)
             local stop = stops[i]
             local level = tonumber(stop.level)
             local name = (level and level > 0) and format(L["[%d] %s"], level, stop.title) or stop.title
+            if stop.unconfirmed then name = name .. L[" (unconfirmed)"] end
+            if stop.notInOrder then name = name .. L[" (not in your order)"] end
             lines[#lines + 1] = format("%d. %s", i, name)
         end
         if status == "pending" then
@@ -107,15 +110,42 @@ local function samePlace(a, b)
     return dx * dx + dy * dy < 1
 end
 
+
+
+
 local function titleFor(QuestData, questID)
     local title = QuestData.Title and QuestData.Title(questID)
-    if type(title) == "string" and title ~= "" then return title end
-    return format(L and L["Quest %d"] or "Quest %d", questID)
+    if type(title) == "string" and title ~= "" then return title, true end
+    return format(L and L["Quest %d"] or "Quest %d", questID), false
 end
 
--- Quests CanTake calls "yes", with a known giver, within the radius on this map.
--- The stop is the giver. A one-ended row with no giver is skipped. A position that
--- is only the turn-in is skipped, so a partial row's turn-in is not a stop.
+
+
+
+
+
+
+
+
+
+
+
+
+local SRC_ITEM_DROP = 3
+local function takeable(QuestData, questID)
+    local verdict, _, code = QuestData.CanTake(questID)
+    if verdict == "yes" then return true, false end
+    if verdict == "unknown" and code == "forever_incomplete" then return true, true end
+    return false, false
+end
+
+local function bonusFor(questID)
+    local Leveling = FGPS.Leveling
+    if not (Leveling and Leveling.Bonus) then return 0 end
+    local ok, yards = pcall(Leveling.Bonus, questID)
+    return ok and tonumber(yards) or 0
+end
+
 function QuestBatch.Collect(origin)
     local QuestData = modules()
     if not QuestData or not origin or not origin.map or not origin.inst or not origin.x then
@@ -129,37 +159,43 @@ function QuestBatch.Collect(origin)
         local entry = givers[i]
         local questID = entry and tonumber(entry.id)
         local position = entry and entry.position
-        if questID and type(position) == "table" and position.x and position.y then
-            local info = QuestData.Info(questID)
+        if questID and type(position) == "table" and position.x and position.y and position.src ~= SRC_ITEM_DROP then
+            local info = QuestData.Lookup and QuestData.Lookup(questID) or QuestData.Info(questID)
             local start = info and info.start
             local tooHigh = level > 0 and tonumber(info and info.level)
                 and tonumber(info.level) >= level + QuestBatch.TOO_HIGH
-            if start and not tooHigh and QuestData.CanTake(questID) == "yes" then
+            local ok, unconfirmed = false, false
+            if start and not tooHigh then ok, unconfirmed = takeable(QuestData, questID) end
+            if ok then
                 local turnIn = info.turnIn
                 local turnInOnly = turnIn and samePlace(position, turnIn) and not samePlace(position, start)
                 if not turnInOnly then
                     local distance = QuestData.DistanceTo(origin, position.inst, position.x, position.y)
                     if distance and distance <= radius then
                         local penalty = QuestBatch.LevelPenalty(info.level, level)
-                        local score = distance + penalty * QuestBatch.LEVEL_YARDS
+                        local bonus = bonusFor(questID)
+                        local score = distance + penalty * QuestBatch.LEVEL_YARDS - bonus
                         local prev = best[questID]
                         if not prev or score < prev.score then
-                            local title = titleFor(QuestData, questID)
+                            local title, named = titleFor(QuestData, questID)
                             best[questID] = {
                                 questID = questID,
-                                title = title,
+                                title = named and title or (L and L["Unknown quest"] or "Unknown quest"),
+                                unknownQuest = not named and questID or nil,
                                 distance = distance,
                                 level = info.level,
                                 penalty = penalty,
                                 score = score,
+                                bonus = bonus > 0 and bonus or nil,
+                                unconfirmed = unconfirmed or nil,
                                 inst = position.inst,
                                 x = position.x,
                                 y = position.y,
                                 map = position.map or origin.map,
-                                -- A giver stop, as QuestData.DestinationFor makes one: those end
-                                -- when their quest is accepted (Quests.OnQuestChanged), and a quest
-                                -- stop with no stage is taken for the game's marker of a quest
-                                -- already in the log.
+
+
+
+
                                 dest = {
                                     kind = "quest",
                                     type = "quest",
@@ -196,7 +232,7 @@ end
 local function orderStops(origin, picks)
     local _, Navigator = modules()
     if not Navigator or not Navigator.OptimizeOrder then return picks end
-    -- OptimizeOrder returns indexes into picks, including the one-stop case.
+
     local order = Navigator.OptimizeOrder({ inst = origin.inst, x = origin.x, y = origin.y }, picks)
     if type(order) ~= "table" then return picks end
     local ordered = {}
@@ -204,6 +240,33 @@ local function orderStops(origin, picks)
         ordered[i] = picks[order[i]]
     end
     return ordered
+end
+
+
+
+
+
+local function orderFirst(stops)
+    local Leveling = FGPS.Leveling
+    local on = Leveling and Leveling.Enabled and Leveling.Enabled()
+    for i = 1, #stops do
+        stops[i].notInOrder = nil
+    end
+    if not on then return stops end
+    local inOrder, rest = {}, {}
+    for i = 1, #stops do
+        local stop = stops[i]
+        if stop.bonus then
+            inOrder[#inOrder + 1] = stop
+        else
+            stop.notInOrder = true
+            rest[#rest + 1] = stop
+        end
+    end
+    for i = 1, #rest do
+        inOrder[#inOrder + 1] = rest[i]
+    end
+    return inOrder
 end
 
 local function cost(origin, stops, radius)
@@ -217,12 +280,15 @@ local function cost(origin, stops, radius)
     for i = 1, #stops do
         routeStops[i] = stops[i].dest
     end
-    inflight = Router:RequestRoute({
+    if not Router then return nil end
+    local finished = false
+    local handle = Router:RequestRoute({
         origin = { inst = origin.inst, x = origin.x, y = origin.y, map = origin.map },
         stops = routeStops,
         variant = "fastest",
     }, function(route, err)
         if gen ~= generation then return end
+        finished = true
         inflight = nil
         if type(err) == "table" and err.code == "CANCELLED" then
             publish(stops, "cancelled", nil, radius, origin)
@@ -234,6 +300,8 @@ local function cost(origin, stops, radius)
         end
         publish(stops, "ok", route.totalSeconds, radius, origin)
     end)
+
+    if gen == generation and not finished then inflight = handle end
     return inflight
 end
 
@@ -249,7 +317,7 @@ function QuestBatch.Suggest()
         publish({}, "none", nil, radius, origin)
         return nil
     end
-    return cost(origin, orderStops(origin, picks), radius)
+    return cost(origin, orderFirst(orderStops(origin, picks)), radius)
 end
 
 function QuestBatch.Cancel()
@@ -259,7 +327,7 @@ function QuestBatch.Cancel()
     end
 end
 
--- Sets the stops and does not start. The call-out answers the click. Chat does not.
+
 function QuestBatch.Accept()
     local _, Navigator = modules()
     local stops = current and current.stops
@@ -267,8 +335,8 @@ function QuestBatch.Accept()
         say("No stops to set.")
         return false
     end
-    -- A route that is already followed goes on to the new stops (SetDestination re-routes it);
-    -- nothing that was idle starts.
+
+
     local following = Navigator.IsJourney and Navigator:IsJourney()
     local opts = { quiet = true, start = false, askedBy = "player" }
     Navigator:SetDestination(stops[1].dest, opts)

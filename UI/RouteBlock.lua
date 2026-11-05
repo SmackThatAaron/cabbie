@@ -177,9 +177,26 @@ end
 
 
 
+
+local markR, markG, markB, markLabel, markText
 local function openMark()
     local r, g, b = FGPS.UI.Look.Color("grey")
-    return format(" |cff%02x%02x%02x%s|r", floor(r * 255 + 0.5), floor(g * 255 + 0.5), floor(b * 255 + 0.5), L["(open ground)"])
+    local label = L["(open ground)"]
+    if not (markText and r == markR and g == markG and b == markB and label == markLabel) then
+        markR, markG, markB, markLabel = r, g, b, label
+        markText = format(" |cff%02x%02x%02x%s|r", floor(r * 255 + 0.5), floor(g * 255 + 0.5), floor(b * 255 + 0.5), label)
+    end
+    return markText
+end
+
+
+local function rowLine(row, entry)
+    local mark = entry.open and openMark() or ""
+    if row.cabbieLine == nil or row.cabbieWords ~= entry.text or row.cabbieMark ~= mark then
+        row.cabbieWords, row.cabbieMark = entry.text, mark
+        row.cabbieLine = "- " .. entry.text .. mark
+    end
+    return row.cabbieLine
 end
 
 local NO_ROWS = {}
@@ -221,12 +238,14 @@ local function paint(model)
         if savedPlace() then fitWidth(frame) else RouteBlock.Place() end
     end
     Look.SetLine(frame.HeaderText, headerText(model.header), Look.Color("header"))
-    local changed = Look.SetLine(frame.Title, model.title or "", Look.Color("title"))
+
+
+    local changed = Look.SetLine(frame.Title, model.title or "", Look.Color(model.unknownQuest and "grey" or "title"))
     local rows = model.rows or NO_ROWS
     for i, row in ipairs(frame.Rows) do
         local entry = rows[i]
         if entry then
-            if Look.SetLine(row, "- " .. entry.text .. (entry.open and openMark() or ""),
+            if Look.SetLine(row, rowLine(row, entry),
                     Look.Color(entry.grey and "grey" or (entry.current and "current" or "later"))) then
                 changed = true
                 row:Show()

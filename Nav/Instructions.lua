@@ -149,10 +149,12 @@ local function distanceUnits()
 end
 
 local function spokenDistance(yards)
-    yards = floor((yards or 0) + 0.5)
+    local exact = yards or 0
+    yards = floor(exact + 0.5)
     if yards >= 100 then yards = floor(yards / 10 + 0.5) * 10 end
     if distanceUnits() == "metric" then
-        local metres = floor(yards * (FGPS.Const.METERS_PER_YARD or 0.9144) + 0.5)
+
+        local metres = floor(exact * (FGPS.Const.METERS_PER_YARD or 0.9144) + 0.5)
         if metres >= 100 then metres = floor(metres / 10 + 0.5) * 10 end
         return format(L["%d metres"], metres)
     end
@@ -798,17 +800,17 @@ local function walkSteps(route, steps, leg, li, state, endsAtStop)
 
     local insideMaps = FGPS.Data and FGPS.Data.insideMaps
     local inside = type(insideMaps) == "table" and insideMaps[leg.inst] ~= nil
-    local function addEnter(at, english)
+    local function addEnter(atIndex, english)
         local name = english
         if inside then
             local G = FGPS.Graph
             name = G and G.RoomName and G:RoomName(leg.inst, english) or nil
             if not name then return end
         end
-        local q = pts[at]
+        local q = pts[atIndex]
         local text = format(L["Enter %s"], name)
-        addStep(steps, { kind = "enter", legIndex = li, pointIndex = at, inst = leg.inst, x = q.x, y = q.y,
-                         distanceFromStart = state.dist + cum[at], seconds = eta(cum[at]), text = text, shortText = text,
+        addStep(steps, { kind = "enter", legIndex = li, pointIndex = atIndex, inst = leg.inst, x = q.x, y = q.y,
+                         distanceFromStart = state.dist + cum[atIndex], seconds = eta(cum[atIndex]), text = text, shortText = text,
                          voiceText = text .. ".", room = english })
     end
 
@@ -1071,8 +1073,9 @@ local function transportSteps(route, steps, leg, li, state)
         leaveText = format(L["Land at %s"], destName)
         leaveShort = format(L["Land at %s"], destName)
         leaveVoice = format(L["You land at %s."], destName)
-    elseif kind == "boat" or kind == "zeppelin" then
-        local vehicle = kind == "boat" and L["boat"] or L["zeppelin"]
+    elseif kind == "boat" or kind == "zeppelin" or kind == "ferry" then
+
+        local vehicle = kind == "zeppelin" and L["zeppelin"] or L["boat"]
         if leg.aboard then
 
 
@@ -1155,6 +1158,7 @@ end
 
 
 
+
 local function arrivalName(leg)
     if leg.kind == "taxi" then
         local nodes = FGPS.Data and FGPS.Data.taxi and FGPS.Data.taxi.nodes
@@ -1167,7 +1171,7 @@ local function arrivalName(leg)
 end
 
 local function vehicleName(leg)
-    if leg.kind == "boat" then return L["boat"] end
+    if leg.kind == "boat" or leg.kind == "ferry" then return L["boat"] end
     if leg.kind == "zeppelin" then return L["zeppelin"] end
     if leg.kind == "tram" then return L["tram"] end
     if leg.kind == "elevator" then return L["elevator"] end
@@ -1345,9 +1349,9 @@ function Instructions.NextActionable(route, progress)
     if not steps or #steps == 0 then steps = Instructions.Build(route) end
     if #steps == 0 then return nil end
     if type(progress) ~= "table" or progress.legIndex == nil then return steps[1] end
-    local li, pi = progress.legIndex or 1, progress.pointIndex or 0
+    local li, pointIdx = progress.legIndex or 1, progress.pointIndex or 0
     for _, step in ipairs(steps) do
-        if step.legIndex > li or (step.legIndex == li and step.pointIndex > pi) then return step end
+        if step.legIndex > li or (step.legIndex == li and step.pointIndex > pointIdx) then return step end
     end
     return steps[#steps]
 end

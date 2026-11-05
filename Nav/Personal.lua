@@ -655,9 +655,11 @@ function Personal.Hearth()
         opt.placeName = how == "resolved" and bindName or pos.poiName or pos.zoneName
         opt.routable = true
     else
+
+
+
         opt.routable = false
-        opt.note = bindName and L["Bind location not found in the navigation data; the hearthstone is not used for routing."]
-                             or L["Bind location unknown; the hearthstone is not used for routing."]
+        opt.note = L["Hearthstone not used: Cabbie learns where your hearthstone takes you the first time you use it or bind at an inn."]
     end
     return opt
 end

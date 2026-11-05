@@ -141,9 +141,7 @@ function Route.Cumulative(leg)
     cum[1] = 0
     for i = 2, #points do
         local a, b = points[i - 1], points[i]
-        if leg.split and i - 1 == leg.split then
-
-        else
+        if not (leg.split and i - 1 == leg.split) then
             local dx, dy = b.x - a.x, b.y - a.y
             total = total + sqrt(dx * dx + dy * dy)
         end
@@ -265,9 +263,9 @@ function Route.ProjectRange(leg, x, y, loAlong, hiAlong)
             local a, b = points[i], points[i + 1]
             local vx, vy = b.x - a.x, b.y - a.y
             local len = sqrt(vx * vx + vy * vy)
-            local t, lo, hi = 0, 0, 1
+            local t = 0
             if len > 0 then
-                lo, hi = (loAlong - cum[i]) / len, (hiAlong - cum[i]) / len
+                local lo, hi = (loAlong - cum[i]) / len, (hiAlong - cum[i]) / len
                 if lo < 0 then lo = 0 end
                 if hi > 1 then hi = 1 end
                 t = ((x - a.x) * vx + (y - a.y) * vy) / (len * len)
@@ -331,13 +329,9 @@ end
 
 
 
-function Route.RemainingYards(route, legIndex, pointIndex, x, y)
-    local legs = route and route.legs
-    if not legs or #legs == 0 then return 0 end
-    legIndex = legIndex or 1
-    local leg = legs[legIndex]
-    if not leg then return 0 end
-    local remaining = 0
+
+local function legRemaining(leg, pointIndex, x, y)
+    local remaining
     local points = leg.points
     local n = #points
     if n >= 2 then
@@ -362,6 +356,19 @@ function Route.RemainingYards(route, legIndex, pointIndex, x, y)
     else
         remaining = legLength(leg)
     end
+    return remaining
+end
+
+
+
+
+function Route.RemainingYards(route, legIndex, pointIndex, x, y)
+    local legs = route and route.legs
+    if not legs or #legs == 0 then return 0 end
+    legIndex = legIndex or 1
+    local leg = legs[legIndex]
+    if not leg then return 0 end
+    local remaining = legRemaining(leg, pointIndex, x, y)
     for i = legIndex + 1, #legs do
         remaining = remaining + legLength(legs[i])
     end
@@ -375,10 +382,10 @@ function Route.RemainingSeconds(route, legIndex, pointIndex, x, y)
     legIndex = legIndex or 1
     local leg = legs[legIndex]
     if not leg then return 0 end
-    local remaining = 0
+    local remaining
     local total = legLength(leg)
     if total > 0 then
-        local currentRemainingYards = Route.RemainingYards({ legs = { leg } }, 1, pointIndex, x, y)
+        local currentRemainingYards = legRemaining(leg, pointIndex, x, y)
         local share = currentRemainingYards / total
         if share > 1 then share = 1 elseif share < 0 then share = 0 end
         remaining = (leg.seconds or 0) * share

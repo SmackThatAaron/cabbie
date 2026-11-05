@@ -7,6 +7,8 @@
 
 
 
+
+
 local ADDON_NAME, FGPS = ...
 
 local type, min, max, abs, exp, pi = type, math.min, math.max, math.abs, math.exp, math.pi
@@ -49,6 +51,8 @@ FGPS.UI.Callout = Callout
 Callout.GLYPH_SIZE = 64
 Callout.GLYPH_GAP = 2
 Callout.LINE_HEIGHT = 16
+
+
 Callout.HEIGHT = 89
 Callout.Y = -37
 
@@ -85,6 +89,65 @@ Callout.ROTATION = {
     slight_right = -pi / 4, right = -pi / 2, sharp_right = -3 * pi / 4,
     uturn = pi,
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+Callout.TURN_MARK = "Interface\\AddOns\\Cabbie\\Media\\turn_mark"
+Callout.TURN_MARK_SIZE = 32
+Callout.MARK_SIDE = {
+    slight_left = "left", left = "left", sharp_left = "left",
+    slight_right = "right", right = "right", sharp_right = "right",
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Callout.PULSE_SAME_YARDS = 12
+Callout.pulsedInst, Callout.pulsedX, Callout.pulsedY, Callout.pulsedKey = nil, nil, nil, nil
+Callout.pulsedSide = nil
+Callout.wrongWayPulsed = false
+
+
+
+Callout.pulsing = false
+
+local DISTANCE_GAP = 10
 
 
 Callout.AIM_MIN_YARDS = 1
@@ -202,14 +265,72 @@ local fitWords
 
 
 
+local function fontOf(line, flags)
+    local path, size, got = line:GetFont()
+    return { type(path) == "string" and path or "Fonts\\FRIZQT__.TTF",
+             type(size) == "number" and size > 0 and size or 16, type(got) == "string" and got or flags }
+end
+
+
+
+
+
+local function shadowOf(name)
+    local font = type(name) == "string" and _G[name] or nil
+    if type(font) ~= "table" or type(font.GetShadowColor) ~= "function" or type(font.GetShadowOffset) ~= "function" then
+        return nil
+    end
+    local okColour, r, g, b, a = pcall(font.GetShadowColor, font)
+    local okOffset, x, y = pcall(font.GetShadowOffset, font)
+    if not (okColour and okOffset) then return nil end
+    for _, n in ipairs({ r, g, b, x, y }) do
+        if type(n) ~= "number" then return nil end
+    end
+    return { r, g, b, type(a) == "number" and a or 1, x, y }
+end
+
+
+
+
+
+
+local function setFont(frame, line, role, scale)
+    if line.fgpsRole == role and line.fgpsScale == scale then return false end
+    line.fgpsRole, line.fgpsScale = role, scale
+    local font = frame.fgpsFonts[role]
+    line:SetFont(font[1], font[2] * scale, font[3])
+    local shadow = font.shadow
+    if shadow then
+        line:SetShadowColor(shadow[1], shadow[2], shadow[3], shadow[4])
+        line:SetShadowOffset(shadow[5], shadow[6])
+    end
+    return true
+end
+
+
+
+
+
+local function fontLines(frame, hasWords)
+    local scale = frame.fgpsTextScale or 1
+    local onScroll = frame.fgpsOnScroll == true
+    if hasWords then
+        local role = onScroll and "scroll" or "callout"
+        local changed = setFont(frame, frame.Text, role, scale)
+        changed = setFont(frame, frame.Ruler, role, scale) or changed
+        if changed then fitWords(frame, frame.Ruler:GetText() or "") end
+    end
+    setFont(frame, frame.Distance, (onScroll and not Callout.distanceAlone) and "scroll" or "callout", scale)
+end
+
+
 
 
 local function sizeWords(frame, scale)
-    if frame.fgpsTextScale == scale or (frame.fgpsTextScale == nil and scale == 1) then return end
+    if (frame.fgpsTextScale or 1) == scale then return end
     frame.fgpsTextScale = scale
-    local font = frame.fgpsFont
     for _, line in ipairs({ frame.Text, frame.Ruler, frame.Distance }) do
-        line:SetFont(font[1], font[2] * scale, font[3])
+        setFont(frame, line, line.fgpsRole, scale)
     end
     fitWords(frame, frame.Ruler:GetText() or "")
 end
@@ -222,10 +343,24 @@ local function applyLook(frame)
     if not frame then return end
     local glyph = math.floor(Callout.GLYPH_SIZE * lookNumber("arrowSize", Callout.SIZE) + 0.5)
     frame.Glyph:SetSize(glyph, glyph)
-    frame.Glyph:SetAlpha(lookNumber("arrowAlpha", Callout.ALPHA))
+    local alpha = lookNumber("arrowAlpha", Callout.ALPHA)
+    frame.Glyph:SetAlpha(alpha)
     paintArt(frame.Glyph)
+
+
+    paintArt(frame.Pulse)
+    local pulse = frame.Pulse.anim
+    if pulse then
+        local peak = FGPS.UI.Look.TOKENS.pulsePeak * alpha
+        pulse.up:SetToAlpha(peak)
+        pulse.down:SetFromAlpha(peak)
+    end
     local textScale = lookNumber("textSize", Callout.TEXT_SIZE)
     sizeWords(frame, textScale)
+
+    local mark = math.floor(Callout.TURN_MARK_SIZE * textScale + 0.5)
+    frame.TurnMark:SetSize(mark, mark)
+    frame.fgpsMarkSize = mark
     local line = math.floor(Callout.LINE_HEIGHT * textScale + 0.5)
     local height = glyph + Callout.GLYPH_GAP + line + Callout.TEXT_BOTTOM
     if frame:GetHeight() == height and frame:GetNumPoints() > 0 then return end
@@ -259,7 +394,7 @@ local function placeDistance(frame, alone)
     if alone then
         frame.Distance:SetPoint("BOTTOM", frame, "BOTTOM", 0, Callout.TEXT_BOTTOM)
     else
-        frame.Distance:SetPoint("LEFT", frame.Text, "RIGHT", 10, 0)
+        frame.Distance:SetPoint("LEFT", frame.Text, "RIGHT", DISTANCE_GAP, 0)
     end
 end
 
@@ -283,23 +418,38 @@ local function createFrame()
 
 
 
-    frame.Text = frame:CreateFontString(nil, "OVERLAY", Look.Font("callout"))
+    frame.Text = frame:CreateFontString(nil, "OVERLAY", Look.Font("scroll"))
     frame.Text:SetPoint("BOTTOM", frame, "BOTTOM", 0, Callout.TEXT_BOTTOM)
     if frame.Text.SetJustifyH then frame.Text:SetJustifyH("CENTER") end
     if frame.Text.SetWordWrap then frame.Text:SetWordWrap(true) end
 
 
 
-    frame.Ruler = frame:CreateFontString(nil, "BACKGROUND", Look.Font("callout"))
+    frame.Ruler = frame:CreateFontString(nil, "BACKGROUND", Look.Font("scroll"))
     frame.Ruler:SetPoint("BOTTOM", frame, "TOP", 0, 0)
     frame.Ruler:SetAlpha(0)
     frame.Distance = frame:CreateFontString(nil, "OVERLAY", Look.Font("callout"))
     placeDistance(frame, false)
 
 
-    local path, size, flags = frame.Text:GetFont()
-    frame.fgpsFont = { type(path) == "string" and path or "Fonts\\FRIZQT__.TTF",
-                       type(size) == "number" and size > 0 and size or 16, type(flags) == "string" and flags or "OUTLINE" }
+
+
+    frame.fgpsFonts = { scroll = fontOf(frame.Text, ""), callout = fontOf(frame.Distance, "OUTLINE") }
+    frame.fgpsFonts.scroll.shadow = shadowOf(Look.Font("scroll"))
+    frame.fgpsFonts.callout.shadow = shadowOf(Look.Font("callout"))
+    frame.Text.fgpsRole, frame.Ruler.fgpsRole, frame.Distance.fgpsRole = "scroll", "scroll", "callout"
+    frame.Text.fgpsScale, frame.Ruler.fgpsScale, frame.Distance.fgpsScale = 1, 1, 1
+
+
+    frame.Scroll = frame:CreateTexture(nil, "BACKGROUND")
+    frame.Scroll:Hide()
+    frame.TurnMark = frame:CreateTexture(nil, "ARTWORK")
+    frame.TurnMark:SetTexture(Callout.TURN_MARK)
+    frame.TurnMark:SetSize(Callout.TURN_MARK_SIZE, Callout.TURN_MARK_SIZE)
+    frame.TurnMark:SetPoint("RIGHT", frame.Text, "LEFT", -Look.TOKENS.gap, 0)
+    frame.TurnMark:Hide()
+    frame.TurnMark.fgpsSide = false
+    frame.fgpsMarkSize = Callout.TURN_MARK_SIZE
 
 
 
@@ -309,6 +459,29 @@ local function createFrame()
     frame.Glyph:SetSize(Callout.GLYPH_SIZE, Callout.GLYPH_SIZE)
     frame.Glyph:SetPoint("TOP", frame, "TOP", 0, 0)
     frame.Glyph:Hide()
+
+
+
+    frame.Pulse = frame:CreateTexture(nil, "OVERLAY")
+    frame.Pulse:SetAllPoints(frame.Glyph)
+    if frame.Pulse.SetBlendMode then frame.Pulse:SetBlendMode("ADD") end
+    frame.Pulse:SetAlpha(0)
+    frame.Pulse:Hide()
+    if type(frame.Pulse.CreateAnimationGroup) == "function" then
+        local half = Look.TOKENS.pulse / 2
+        local anim = frame.Pulse:CreateAnimationGroup()
+        anim.up, anim.down = anim:CreateAnimation("Alpha"), anim:CreateAnimation("Alpha")
+        anim.up:SetOrder(1)
+        anim.up:SetDuration(half)
+        anim.up:SetFromAlpha(0)
+        anim.down:SetOrder(2)
+        anim.down:SetDuration(half)
+        anim.down:SetToAlpha(0)
+        local function ended() Callout.pulsing = false end
+        anim:SetScript("OnFinished", ended)
+        anim:SetScript("OnStop", ended)
+        frame.Pulse.anim = anim
+    end
 
 
     applyLook(frame)
@@ -372,6 +545,7 @@ local function turnArrow(frame, elapsed)
     if rotation ~= Callout.rotation and frame.Glyph.SetRotation then
         Callout.rotation = rotation
         frame.Glyph:SetRotation(rotation)
+        if Callout.pulsing then frame.Pulse:SetRotation(rotation) end
     end
 end
 
@@ -409,6 +583,13 @@ local function fadeTo(frame, target)
 end
 
 
+local function stopPulse(frame)
+    local anim = frame.Pulse.anim
+    if anim and anim:IsPlaying() then anim:Stop() end
+    Callout.pulsing = false
+end
+
+
 
 
 
@@ -423,12 +604,66 @@ local function paintGlyph(frame, glyph, live)
         rotation = Callout.ROTATION[mark]
     end
     if rotation then
-        if frame.Glyph.SetRotation then frame.Glyph:SetRotation(rotation) end
+        if frame.Glyph.SetRotation then
+            frame.Glyph:SetRotation(rotation)
+            if Callout.pulsing then frame.Pulse:SetRotation(rotation) end
+        end
         Callout.rotation = rotation
         frame.Glyph:Show()
+        frame.Pulse:Show()
     else
         frame.Glyph:Hide()
+        stopPulse(frame)
+        frame.Pulse:Hide()
     end
+end
+
+
+
+local function pulsedAlready(callout)
+    local x, y = callout.x, callout.y
+    if type(x) == "number" and type(y) == "number" then
+        local px, py = Callout.pulsedX, Callout.pulsedY
+        local r = Callout.PULSE_SAME_YARDS
+        return px ~= nil and Callout.pulsedInst == callout.inst and Callout.pulsedSide == Callout.MARK_SIDE[callout.glyph]
+            and (x - px) ^ 2 + (y - py) ^ 2 <= r * r
+    end
+    return Callout.pulsedX == nil and Callout.pulsedKey ~= nil and Callout.pulsedKey == callout.key
+end
+
+
+
+
+local function pulseAtTurn(frame, callout)
+    local wrongWay = callout.key == "wrongway"
+
+    if not wrongWay then Callout.wrongWayPulsed = false end
+    local anim = frame.Pulse.anim
+    if not anim or callout.answer or callout.key == "notice" or callout.glyph == "ahead"
+        or Callout.ROTATION[callout.glyph] == nil then
+        return
+    end
+    if wrongWay then
+        if Callout.wrongWayPulsed then return end
+    elseif pulsedAlready(callout) then
+        return
+    end
+    if not lookFlag("turnPulse") then return end
+    if wrongWay then
+        Callout.wrongWayPulsed = true
+    else
+        Callout.pulsedInst, Callout.pulsedKey = callout.inst, callout.key
+        Callout.pulsedSide = Callout.MARK_SIDE[callout.glyph]
+        if type(callout.x) == "number" and type(callout.y) == "number" then
+            Callout.pulsedX, Callout.pulsedY = callout.x, callout.y
+        else
+            Callout.pulsedX, Callout.pulsedY = nil, nil
+        end
+    end
+    stopPulse(frame)
+    if frame.Pulse.SetRotation and Callout.rotation then frame.Pulse:SetRotation(Callout.rotation) end
+    Callout.pulsing = true
+    anim:Play()
 end
 
 
@@ -449,6 +684,58 @@ end
 
 
 
+local function scrollReady(frame)
+    local Look = FGPS.UI.Look
+    local atlas = Look.PARCHMENT_ATLAS
+    if not Look.TomeHas("atlas", atlas) then
+        Look.NoteOnce("callout:scroll", "Call-out: atlas %s missing; the words have no scroll", atlas)
+        return false
+    end
+    if frame.Scroll.fgpsAtlas ~= atlas then
+        frame.Scroll.fgpsAtlas = atlas
+        frame.Scroll:SetAtlas(atlas)
+    end
+    return true
+end
+
+
+
+local function paintTurnMark(frame, side)
+    local mark = frame.TurnMark
+    if mark.fgpsSide == side then return end
+    mark.fgpsSide = side
+    if side == "right" then
+        mark:SetTexCoord(1, 0, 0, 1)
+    elseif side == "left" then
+        mark:SetTexCoord(0, 1, 0, 1)
+    end
+    if side then mark:Show() else mark:Hide() end
+end
+
+
+
+
+
+
+
+
+local function placeScroll(frame, mark, distanceWidth)
+    local scroll = frame.Scroll
+    local scale = frame.fgpsTextScale or 1
+    if scroll.fgpsMark == mark and scroll.fgpsDistance == distanceWidth and scroll.fgpsScale == scale then return end
+    scroll.fgpsMark, scroll.fgpsDistance, scroll.fgpsScale = mark, distanceWidth, scale
+    local tokens = FGPS.UI.Look.TOKENS
+    local across, upDown = tokens.gapWide * scale, tokens.gap * scale
+    local left = across + (mark and frame.fgpsMarkSize + tokens.gap or 0)
+    local right = across + (distanceWidth and DISTANCE_GAP + distanceWidth or 0)
+    scroll:ClearAllPoints()
+    scroll:SetPoint("TOPLEFT", frame.Text, "TOPLEFT", -left, upDown)
+    scroll:SetPoint("BOTTOMRIGHT", frame.Text, "BOTTOMRIGHT", right, -upDown)
+end
+
+
+
+
 local function paint(model)
     local frame = Callout.frame
     if not frame then return end
@@ -457,6 +744,8 @@ local function paint(model)
     if not (type(callout) == "table" and enabled() and not Callout.combat) then
         Callout.live, Callout.shownX, Callout.shownY, Callout.blendLeft = nil, nil, nil, 0
         Callout.offset, Callout.offsetRate, Callout.turnFrom = 0, 0, nil
+        Callout.wrongWayPulsed = false
+        stopPulse(frame)
         fadeTo(frame, 0)
         return
     end
@@ -474,23 +763,44 @@ local function paint(model)
 
 
 
+
+
     local hideWords = not lookFlag("showWords") and not callout.answer
-        and (live ~= nil or Callout.ROTATION[callout.glyph] ~= nil)
-    local words = not hideWords and callout.text or ""
+        and Callout.ROTATION[callout.glyph] ~= nil
+
+
+    local words = not hideWords and (callout.short or callout.text) or ""
+
+
+    local onScroll = words ~= "" and scrollReady(frame)
+    if frame.fgpsOnScroll ~= onScroll then
+        frame.fgpsOnScroll = onScroll
+        if onScroll then frame.Scroll:Show() else frame.Scroll:Hide() end
+    end
+
 
 
     if callout.open and not hideWords then
-        local r, g, b = Look.Color("grey")
+        local r, g, b = Look.Color(onScroll and "inkGrey" or "grey")
         words = words .. string.format(" |cff%02x%02x%02x%s|r", math.floor(r * 255 + 0.5), math.floor(g * 255 + 0.5), math.floor(b * 255 + 0.5), FGPS.L["(open ground)"])
     end
-    if Look.SetLine(frame.Text, words, Look.Color("current")) then fitWords(frame, words) end
     placeDistance(frame, words == "")
+    fontLines(frame, words ~= "")
+    if Look.SetLine(frame.Text, words, Look.Color(onScroll and "ink" or "current")) then fitWords(frame, words) end
     local distance, shown = Look.Distance(callout.yards, Callout.ROUND)
+    local distanceWidth
     if shown and shown > 0 and lookFlag("showDistance") then
-        if Look.SetLine(frame.Distance, distance, Look.Color("header")) then frame.Distance:Show() end
+
+        if Look.SetLine(frame.Distance, distance, Look.Color(onScroll and "rubric" or "gilt")) then frame.Distance:Show() end
+        local width = frame.Distance:GetStringWidth()
+        distanceWidth = type(width) == "number" and width or 0
     elseif Look.SetLine(frame.Distance, "") then
         frame.Distance:Hide()
     end
+
+    local side = words ~= "" and not callout.answer and callout.key ~= "notice" and Callout.MARK_SIDE[callout.glyph] or false
+    paintTurnMark(frame, side)
+    if onScroll then placeScroll(frame, side ~= false, distanceWidth) end
 
 
 
@@ -514,6 +824,7 @@ local function paint(model)
     else
         Callout.offset, Callout.offsetRate, Callout.turnFrom = 0, 0, nil
     end
+    pulseAtTurn(frame, callout)
     fadeTo(frame, 1)
 end
 
@@ -571,6 +882,7 @@ local function lookSettings()
           get = function() return (lookColor()) end,
           set = function(value) DB:Set("callout.arrowColor", value) end },
         numberRow("arrowAlpha", L["Arrow opacity"], Callout.ALPHA),
+        checkRow("turnPulse", L["Pulse at turns"]),
         checkRow("showWords", L["Show the words"]),
         checkRow("showDistance", L["Show the distance"]),
         numberRow("textSize", L["Text size"], Callout.TEXT_SIZE),

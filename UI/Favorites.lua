@@ -3,100 +3,31 @@
 
 
 
+
+
+
+
+
+
+
 local ADDON_NAME, FGPS = ...
 
 local L = FGPS.L
 local Util = FGPS.Util
-local type, ipairs, pairs, tostring, tonumber, format = type, ipairs, pairs, tostring, tonumber, string.format
+local type, ipairs, tostring, tonumber = type, ipairs, tostring, tonumber
 
 local Favorites = {
-    window = nil,
-    list = nil,
-    items = {},
-    selectedIndex = 0,
+    items = { favorites = {}, recent = {} },
+    renaming = nil,
 }
 FGPS.UI.Favorites = Favorites
 
-local WINDOW_KEY = "favorites"
-local ROW_HEIGHT = 20
 
+Favorites.SECTIONS = { "favorites", "recent" }
+local HEAD_HEIGHT, HINT_HEIGHT, MAX_NAME = 16, 14, 60
 
-
-
-local function Frames() return FGPS.UI.Frames end
-
-local FALLBACK_FONTS = { small = "GameFontHighlightSmall", normal = "GameFontHighlight", large = "GameFontNormalLarge", title = "GameFontNormalLarge" }
-
-local function makeLabel(parent, kind, text, color)
-    local F = Frames()
-    if F and F.CreateLabel then
-        local ok, fs = pcall(F.CreateLabel, parent, text, { kind = kind, color = color })
-        if ok and fs then return fs end
-    end
-    local fs = parent:CreateFontString(nil, "OVERLAY", FALLBACK_FONTS[kind] or "GameFontHighlightSmall")
-    fs:SetText(text or "")
-    fs:SetJustifyH("LEFT")
-    if color == "textDim" then fs:SetTextColor(0.6, 0.6, 0.6) elseif color == "title" then fs:SetTextColor(1, 0.82, 0) end
-    return fs
-end
-
-local function makeButton(parent, text, onClick, width, height)
-    local F = Frames()
-    local button
-    if F and F.CreateButton then
-        local ok, result = pcall(F.CreateButton, parent, text, onClick, { width = width or 90, height = height or 22 })
-        if ok and type(result) == "table" then button = result end
-    end
-    if not button then
-        button = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
-        button:SetText(text)
-        button:SetScript("OnClick", onClick)
-        button:SetSize(width or 90, height or 22)
-    end
-    return button
-end
-
-local function setButtonEnabled(button, enabled)
-    if button.SetEnabledState then button:SetEnabledState(enabled) elseif enabled then button:Enable() else button:Disable() end
-end
-
-local function makeEditBox(parent, opts)
-    local F = Frames()
-    if F and F.CreateEditBox then
-        local ok, box = pcall(F.CreateEditBox, parent, opts)
-        if ok and type(box) == "table" then return box end
-    end
-    local box = CreateFrame("EditBox", nil, parent, "InputBoxTemplate")
-    box:SetSize(opts.width or 160, opts.height or 22)
-    box:SetAutoFocus(false)
-    box:SetMaxLetters(opts.maxLetters or 60)
-    box:SetTextInsets(6, 6, 0, 0)
-    box:SetScript("OnEnterPressed", function(self) if opts.onEnter then opts.onEnter(self, self:GetText()) end self:ClearFocus() end)
-    box:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
-    return box
-end
-
-local function makeList(parent, rowHeight, renderFn, onClick)
-    local F = Frames()
-    if F and F.CreateScrollList then
-        local ok, list = pcall(F.CreateScrollList, parent, rowHeight, renderFn, { onClick = onClick })
-        if ok and type(list) == "table" then return list end
-        FGPS.Log:Error("Frames.CreateScrollList failed: %s", tostring(list))
-    end
-    return nil
-end
-
-local function setListItems(list, items)
-    if not list then return end
-    if list.SetItems then list:SetItems(items)
-    elseif list.SetData then list:SetData(items)
-    elseif list.Update then list:Update(items) end
-end
-
-local function contentFrame(window)
-    local content = window.Content or window.content or window
-    return content, (content == window) and 30 or 0
-end
+local function Look() return FGPS.UI.Look end
+local function places() return FGPS.UI.Search end
 
 local function describe(dest)
     local Destinations = FGPS.Destinations
@@ -110,118 +41,62 @@ local function describe(dest)
 end
 
 local function distanceText(dest)
-    local Search = FGPS.UI.Search
+    local Search = places()
     if Search and Search.DistanceText then return Search.DistanceText(dest) end
     return ""
 end
 
 
 
+local function isPlace(entry)
+    return type(entry) == "table" and type(entry.x) == "number" and type(entry.y) == "number"
+end
+
+local function samePlace(a, b)
+    if a == b then return true end
+    local Destinations = FGPS.Destinations
+    return Destinations ~= nil and Destinations.Equal ~= nil and Destinations.Equal(a, b) and true or false
+end
+
+local function isFavorite(dest)
+    local Destinations = FGPS.Destinations
+    return Destinations ~= nil and Destinations.IsFavorite ~= nil and Destinations.IsFavorite(dest) and true or false
+end
+
+local function savedList(key)
+    local Destinations = FGPS.Destinations
+    local read = Destinations and (key == "favorites" and Destinations.Favorites or Destinations.Recents)
+    local list = read and read() or nil
+    return type(list) == "table" and list or {}
+end
 
 
-function Favorites.BuildItems(favorites, recents)
-    local items = { { kind = "header", label = L["Favorites"] } }
-    if #favorites == 0 then items[#items + 1] = { kind = "empty", label = L["No favorites yet. Star a place in Search."] } end
-    for i, dest in ipairs(favorites) do
-        items[#items + 1] = { kind = "favorite", index = i, dest = dest, label = describe(dest), right = distanceText(dest) }
-    end
-    items[#items + 1] = { kind = "header", label = L["Recent"] }
-    if #recents == 0 then items[#items + 1] = { kind = "empty", label = L["No recent destinations."] } end
-    for i, dest in ipairs(recents) do
-        items[#items + 1] = { kind = "recent", index = i, dest = dest, label = describe(dest), right = distanceText(dest) }
+
+
+
+
+local function itemsOf(list, key)
+    local items = {}
+    for i, dest in ipairs(type(list) == "table" and list or {}) do
+        if isPlace(dest) then
+            items[#items + 1] = { kind = "dest", section = key, index = i, dest = dest,
+                label = describe(dest), right = distanceText(dest) }
+        end
     end
     return items
 end
 
-function Favorites:Refresh()
-    if not self.window then return end
-    local Destinations = FGPS.Destinations
-    local favorites = Destinations and Destinations.Favorites and Destinations.Favorites() or {}
-    local recents = Destinations and Destinations.Recents and Destinations.Recents() or {}
-    self.items = Favorites.BuildItems(favorites, recents)
-    local current = self.items[self.selectedIndex]
-    if not current or not current.dest then self.selectedIndex = 0 end
-    self:UpdateControls()
-    setListItems(self.list, self.items)
-    if self.list and self.list.SetSelected then self.list:SetSelected(self.selectedIndex > 0 and self.selectedIndex or nil) end
-end
-
-function Favorites:Selected()
-    return self.items[self.selectedIndex]
-end
-
-function Favorites:UpdateControls()
-    local w = self.window
-    if not w then return end
-    local item = self:Selected()
-    local hasDest = item ~= nil and item.dest ~= nil
-    local isFavorite = hasDest and item.kind == "favorite"
-    for key, button in pairs(w.fgpsButtons) do
-        if key == "clear" then
-            setButtonEnabled(button, true)
-        elseif key == "rename" or key == "remove" then
-            setButtonEnabled(button, isFavorite)
-        else
-            setButtonEnabled(button, hasDest)
-        end
-    end
-    if isFavorite then
-        w.fgpsRename:SetText(item.dest.name or "")
-    else
-        w.fgpsRename:SetText("")
-    end
-end
 
 
-
-
-local function ensureRowWidgets(row)
-    if row.fgpsReady then return end
-    row.fgpsReady = true
-    row.text = row.Text or makeLabel(row, "small", "", "text")
-    row.text:ClearAllPoints()
-    row.text:SetPoint("LEFT", row, "LEFT", 6, 0)
-    row.right = makeLabel(row, "small", "", "textDim")
-    row.right:SetPoint("RIGHT", row, "RIGHT", -6, 0)
-    if row.right.SetJustifyH then row.right:SetJustifyH("RIGHT") end
-    row.text:SetPoint("RIGHT", row.right, "LEFT", -6, 0)
-end
-
-local function applyRowColor(fs, key)
-    local skin = FGPS.UI and FGPS.UI.Skins and FGPS.UI.Skins.Current and FGPS.UI.Skins.Current()
-    local c = skin and skin.colors and skin.colors[key]
-    if c then
-        fs:SetTextColor(c[1], c[2], c[3], c[4] or 1)
-    end
-end
-
-function Favorites.RenderRow(row, item, index)
-    ensureRowWidgets(row)
-    row.item = item
-    row.text:SetText(item.label or "")
-    row.right:SetText(item.right or "")
-    if item.kind == "header" then
-        applyRowColor(row.text, "title")
-    elseif item.kind == "empty" then
-        applyRowColor(row.text, "textDim")
-    else
-        applyRowColor(row.text, "text")
-    end
-    applyRowColor(row.right, "textDim")
-    row:SetScript("OnDoubleClick", function() if item.dest then Favorites:Go() end end)
-end
-
-local function onRowClick(item, index)
-    if type(item) ~= "table" or not item.dest then return end
-    Favorites.selectedIndex = index
-    Favorites:UpdateControls()
+function Favorites.BuildItems(favorites, recents)
+    return { favorites = itemsOf(favorites, "favorites"), recent = itemsOf(recents, "recent") }
 end
 
 
 
 
 local function goTo(dest, mode)
-    local Search = FGPS.UI.Search
+    local Search = places()
     if Search and Search.GoTo then return Search.GoTo(dest, mode) end
     local Navigator = FGPS.Navigator
     if not Navigator or not Navigator.SetDestination then return false end
@@ -237,151 +112,274 @@ local function goTo(dest, mode)
     return true
 end
 
-function Favorites:Go()
-    local item = self:Selected()
-    if not item or not item.dest then return false end
-    if goTo(item.dest) then self:Hide() return true end
-    return false
+
+function Favorites:Add(dest)
+    local Search = places()
+    if not (isPlace(dest) and Search and Search.ToggleFavorite) or isFavorite(dest) then return false end
+    return Search:ToggleFavorite(dest)
 end
 
-function Favorites:AddStop()
-    local item = self:Selected()
-    if not item or not item.dest then return false end
-    return goTo(item.dest, "addStop")
-end
 
-function Favorites:Remove()
+function Favorites:Remove(dest)
     local Destinations = FGPS.Destinations
-    local item = self:Selected()
-    if not item or item.kind ~= "favorite" or not Destinations or not Destinations.RemoveFavorite then return false end
-    Destinations.RemoveFavorite(item.index)
-    FGPS:Print(L["Removed from favorites: %s"], item.label or "?")
-    self.selectedIndex = 0
-    self:Refresh()
+    if not (isPlace(dest) and Destinations and Destinations.IsFavorite and Destinations.RemoveFavorite) then return false end
+    local index = Destinations.IsFavorite(dest)
+    if not index then return false end
+    local label = describe(dest)
+    if not Destinations.RemoveFavorite(index) then return false end
+    FGPS:Print(L["Removed from favorites: %s"], label)
     return true
 end
 
 
 
 
-function Favorites:Rename(newName)
+function Favorites:Rename(dest, newName)
     local Destinations = FGPS.Destinations
-    local item = self:Selected()
-    newName = Util.Trim(newName or "")
-    if not item or item.kind ~= "favorite" or newName == "" then return false end
-    item.dest.name = newName
-    local saved = FGPS.DB and FGPS.DB.account and FGPS.DB.account.favorites
-    if type(saved) == "table" then
-        local entry = saved[item.index]
-        if type(entry) == "table" and entry ~= item.dest then
-            local same = Destinations and Destinations.Equal and Destinations.Equal(entry, item.dest)
-            if same or (entry.x == item.dest.x and entry.y == item.dest.y and entry.inst == item.dest.inst) then
-                entry.name = newName
-            end
-        end
-    end
+    newName = Util.Trim(type(newName) == "string" and newName or "")
+    if newName == "" or not isPlace(dest) or not (Destinations and Destinations.IsFavorite) then return false end
+    local index = Destinations.IsFavorite(dest)
+    local saved = index and savedList("favorites")[index] or nil
+    if not isPlace(saved) then return false end
+    saved.name = newName
+    dest.name = newName
     FGPS.Events:Fire("FAVORITES_CHANGED")
     FGPS:Print(L["Favorite renamed to %s."], newName)
-    self:Refresh()
     return true
 end
+
+
+
+function Favorites:BeginRename(dest)
+    local Search = places()
+    if not (isPlace(dest) and isFavorite(dest) and Search and Search.RefreshSections) then return false end
+    self.renaming = dest
+    Search:RefreshSections()
+    local box = self.renameBox
+    if not (box and box:IsShown()) then
+        self.renaming = nil
+        return false
+    end
+    box:SetText(type(dest.name) == "string" and dest.name or "")
+    box:SetFocus()
+    if box.HighlightText then box:HighlightText() end
+    return true
+end
+
+
+function Favorites:EndRename()
+    if not self.renaming then return false end
+    self.renaming = nil
+    local box = self.renameBox
+    if box then
+        if box.ClearFocus then box:ClearFocus() end
+        box:Hide()
+    end
+    local Search = places()
+    if Search and Search.RefreshSections then Search:RefreshSections() end
+    return true
+end
+
+
 
 function Favorites:ClearRecents()
     local Destinations = FGPS.Destinations
-    local now = (GetTime and GetTime()) or 0
-    if not self.clearRecentsArmedAt or (now - self.clearRecentsArmedAt) > 5 then
-        self.clearRecentsArmedAt = now
-        FGPS:Print(L["Click Clear recents again to confirm."])
-        return false
-    end
-    self.clearRecentsArmedAt = nil
-    if Destinations and Destinations.ClearRecents then
-        Destinations.ClearRecents()
-        FGPS:Print(L["Recent destinations cleared."])
-    end
-    self.selectedIndex = 0
-    self:Refresh()
+    if not (Destinations and Destinations.ClearRecents) then return false end
+    Destinations.ClearRecents()
+    FGPS:Print(L["Recent destinations cleared."])
     return true
 end
 
 
 
 
-local function buildWindow()
-    local F = Frames()
-    if not F or not F.CreateWindow then
-        FGPS.Log:Error("UI.Frames.CreateWindow is unavailable; the favorites window cannot be built")
-        return nil
-    end
-    local ok, window = pcall(F.CreateWindow, WINDOW_KEY, { title = L["Favorites and recent destinations"], width = 420, height = 440 })
-    if not ok or type(window) ~= "table" then
-        FGPS.Log:Error("Frames.CreateWindow failed: %s", tostring(window))
-        return nil
-    end
-    local content, top = contentFrame(window)
-    local listAnchor = CreateFrame("Frame", nil, content)
-    listAnchor:SetPoint("TOPLEFT", content, "TOPLEFT", 2, -(top + 2))
-    listAnchor:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", -2, 62)
-    local list = makeList(listAnchor, ROW_HEIGHT, Favorites.RenderRow, onRowClick)
-    if list and list.SetAllPoints then list:SetAllPoints(listAnchor) end
-    Favorites.list = list
 
-    local rename = makeEditBox(content, {
-        width = 250, height = 22, maxLetters = 60, placeholder = L["New name"],
-        onEnter = function(_, text) Favorites:Rename(text) end,
-    })
-    rename:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", 2, 32)
-
-    rename:Show()
-    window.fgpsRename = rename
-    local renameButton = makeButton(content, L["Rename"], function() Favorites:Rename(rename:GetText()) end, 80, 22)
-    renameButton:SetPoint("LEFT", rename, "RIGHT", 6, 0)
-
-    local specs = {
-        { key = "go", label = "Go", fn = function() Favorites:Go() end },
-        { key = "addStop", label = "Add stop", fn = function() Favorites:AddStop() end },
-        { key = "remove", label = "Remove", fn = function() Favorites:Remove() end },
-        { key = "clear", label = "Clear recents", fn = function() Favorites:ClearRecents() end },
+function Favorites.OpenRowMenu(owner, item)
+    local Menus, Search = FGPS.UI.Menus, places()
+    if not (Menus and Menus.OpenRowMenu and Search) or type(item) ~= "table" or not isPlace(item.dest) then return nil end
+    local dest = item.dest
+    local entries = {
+        { label = L["Go"], onClick = function() Search.GoTo(dest, "start", { quiet = true }) end },
+        { label = L["Add as a Stop"], onClick = function() Search.GoTo(dest, "addStop") end },
     }
-    window.fgpsButtons = { rename = renameButton }
-    local previous
-    for _, spec in ipairs(specs) do
-        local button = makeButton(content, L[spec.label], spec.fn, 96, 22)
-        if previous then button:SetPoint("LEFT", previous, "RIGHT", 4, 0) else button:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", 2, 2) end
-        window.fgpsButtons[spec.key] = button
-        previous = button
+    if item.section == "favorites" then
+        entries[3] = { label = L["Rename"], onClick = function() Favorites:BeginRename(dest) end }
+        entries[4] = { label = L["Remove from Favorites"], onClick = function() Favorites:Remove(dest) end,
+            destructive = true }
+    else
+        entries[3] = { label = L["Add to Favorites"], onClick = function() Favorites:Add(dest) end,
+            disabled = function() return isFavorite(dest) end }
+        entries[4] = { label = L["Clear Recent"], onClick = function() Favorites:ClearRecents() end,
+            destructive = true }
     end
-    if F.ApplySkin then pcall(F.ApplySkin, window) end
-    return window
+    return Menus.OpenRowMenu(owner, {
+        title = type(dest.name) == "string" and dest.name or describe(dest),
+        entries = entries,
+    })
 end
 
-function Favorites:EnsureWindow()
-    if self.window then return self.window end
-    self.window = buildWindow()
-    return self.window
+local function openRowMenu(row, item) return Favorites.OpenRowMenu(row, item) end
+
+
+
+
+local function pageText(parent, role, color)
+    local look = Look()
+    local text = parent:CreateFontString(nil, "OVERLAY", look.Font(role))
+    text:SetTextColor(look.Color(color))
+    text:SetJustifyH("LEFT")
+    if text.SetWordWrap then text:SetWordWrap(false) end
+    return text
 end
 
-function Favorites:Show()
-    local window = self:EnsureWindow()
-    if not window then return false end
+local function headOf(key)
+    if key == "favorites" then return L["Favorites"] end
+    return L["Recent"]
+end
+
+local function hintOf(key)
+    if key == "favorites" then return L["Right-click any place and choose Add to Favorites."] end
+    return L["No recent destinations."]
+end
 
 
-    self.selectedIndex = 0
-    window:Show()
-    self:Refresh()
-    return true
+
+local function newRenameBox(frame)
+    local box = Look().EditBox(frame, { "InputBoxTemplate" })
+    if box.SetMaxLetters then box:SetMaxLetters(MAX_NAME) end
+    box:SetScript("OnEnterPressed", function(self)
+        local dest, text = Favorites.renaming, self:GetText()
+        Favorites:EndRename()
+        if dest then Favorites:Rename(dest, text) end
+    end)
+    box:SetScript("OnEscapePressed", function() Favorites:EndRename() end)
+    box:HookScript("OnEditFocusLost", function() Favorites:EndRename() end)
+    box:Hide()
+    return box
+end
+
+local function paintSection(f, key)
+    local Search = places()
+    local tokens = Look().TOKENS
+    local width = Search.PageWidth()
+    local items = itemsOf(savedList(key), key)
+    Favorites.items[key] = items
+
+
+    local page = Search.placesPage
+    if page and page.picked == key then
+        local still = false
+        for _, item in ipairs(items) do
+            if Search:IsPicked(item.dest, key) then still = true break end
+        end
+        if not still then Search:Unpick(key) end
+    end
+    local renaming = key == "favorites" and Favorites.renaming or nil
+    local renameRow
+    local y = HEAD_HEIGHT
+    for i, item in ipairs(items) do
+        local row = f.Rows[i]
+        if not row then
+            row = Search.NewPlaceRow(f, key, openRowMenu)
+            f.Rows[i] = row
+        end
+        row:ClearAllPoints()
+        row:SetPoint("TOPLEFT", f, "TOPLEFT", 0, -y)
+        row:SetSize(width, tokens.rowPlace)
+        Search.PaintPlaceRow(row, item, width)
+        Search.PaintPick(row)
+        local covered = renaming ~= nil and renameRow == nil and samePlace(item.dest, renaming)
+        if covered then renameRow = row end
+        row.Name:SetShown(not covered)
+        row.Zone:SetShown(not covered)
+        row.Right:SetShown(not covered)
+        row:Show()
+        y = y + tokens.rowPlace
+    end
+    for i = #items + 1, #f.Rows do
+        f.Rows[i].entry = nil
+        f.Rows[i]:Hide()
+    end
+    local box = f.Rename
+    if box then
+        if renameRow then
+            local inset = tokens.iconBox + tokens.gap
+            box:ClearAllPoints()
+            box:SetPoint("TOPLEFT", renameRow, "TOPLEFT", inset, 0)
+            box:SetSize(math.max(1, width - inset), tokens.rowPlace)
+
+            if box.SetFrameLevel and renameRow.GetFrameLevel then box:SetFrameLevel(renameRow:GetFrameLevel() + 2) end
+            box:Show()
+        else
+
+            Favorites.renaming = nil
+            if box:IsShown() then
+                if box.ClearFocus then box:ClearFocus() end
+                box:Hide()
+            end
+        end
+    end
+    if #items == 0 then
+        f.Hint:ClearAllPoints()
+        f.Hint:SetPoint("TOPLEFT", f, "TOPLEFT", 0, -y)
+        f.Hint:SetWidth(width)
+        f.Hint:Show()
+        y = y + HINT_HEIGHT
+    else
+        f.Hint:Hide()
+    end
+    return y
+end
+
+
+
+local function sectionBuilder(key)
+    return function(frame)
+        frame.Head = pageText(frame, "pageSub", "rubric")
+        frame.Head:SetText(headOf(key))
+        frame.Head:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
+        frame.Head:SetHeight(HEAD_HEIGHT)
+        frame.Hint = pageText(frame, "pageSub", "inkGrey")
+        frame.Hint:SetText(hintOf(key))
+        frame.Hint:SetHeight(HINT_HEIGHT)
+        frame.Hint:Hide()
+        frame.Rows = {}
+        if key == "favorites" then
+            Favorites.renaming = nil
+            frame.Rename = newRenameBox(frame)
+            Favorites.renameBox = frame.Rename
+        end
+        return function(f) return paintSection(f, key) end
+    end
+end
+
+
+
+
+
+function Favorites:Show(section)
+    local Search = places()
+    if not (Search and Search.Show) then return false end
+    return Search:Show({ section = section == "recent" and "recent" or "favorites" })
 end
 
 function Favorites:Hide()
-    if self.window and self.window:IsShown() then self.window:Hide() end
+    local Search = places()
+    if Search and Search.IsShown and Search:IsShown() then Search:Hide() end
 end
+
 
 function Favorites:IsShown()
-    return self.window ~= nil and self.window:IsShown()
+    local Search = places()
+    return Search ~= nil and Search.IsShown ~= nil and Search:IsShown() and true or false
 end
 
-function Favorites:Toggle()
-    if self:IsShown() then self:Hide() else self:Show() end
+function Favorites:Toggle(section)
+    if self:IsShown() then
+        self:Hide()
+        return false
+    end
+    return self:Show(section)
 end
 
 
@@ -410,7 +408,10 @@ local function slashFav(args)
         if rest ~= "" then dest = Util.ShallowCopy(dest) dest.name = rest end
         local ok, reason = Destinations.AddFavorite(dest)
         if ok == false then
-            FGPS:Print(L["Could not add favorite (%s)."], FGPS.UI.Compat.ReasonText(reason, L["unknown reason"]))
+            local Compat = FGPS.UI.Compat
+            local why = Compat and Compat.ReasonText and Compat.ReasonText(reason, L["unknown reason"])
+                or tostring(reason or L["unknown reason"])
+            FGPS:Print(L["Could not add favorite (%s)."], why)
         else
             FGPS:Print(L["Added to favorites: %s"], describe(dest))
         end
@@ -435,14 +436,14 @@ local function slashFav(args)
         local needle = Util.Lower(Util.Trim(args))
         local list = Destinations and Destinations.Favorites and Destinations.Favorites() or {}
         for _, dest in ipairs(list) do
-            if Util.Lower(dest.name or "") == needle then goTo(dest) return end
+            if type(dest) == "table" and Util.Lower(dest.name or "") == needle then goTo(dest) return end
         end
         if needle:match("^%d+$") then
             local dest = list[tonumber(needle)]
-            if dest then goTo(dest) return end
+            if type(dest) == "table" then goTo(dest) return end
         end
         for _, dest in ipairs(list) do
-            if Util.Lower(dest.name or ""):find(needle, 1, true) then goTo(dest) return end
+            if type(dest) == "table" and Util.Lower(dest.name or ""):find(needle, 1, true) then goTo(dest) return end
         end
         FGPS:Print(L["No favorite matches '%s'."], Util.Trim(args))
     else
@@ -455,16 +456,21 @@ local function slashRecent(args)
     if word == "clear" then
         Favorites:ClearRecents()
     else
-        Favorites:Show()
+        Favorites:Show("recent")
     end
 end
 
+
+
 function Favorites:Init()
-    if self.eventsBound then return end
-    self.eventsBound = true
-    local Events = FGPS.Events
-    Events:Register("FAVORITES_CHANGED", function() if Favorites:IsShown() then Favorites:Refresh() end end, self)
-    Events:Register("RECENTS_CHANGED", function() if Favorites:IsShown() then Favorites:Refresh() end end, self)
-    FGPS.Slash.Register("fav", slashFav, L["Favorites window; fav add [name]|list|remove <n>|<name>"])
+    if self.initialised then return end
+    self.initialised = true
+    local Search = places()
+    if Search and Search.AddSection and Search.SECTION_ORDER then
+        for _, key in ipairs(Favorites.SECTIONS) do
+            Search:AddSection(key, Search.SECTION_ORDER[key], sectionBuilder(key))
+        end
+    end
+    FGPS.Slash.Register("fav", slashFav, L["Favorites on the Places page; fav add [name]|list|remove <n>|<name>"])
     FGPS.Slash.Register("recent", slashRecent, L["Recent destinations; recent clear"])
 end

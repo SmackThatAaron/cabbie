@@ -1,16 +1,16 @@
--- Cabbie/UI/Frames.lua
--- Window and widget factory shared by every UI module. Widgets created here register themselves
--- in a weak registry so UI/Skins.lua can re-skin the whole interface at once through
--- Frames.ApplyAll(skin); each widget carries its own fgpsApplySkin(widget, skin) function.
---
--- Windows (CreateWindow) are temporary dialogs: draggable by their title bar only, clamped to the
--- screen, closable with the close button or Escape, and their size/position is remembered through
--- UI/Positions.lua under "window:<key>". They are never re-opened automatically.
---
--- Escape handling deliberately avoids UISpecialFrames: adding addon frames to that table lets the
--- secure CloseSpecialWindows path touch insecure frames, which is a known source of taint. Each
--- window instead listens for Escape itself while shown (keyboard capture is released in combat
--- because SetPropagateKeyboardInput is restricted there) and propagates every other key.
+
+
+
+
+
+
+
+
+
+
+
+
+
 local ADDON_NAME, FGPS = ...
 
 local L = FGPS.L
@@ -18,10 +18,10 @@ local type, pairs, ipairs, tostring, tonumber, select = type, pairs, ipairs, tos
 local floor, ceil, max, min = math.floor, math.ceil, math.max, math.min
 
 local Frames = {
-    registry = setmetatable({}, { __mode = "k" }),   -- widget -> applyFn
-    windows = {},                                    -- key -> window frame
+    registry = setmetatable({}, { __mode = "k" }),
+    windows = {},
     initialised = false,
-    openMenu = nil,                                  -- currently open dropdown menu
+    openMenu = nil,
 }
 FGPS.UI.Frames = Frames
 
@@ -40,7 +40,7 @@ local CHECK_DOWN = "Interface\\Buttons\\UI-CheckBox-Down"
 local CHECK_HIGHLIGHT = "Interface\\Buttons\\UI-CheckBox-Highlight"
 local CHECK_CHECK = "Interface\\Buttons\\UI-CheckBox-Check"
 
--- Built-in fallback used only when UI/Skins.lua is unavailable (never in the shipped load order).
+
 local FALLBACK_SKIN = {
     name = "fallback", font = "Fonts\\FRIZQT__.TTF", titleFont = "Fonts\\FRIZQT__.TTF",
     fontSize = 12, smallFontSize = 10, largeFontSize = 16, titleFontSize = 12,
@@ -55,9 +55,9 @@ local FALLBACK_SKIN = {
     panelAlpha = 0.9, titleHeight = 20, inset = 8, titleBarStyle = "flat", sliderStyle = "flat",
 }
 
--------------------------------------------------------------------------------
--- Skin access and primitive helpers
--------------------------------------------------------------------------------
+
+
+
 function Frames.Skin()
     local skins = FGPS.UI.Skins
     if skins and skins.Current then
@@ -79,7 +79,7 @@ local function color(skin, name)
     return FALLBACK_SKIN.colors[name] or FALLBACK_SKIN.colors.text
 end
 
--- Applies a skin font to a FontString-like object. kind: "normal" | "small" | "large" | "title".
+
 function Frames.SetFont(fs, skin, kind, outline)
     skin = skin or Frames.Skin()
     local path, size = skin.font, skin.fontSize
@@ -95,8 +95,8 @@ local function setTextColor(fs, skin, name)
     if fs.SetTextColor then fs:SetTextColor(rgba(color(skin, name))) end
 end
 
--- Creates a frame with BackdropTemplate when the template exists; falls back to a plain frame
--- with a colour texture background so the rest of the code can stay uniform.
+
+
 local function createBackdropFrame(frameType, parent, name)
     local ok, f = pcall(CreateFrame, frameType, name, parent, "BackdropTemplate")
     if ok and f and f.SetBackdrop then return f end
@@ -134,11 +134,11 @@ local function isDescendant(widget, ancestor)
     return false
 end
 
--------------------------------------------------------------------------------
--- Registry
--------------------------------------------------------------------------------
--- Registers a widget for re-skinning; applyFn defaults to widget.fgpsApplySkin. The current skin
--- is applied immediately.
+
+
+
+
+
 function Frames.Register(widget, applyFn)
     applyFn = applyFn or widget.fgpsApplySkin
     if type(applyFn) ~= "function" then return widget end
@@ -153,7 +153,7 @@ function Frames.Unregister(widget)
     Frames.registry[widget] = nil
 end
 
--- Re-skins one frame and every registered descendant.
+
 function Frames.ApplySkin(frame, skin)
     skin = skin or Frames.Skin()
     for widget, applyFn in pairs(Frames.registry) do
@@ -165,7 +165,7 @@ function Frames.ApplySkin(frame, skin)
     return frame
 end
 
--- Re-skins every registered widget (called by Skins.Apply).
+
 function Frames.ApplyAll(skin)
     skin = skin or Frames.Skin()
     local count = 0
@@ -183,9 +183,9 @@ function Frames.RegisteredCount()
     return n
 end
 
--------------------------------------------------------------------------------
--- Tooltip
--------------------------------------------------------------------------------
+
+
+
 local function showTooltip(frame)
     local text = frame.fgpsTooltip
     if type(text) == "function" then text = text(frame) end
@@ -209,7 +209,7 @@ local function hideTooltip(frame)
     if GameTooltip and (not GameTooltip.IsOwned or GameTooltip:IsOwned(frame)) then GameTooltip:Hide() end
 end
 
--- Attaches a tooltip (string, list of lines or function returning either). Pass nil to remove.
+
 function Frames.Tooltip(frame, text, anchor)
     frame.fgpsTooltip = text
     frame.fgpsTooltipAnchor = anchor
@@ -227,15 +227,15 @@ function Frames.Tooltip(frame, text, anchor)
     return frame
 end
 
--------------------------------------------------------------------------------
--- Labels
--------------------------------------------------------------------------------
+
+
+
 local function applyLabelSkin(fs, skin)
     Frames.SetFont(fs, skin, fs.fgpsKind, fs.fgpsOutline)
     setTextColor(fs, skin, fs.fgpsColor or "text")
 end
 
--- opts: { kind = "normal"|"small"|"large"|"title", color = colour name, justifyH, width, outline, layer }
+
 function Frames.CreateLabel(parent, text, opts)
     opts = opts or {}
     local fs = parent:CreateFontString(nil, opts.layer or "OVERLAY", opts.fontObject or "GameFontHighlightSmall")
@@ -252,9 +252,9 @@ function Frames.CreateLabel(parent, text, opts)
     return fs
 end
 
--------------------------------------------------------------------------------
--- Buttons
--------------------------------------------------------------------------------
+
+
+
 local function applyButtonSkin(b, skin)
     local bg = b.fgpsHover and color(skin, "buttonHover") or color(skin, "button")
     applyBackdrop(b, skin.buttonBackdrop or skin.backdrop, bg, color(skin, "buttonBorder"))
@@ -268,7 +268,7 @@ local function applyButtonSkin(b, skin)
     end
 end
 
--- opts: { width, height, tooltip, primary = bool, kind = font kind }
+
 function Frames.CreateButton(parent, text, onClick, opts)
     opts = opts or {}
     local b = createBackdropFrame("Button", parent)
@@ -306,9 +306,9 @@ function Frames.CreateButton(parent, text, onClick, opts)
     return b
 end
 
--------------------------------------------------------------------------------
--- Check boxes
--------------------------------------------------------------------------------
+
+
+
 local function applyCheckboxSkin(cb, skin)
     if cb.Text then
         Frames.SetFont(cb.Text, skin, "normal")
@@ -316,7 +316,7 @@ local function applyCheckboxSkin(cb, skin)
     end
 end
 
--- opts: { checked, onChange = fn(cb, checked), tooltip, width }
+
 function Frames.CreateCheckbox(parent, label, opts)
     opts = opts or {}
     local cb = CreateFrame("CheckButton", nil, parent)
@@ -347,9 +347,9 @@ function Frames.CreateCheckbox(parent, label, opts)
     return cb
 end
 
--------------------------------------------------------------------------------
--- Sliders
--------------------------------------------------------------------------------
+
+
+
 local function formatSliderValue(slider, value)
     local fmt = slider.fgpsFormat
     if type(fmt) == "function" then return fmt(value) end
@@ -394,7 +394,7 @@ local function roundToStep(value, minV, step)
     return minV + floor((value - minV) / step + 0.5) * step
 end
 
--- opts: { min, max, step, value, onChange = fn(slider, value, userInput), width, label, format }
+
 function Frames.CreateSlider(parent, opts)
     opts = opts or {}
     local slider = createBackdropFrame("Slider", parent)
@@ -457,9 +457,9 @@ function Frames.CreateSlider(parent, opts)
     return slider
 end
 
--------------------------------------------------------------------------------
--- Dropdowns (button + owned option list; no dependency on Blizzard menu templates)
--------------------------------------------------------------------------------
+
+
+
 local function closeOpenMenu()
     if Frames.openMenu then
         Frames.openMenu:Hide()
@@ -538,7 +538,7 @@ local function rebuildMenu(dd)
     return menu
 end
 
--- opts: { options = { {value=, label=}, ... }, value, onChange = fn(dd, value), width, height, tooltip }
+
 function Frames.CreateDropdown(parent, opts)
     opts = opts or {}
     local dd = createBackdropFrame("Button", parent)
@@ -590,9 +590,9 @@ function Frames.CreateDropdown(parent, opts)
     return dd
 end
 
--------------------------------------------------------------------------------
--- Edit boxes
--------------------------------------------------------------------------------
+
+
+
 local function updatePlaceholder(box)
     if not box.Placeholder then return end
     local text = box:GetText()
@@ -610,13 +610,13 @@ local function applyEditBoxSkin(box, skin)
     end
 end
 
--- opts: { width, height, text, placeholder, maxLetters, numeric,
---         onEnter = fn(box, text), onChanged = fn(box, text, userInput), onEscape = fn(box), keepFocusOnEnter }
+
+
 function Frames.CreateEditBox(parent, opts)
     opts = opts or {}
     local box = createBackdropFrame("EditBox", parent)
-    -- An edit box created without a template has no font, and the client refuses SetText on it
-    -- ("Font not set"). Give it one at birth; the skin may replace it with SetFont later.
+
+
     if box.SetFontObject then box:SetFontObject("GameFontHighlightSmall") end
     box:SetSize(opts.width or 160, opts.height or 22)
     box:SetAutoFocus(false)
@@ -639,7 +639,10 @@ function Frames.CreateEditBox(parent, opts)
     end)
     box:SetScript("OnEscapePressed", function(self)
         self:ClearFocus()
-        if self.fgpsOnEscape then pcall(self.fgpsOnEscape, self) end
+        if self.fgpsOnEscape then
+            local ok, err = pcall(self.fgpsOnEscape, self)
+            if not ok and FGPS.Log then FGPS.Log:Error("EditBox handler failed: %s", tostring(err)) end
+        end
     end)
     box:SetScript("OnTextChanged", function(self, userInput)
         updatePlaceholder(self)
@@ -667,14 +670,14 @@ function Frames.CreateEditBox(parent, opts)
     return box
 end
 
--------------------------------------------------------------------------------
--- Scroll lists (row reuse, mouse wheel, optional scrollbar)
--------------------------------------------------------------------------------
+
+
+
 local SCROLLBAR_WIDTH = 10
 
--- Font and colours of one list row. Used for the whole list on a skin change and for every new
--- row the moment it is created: a FontString without a font cannot take text in the client, and
--- rows are created on demand (for example when the list grows) long after the last skin pass.
+
+
+
 local function applyRowSkin(row, skin)
     Frames.SetFont(row.Text, skin, "normal")
     setTextColor(row.Text, skin, "text")
@@ -717,15 +720,25 @@ local function acquireRow(list, i)
     applyRowSkin(row, Frames.Skin())
     row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
     row:SetScript("OnClick", function(self, button) list:OnRowClick(self, button) end)
+
+
+
+    row:SetScript("OnDoubleClick", function(self, button) list:OnRowDoubleClick(self, button) end)
     row:SetScript("OnEnter", function(self)
         self.fgpsHover = true
         if not self.fgpsSelected then self.Bg:Show() end
-        if list.onEnter then pcall(list.onEnter, self.fgpsItem, self.fgpsIndex, self) end
+        if list.onEnter then
+            local ok, err = pcall(list.onEnter, self.fgpsItem, self.fgpsIndex, self)
+            if not ok and FGPS.Log then FGPS.Log:Error("Scroll list hover handler failed: %s", tostring(err)) end
+        end
     end)
     row:SetScript("OnLeave", function(self)
         self.fgpsHover = false
         if not self.fgpsSelected then self.Bg:Hide() end
-        if list.onLeave then pcall(list.onLeave, self.fgpsItem, self.fgpsIndex, self) end
+        if list.onLeave then
+            local ok, err = pcall(list.onLeave, self.fgpsItem, self.fgpsIndex, self)
+            if not ok and FGPS.Log then FGPS.Log:Error("Scroll list hover handler failed: %s", tostring(err)) end
+        end
     end)
     row:EnableMouseWheel(true)
     row:SetScript("OnMouseWheel", function(_, delta) list:Scroll(-delta * list.wheelStep) end)
@@ -733,8 +746,13 @@ local function acquireRow(list, i)
     return row
 end
 
--- opts: { width, height, onClick = fn(item, index, button, row), onEnter, onLeave, emptyText, wheelStep }
--- renderFn(row, item, index, list) fills a reused row (row.Text is provided).
+
+
+
+
+
+
+
 function Frames.CreateScrollList(parent, rowHeight, renderFn, opts)
     opts = opts or {}
     assert(type(rowHeight) == "number" and rowHeight > 0, "CreateScrollList: rowHeight must be a positive number")
@@ -748,8 +766,10 @@ function Frames.CreateScrollList(parent, rowHeight, renderFn, opts)
     list.offset = 0
     list.selected = nil
     list.onClick = opts.onClick
+    list.onDoubleClick, list.onRightClick = opts.onDoubleClick, opts.onRightClick
     list.onEnter, list.onLeave = opts.onEnter, opts.onLeave
     list.wheelStep = opts.wheelStep or 3
+    list.noPick = opts.noPick == true
     list.emptyText = opts.emptyText
     list:EnableMouseWheel(true)
     list:SetScript("OnMouseWheel", function(self, delta) self:Scroll(-delta * self.wheelStep) end)
@@ -865,18 +885,37 @@ function Frames.CreateScrollList(parent, rowHeight, renderFn, opts)
         self.selected = index
         self:Refresh()
         if fire and index and self.onClick then
-            pcall(self.onClick, self.items[index], index, "LeftButton", nil)
+            local ok, err = pcall(self.onClick, self.items[index], index, "LeftButton", nil)
+            if not ok and FGPS.Log then FGPS.Log:Error("Scroll list click handler failed: %s", tostring(err)) end
         end
     end
 
     function list:OnRowClick(row, button)
         if row.fgpsIndex == nil then return end
-        self.selected = row.fgpsIndex
-        self:Refresh()
+        if button == "RightButton" and self.onRightClick then
+            local ok, err = pcall(self.onRightClick, row.fgpsItem, row.fgpsIndex, row)
+            if not ok and FGPS.Log then FGPS.Log:Error("Scroll list right-click handler failed: %s", tostring(err)) end
+            return
+        end
+        if not self.noPick then
+            self.selected = row.fgpsIndex
+            self:Refresh()
+        end
         if self.onClick then
             local ok, err = pcall(self.onClick, row.fgpsItem, row.fgpsIndex, button, row)
             if not ok and FGPS.Log then FGPS.Log:Error("Scroll list click handler failed: %s", tostring(err)) end
         end
+    end
+
+    function list:OnRowDoubleClick(row, button)
+        if row.fgpsIndex == nil then return end
+        if button == "RightButton" or not self.onDoubleClick then return self:OnRowClick(row, button) end
+        if not self.noPick and self.selected ~= row.fgpsIndex then
+            self.selected = row.fgpsIndex
+            self:Refresh()
+        end
+        local ok, err = pcall(self.onDoubleClick, row.fgpsItem, row.fgpsIndex, row)
+        if not ok and FGPS.Log then FGPS.Log:Error("Scroll list double-click handler failed: %s", tostring(err)) end
     end
 
     function list:SetOnClick(fn) self.onClick = fn end
@@ -888,9 +927,9 @@ function Frames.CreateScrollList(parent, rowHeight, renderFn, opts)
     return list
 end
 
--------------------------------------------------------------------------------
--- Windows
--------------------------------------------------------------------------------
+
+
+
 local function applyWindowSkin(win, skin)
     applyBackdrop(win, skin.backdrop, color(skin, "bg"), color(skin, "border"))
     win:SetAlpha(skin.panelAlpha or 1)
@@ -928,9 +967,9 @@ local function applyWindowSkin(win, skin)
     end
 end
 
--- Escape always closes the window. Anything else is offered to the window's own key handler
--- (opts.onKey) first, so a list inside the window can be driven from the keyboard; a key the
--- handler reports as used is not propagated, every other key is.
+
+
+
 local function windowKeyDown(self, key)
     local handled = key == "ESCAPE"
     if not handled and self.fgpsOnKey then
@@ -947,8 +986,8 @@ local function windowKeyDown(self, key)
     if key == "ESCAPE" then self:Hide() end
 end
 
--- The edit box inside `frame` that has the keyboard lets go of it. Only an edit box answers
--- HasFocus, and the client gives the keyboard to one box at a time. True when one let go.
+
+
 local function releaseKeyboard(frame)
     if frame.HasFocus and frame.ClearFocus and frame:HasFocus() then
         frame:ClearFocus()
@@ -971,18 +1010,20 @@ local function windowKeyboard(win, enabled)
     end
 end
 
--- opts: { title, width, height, resizable, minSize = {w, h}, maxSize = {w, h}, onClose = fn(win),
---         onResize = fn(win, w, h), onKey = fn(win, key) -> handled, persist = true,
---         strata = "HIGH", escape = true }
--- Distinct default slots so a second window does not land on top of the first (U9).
--- Fractions of UIParent size from centre: negative fx is left, positive fy is up.
+
+
+
+
+
+
+
 Frames.DEFAULT_OFFSETS = {
     search = { fx = -0.30, fy = 0.08 },
     preview = { fx = 0.30, fy = 0.08 },
     itinerary = { fx = -0.30, fy = -0.28 },
     favorites = { fx = 0.30, fy = -0.28 },
-    quests = { fx = -0.30, fy = 0.32 },
     setup = { fx = 0.0, fy = 0.12 },
+    tome = { fx = 0.0, fy = 0.0 },
 }
 
 local function defaultOffset(key)
@@ -991,41 +1032,141 @@ local function defaultOffset(key)
     return { fx = -0.22, fy = 0.12 }
 end
 
+
+
+local function addScript(frame, name, fn)
+    if frame.GetScript and frame.HookScript and frame:GetScript(name) then
+        frame:HookScript(name, fn)
+    else
+        frame:SetScript(name, fn)
+    end
+end
+
+
+
+
+
+
+
+
+
+function Frames.AdoptWindow(key, frame, opts)
+    assert(type(key) == "string" and key ~= "", "AdoptWindow: key must be a non-empty string")
+    assert(type(frame) == "table", "AdoptWindow: frame is required")
+    assert(Frames.windows[key] == nil or Frames.windows[key] == frame,
+        "AdoptWindow: the key " .. key .. " is another window's")
+    opts = opts or {}
+    local win = frame
+    win.key = key
+    win.fgpsEscape = opts.escape ~= false
+    win.fgpsOnKey = opts.onKey
+    win.fgpsPersist = opts.persist ~= false
+    win:SetToplevel(true)
+    win:SetMovable(true)
+    win:SetClampedToScreen(true)
+    win:EnableMouse(true)
+
+    local drag = opts.dragRegion or win
+    drag:EnableMouse(true)
+    drag:RegisterForDrag("LeftButton")
+    addScript(drag, "OnDragStart", function() win:StartMoving() win.fgpsMoving = true end)
+    addScript(drag, "OnDragStop", function()
+        win:StopMovingOrSizing()
+        win.fgpsMoving = false
+        win:SavePosition()
+    end)
+
+
+    addScript(win, "OnKeyDown", windowKeyDown)
+    addScript(win, "OnShow", function(self)
+        windowKeyboard(self, true)
+        if self.Raise then self:Raise() end
+        if self.RaiseCloseButton then self.RaiseCloseButton() end
+        if opts.onShow then
+            local ok, err = pcall(opts.onShow, self)
+            if not ok and FGPS.Log then FGPS.Log:Error("Window %s onShow failed: %s", key, tostring(err)) end
+        end
+    end)
+    local function closeWindow(self)
+        if opts.onClose then
+            local ok, err = pcall(opts.onClose, self)
+            if not ok and FGPS.Log then FGPS.Log:Error("Window %s onClose failed: %s", key, tostring(err)) end
+        end
+    end
+    addScript(win, "OnHide", function(self)
+
+
+
+
+        if self.fgpsMoving or self.fgpsSizing then
+            self:StopMovingOrSizing()
+            self.fgpsMoving, self.fgpsSizing = false, false
+            self:RestorePosition()
+        end
+        windowKeyboard(self, false)
+        closeOpenMenu()
+
+
+        if self:IsShown() then
+            releaseKeyboard(self)
+        else
+            closeWindow(self)
+        end
+    end)
+
+    local hide = win.Hide
+    function win:Hide()
+        local unseen = self:IsShown() and not self:IsVisible()
+        hide(self)
+        if unseen then closeWindow(self) end
+    end
+
+    function win:Toggle() if self:IsShown() then self:Hide() else self:Show() end end
+    function win:Open() self:Show() end
+    function win:SavePosition()
+        local positions = FGPS.UI.Positions
+        if self.fgpsPersist and positions and positions.Save then
+            positions.Save("window:" .. self.key, self)
+        end
+    end
+    function win:RestorePosition()
+        local positions = FGPS.UI.Positions
+        if self.fgpsPersist and positions and positions.Restore then
+            return positions.Restore("window:" .. self.key, self, defaultOffset(self.key), nil,
+                { restoreSize = opts.resizable and true or false, minSize = self.fgpsMinSize })
+        end
+        local slot = defaultOffset(self.key)
+        local uw = (UIParent and UIParent.GetWidth and UIParent:GetWidth()) or 1024
+        local uh = (UIParent and UIParent.GetHeight and UIParent:GetHeight()) or 768
+        self:ClearAllPoints()
+        self:SetPoint("CENTER", UIParent, "CENTER", slot.fx * uw, slot.fy * uh)
+        return "default"
+    end
+
+    win:RestorePosition()
+    Frames.windows[key] = win
+    return win
+end
+
 function Frames.CreateWindow(key, opts)
     assert(type(key) == "string" and key ~= "", "CreateWindow: key must be a non-empty string")
     opts = opts or {}
     if Frames.windows[key] then return Frames.windows[key] end
 
     local win = createBackdropFrame("Frame", UIParent)
-    win.key = key
     win.opts = opts
-    win.fgpsEscape = opts.escape ~= false
-    win.fgpsOnKey = opts.onKey
-    win.fgpsPersist = opts.persist ~= false
     win:SetSize(opts.width or 320, opts.height or 240)
     win:SetFrameStrata(opts.strata or "HIGH")
-    win:SetToplevel(true)
-    win:SetMovable(true)
-    win:SetClampedToScreen(true)
-    win:EnableMouse(true)
     win:Hide()
 
-    -- Title bar: the only drag region.
+
     local bar = CreateFrame("Frame", nil, win)
-    bar:EnableMouse(true)
-    bar:RegisterForDrag("LeftButton")
     bar.Bg = bar:CreateTexture(nil, "BACKGROUND")
     bar.Bg:SetAllPoints(bar)
     bar.Accent = bar:CreateTexture(nil, "ARTWORK")
     bar.Accent:SetPoint("BOTTOMLEFT", bar, "BOTTOMLEFT", 0, 0)
     bar.Accent:SetPoint("BOTTOMRIGHT", bar, "BOTTOMRIGHT", 0, 0)
     bar.Accent:SetHeight(1)
-    bar:SetScript("OnDragStart", function() win:StartMoving() win.fgpsMoving = true end)
-    bar:SetScript("OnDragStop", function()
-        win:StopMovingOrSizing()
-        win.fgpsMoving = false
-        win:SavePosition()
-    end)
     win.TitleBar = bar
 
     win.Title = bar:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -1044,10 +1185,10 @@ function Frames.CreateWindow(key, opts)
     close.Glyph:SetText("x")
     if close.SetHighlightTexture then close:SetHighlightTexture(CLOSE_HIGHLIGHT, "ADD") end
     if close.SetPushedTexture then close:SetPushedTexture(CLOSE_DOWN) end
-    -- The title bar spans the whole top edge and takes the mouse for dragging. It and this button
-    -- are both children of the window, so they share a frame level, and in the live client the
-    -- bar won: the X showed, lit up nowhere and closed nothing. The button goes above the bar, and
-    -- again whenever the window is shown, because raising a top-level window renumbers its children.
+
+
+
+
     local function raiseClose()
         if close.SetFrameLevel and bar.GetFrameLevel then close:SetFrameLevel((bar:GetFrameLevel() or 1) + 5) end
     end
@@ -1088,72 +1229,22 @@ function Frames.CreateWindow(key, opts)
             win:StopMovingOrSizing()
             win.fgpsSizing = false
             win:SavePosition()
-            if opts.onResize then pcall(opts.onResize, win, win:GetSize()) end
+            if opts.onResize then
+                local ok, err = pcall(opts.onResize, win, win:GetSize())
+                if not ok and FGPS.Log then FGPS.Log:Error("Window %s onResize failed: %s", key, tostring(err)) end
+            end
         end)
         win.Grip = grip
-        -- The same for the resize grip, which shares its corner with the content frame.
+
         if grip.SetFrameLevel and win.GetFrameLevel then grip:SetFrameLevel((win:GetFrameLevel() or 1) + 10) end
     end
 
-    -- Escape and combat-safe keyboard capture.
-    win:SetScript("OnKeyDown", windowKeyDown)
-    win:SetScript("OnShow", function(self)
-        windowKeyboard(self, true)
-        if self.Raise then self:Raise() end
-        if self.RaiseCloseButton then self.RaiseCloseButton() end
-        if opts.onShow then pcall(opts.onShow, self) end
-    end)
-    local function close(self)
-        if opts.onClose then
-            local ok, err = pcall(opts.onClose, self)
-            if not ok and FGPS.Log then FGPS.Log:Error("Window %s onClose failed: %s", key, tostring(err)) end
-        end
-    end
-    win:SetScript("OnHide", function(self)
-        windowKeyboard(self, false)
-        closeOpenMenu()
-        -- Still shown by its own flag: a parent hid it (Alt-Z, a cinematic hides UIParent) and it
-        -- comes back with the interface, so this is no close. Its box lets go of the keys anyway.
-        if self:IsShown() then
-            releaseKeyboard(self)
-        else
-            close(self)
-        end
-    end)
-    -- Hidden while a parent already hides it, the window runs no OnHide; it is closed all the same.
-    local hide = win.Hide
-    function win:Hide()
-        local unseen = self:IsShown() and not self:IsVisible()
-        hide(self)
-        if unseen then close(self) end
-    end
-
     function win:SetTitle(text) self.Title:SetText(text or "") end
-    function win:Toggle() if self:IsShown() then self:Hide() else self:Show() end end
-    function win:Open() self:Show() end
-    function win:SavePosition()
-        local positions = FGPS.UI.Positions
-        if self.fgpsPersist and positions and positions.Save then
-            positions.Save("window:" .. self.key, self)
-        end
-    end
-    function win:RestorePosition()
-        local positions = FGPS.UI.Positions
-        if self.fgpsPersist and positions and positions.Restore then
-            return positions.Restore("window:" .. self.key, self, defaultOffset(self.key), nil,
-                { restoreSize = opts.resizable and true or false, minSize = self.fgpsMinSize })
-        end
-        local slot = defaultOffset(self.key)
-        local uw = (UIParent and UIParent.GetWidth and UIParent:GetWidth()) or 1024
-        local uh = (UIParent and UIParent.GetHeight and UIParent:GetHeight()) or 768
-        self:ClearAllPoints()
-        self:SetPoint("CENTER", UIParent, "CENTER", slot.fx * uw, slot.fy * uh)
-        return "default"
-    end
     function win:GetContentSize() return self.Content:GetSize() end
 
-    win:RestorePosition()
-    Frames.windows[key] = win
+
+
+    Frames.AdoptWindow(key, win, setmetatable({ dragRegion = bar }, { __index = opts }))
     Frames.Register(win, applyWindowSkin)
     return win
 end
@@ -1162,15 +1253,15 @@ function Frames.GetWindow(key)
     return Frames.windows[key]
 end
 
--------------------------------------------------------------------------------
--- Init
--------------------------------------------------------------------------------
+
+
+
 local function onCombatState(_, inCombat)
     for _, win in pairs(Frames.windows) do
         if inCombat then
             windowKeyboard(win, false)
-            -- A player attacked while typing needs the keys at once, as on the "Go to:" line
-            -- (UI/SearchLine.lua). A box clicked into during the fight keeps them.
+
+
             releaseKeyboard(win)
         elseif win:IsVisible() then
             windowKeyboard(win, true)

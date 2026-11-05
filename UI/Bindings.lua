@@ -178,11 +178,12 @@ local function actionMapDestination()
         return false
     end
     local ok, dest, err = pcall(Destinations.FromMapClick, mapID, cx, cy)
+    local Compat = FGPS.UI.Compat
     if not ok or not dest then
-        FGPS:Print(L["That map position cannot be used as a destination%s"], (ok and err) and (": " .. FGPS.UI.Compat.ReasonText(err, L["unknown reason"])) or ".")
+        local reason = (ok and err) and (Compat and Compat.ReasonText and Compat.ReasonText(err, L["unknown reason"]) or tostring(err))
+        FGPS:Print(L["That map position cannot be used as a destination%s"], reason and (": " .. reason) or ".")
         return false
     end
-    local Compat = FGPS.UI.Compat
     if Compat and Compat.Accept then return Compat.Accept(dest, { source = "binding" }) end
     local WorldMap = FGPS.UI.WorldMap
     if WorldMap and WorldMap.GoTo then return WorldMap.GoTo(dest) and true or false end
@@ -201,8 +202,8 @@ Bindings.ACTIONS = {
 
 
 
-    cancel = { binding = "CABBIE_CANCEL", label = "Old key for Clear route", run = actionCancel },
-    clear = { binding = "CABBIE_CLEAR", label = "Clear route", run = actionClear },
+    cancel = { binding = "CABBIE_CANCEL", label = "Old key for Stop Route", run = actionCancel },
+    clear = { binding = "CABBIE_CLEAR", label = "Stop Route", run = actionClear },
     mapDestination = { binding = "CABBIE_MAP_DESTINATION", label = "Set a destination at the world map cursor", run = actionMapDestination },
 }
 

@@ -1,39 +1,39 @@
--- Cabbie/UI/EditMode.lua
--- Edit Mode emulation for the addon's persistent HUD elements. The turn call-out (UI/Callout.lua:
--- the arrow and its words) registers here. The Route block places itself (UI/RouteBlock.lua).
---
--- Why emulation: Blizzard's Edit Mode (Blizzard_EditMode/Shared/EditModeManager.lua) manages
--- "system frames" that it iterates with secureexecuterange over registeredSystemFrames and expects
--- to carry EditModeSystemMixin plus an Enum.EditModeSystem value. There is no public API for
--- addon-defined systems, and calling EditModeManagerFrame:RegisterSystemFrame from insecure code
--- would insert an insecure frame into that secure iteration (taint). Cabbie therefore does NOT
--- register its frames with EditModeManagerFrame:RegisterSystemFrame. Instead it follows the same
--- lifecycle from the outside:
---   * EventRegistry "EditMode.Enter"  -> show a selection overlay on every registered frame, make
---                                        them draggable, allow arrow-key nudging of the selection
---                                        and open a small settings dialog for the selected frame
---   * EventRegistry "EditMode.Exit"   -> hide overlays and dialog, restore mouse/visibility state
---   * EventRegistry "EditMode.SavedLayouts" and EDIT_MODE_LAYOUTS_UPDATED -> reload positions when
---                                        the active layout name changes
--- Positions are stored per Edit Mode layout (EditModeManagerFrame:GetActiveLayoutInfo().layoutName,
--- "default" when unavailable) through UI/Positions.lua. The selection overlay tries to inherit
--- Blizzard's virtual "EditModeSystemSelectionTemplate" (guarded by pcall around CreateFrame) so it
--- looks exactly like a native system; its mouse scripts are replaced with ours so nothing calls
--- back into EditModeManagerFrame. When the template is missing or behaves unexpectedly a plain
--- textured overlay is used instead.
---
--- Clients without Edit Mode get the same overlays through the fallback layout editor ("/cabbie
--- layout"); IsNativeIntegration() reports false while that fallback is in use.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 local ADDON_NAME, FGPS = ...
 
 local L = FGPS.L
 local type, pairs, ipairs, tostring, pcall = type, pairs, ipairs, tostring, pcall
 
 local EditMode = {
-    entries = {},         -- key -> entry
-    order = {},           -- registration order of keys
+    entries = {},
+    order = {},
     active = false,
-    native = false,       -- true while driven by Blizzard's Edit Mode events
+    native = false,
     fallbackActive = false,
     selectedKey = nil,
     layoutName = "default",
@@ -60,15 +60,15 @@ local function inCombat()
     return InCombatLockdown and InCombatLockdown() or false
 end
 
--------------------------------------------------------------------------------
--- Availability and layout name
--------------------------------------------------------------------------------
+
+
+
 function EditMode.IsAvailable()
     return type(EditModeManagerFrame) == "table" and type(EventRegistry) == "table"
         and type(EventRegistry.RegisterCallback) == "function"
 end
 
--- False while the fallback layout editor drives the overlays or when Edit Mode does not exist.
+
 function EditMode.IsNativeIntegration()
     if not EditMode.IsAvailable() then return false end
     return not EditMode.fallbackActive
@@ -88,9 +88,9 @@ function EditMode.GetLayoutName()
     return EditMode.DEFAULT_LAYOUT
 end
 
--------------------------------------------------------------------------------
--- Selection overlays
--------------------------------------------------------------------------------
+
+
+
 local wireOverlay
 
 local function createPlainOverlay(frame)
@@ -127,8 +127,8 @@ local function paintPlainOverlay(overlay, color, fillAlpha, label)
     overlay.Label:SetTextColor(1, 1, 1, 1)
 end
 
--- Creates the overlay for an entry: Blizzard's selection template when it exists and exposes the
--- expected methods, otherwise the plain textured overlay.
+
+
 local function createOverlay(entry)
     local frame = entry.frame
     local overlay
@@ -139,7 +139,7 @@ local function createOverlay(entry)
             overlay = f
             overlay.fgpsNative = true
             if type(f.SetSystem) == "function" then
-                -- The template reads system:GetSystemName() for its label and tooltip.
+
                 pcall(f.SetSystem, f, { GetSystemName = function() return entry.label end })
             end
         else
@@ -153,7 +153,7 @@ local function createOverlay(entry)
     return overlay
 end
 
--- Replaces a misbehaving native overlay with the plain one (keeps Edit Mode usable).
+
 local function demoteOverlay(entry)
     EditMode.templateBroken = true
     if entry.overlay then
@@ -180,6 +180,8 @@ local function setOverlayState(entry, state)
         if not ok then
             overlay = demoteOverlay(entry)
         else
+
+            if overlay.EnableMouse then pcall(overlay.EnableMouse, overlay, true) end
             return
         end
     end
@@ -197,13 +199,13 @@ local function ensureOverlay(entry)
     return entry.overlay
 end
 
--------------------------------------------------------------------------------
--- Dragging, nudging and saving
--------------------------------------------------------------------------------
+
+
+
 local updateDialogAnchor
 
--- Stores the entry's current position for the active layout, re-anchors it to UIParent's centre
--- (clamped) and notifies the owning module.
+
+
 function EditMode.SaveEntry(entry, reason)
     local positions = Positions()
     if not positions then return nil end
@@ -236,7 +238,7 @@ function EditMode.OnDragStop(key)
     return EditMode.SaveEntry(entry, "drag")
 end
 
--- Moves an entry by dx, dy UIParent units and saves the result.
+
 function EditMode.Nudge(key, dx, dy)
     local entry = EditMode.entries[key]
     local positions = Positions()
@@ -252,7 +254,7 @@ function EditMode.Nudge(key, dx, dy)
     return EditMode.SaveEntry(entry, "nudge")
 end
 
--- Keyboard handler of the selected overlay: arrows nudge, everything else propagates.
+
 local function overlayKeyDown(entry, overlay, key)
     local handled = false
     local vec = NUDGE_KEYS[key]
@@ -301,16 +303,16 @@ wireOverlay = function(entry, overlay)
     overlay:Hide()
 end
 
--------------------------------------------------------------------------------
--- Settings dialog
--------------------------------------------------------------------------------
--- The panel of the selected frame wears the look of the game's own Edit Mode panels
--- (EditModeSystemSettingsDialog in Blizzard_EditMode/Shared/EditModeDialogs.xml, its rows in
--- EditModeTemplates.xml): the translucent dialog border, the title in the game's large white font
--- 15 below the top, the game's close button in the top right corner, one row 32 high per setting
--- with its label 100 wide on the left and the control beside it, and the game's red button under
--- them. Every piece comes from UI/Look.lua with a fallback of its own. It can be dragged aside as
--- the game's can, and stands beside the selected frame again when a frame is selected anew.
+
+
+
+
+
+
+
+
+
+
 local DIALOG_WIDTH = 390
 local DIALOG_PAD = 20
 local TITLE_TOP = 15
@@ -338,8 +340,8 @@ local function safeSet(setting, value, entry)
     updateDialogAnchor()
 end
 
--- The value a slider of a setting stands on: a whole number of steps from its least value, inside
--- its range, without the dust of adding steps in floating point (3 * 0.05 is not 0.15).
+
+
 local function stepValue(setting, value)
     local minV, maxV, step = setting.min or 0, setting.max or 1, setting.step or 0.01
     value = tonumber(value) or minV
@@ -355,7 +357,7 @@ local function formatValue(setting, value)
     return string.format(fmt, value)
 end
 
--- The player moved a slider: reported once per value, never while the code puts a value on it.
+
 local function sliderMoved(row, value)
     if row.fgpsSilent or not row.fgpsSetting then return end
     value = stepValue(row.fgpsSetting, value)
@@ -364,8 +366,8 @@ local function sliderMoved(row, value)
     if row.fgpsOnChange then row.fgpsOnChange(value) end
 end
 
--- The game's slider with a step arrow at each end, its value right of the bar, else the plain
--- slider of UI/Frames.lua.
+
+
 local function createSlider(row)
     local slider = Look().StepperSlider(row, CONTROL_WIDTH)
     if slider then
@@ -381,9 +383,9 @@ local function createSlider(row)
     return slider
 end
 
--- Puts a value on a row's slider without reporting it as the player's: the game's slider announces
--- a value the code set as it does one the player chose (MinimalSlider.lua), so the row keeps quiet
--- meanwhile. init: the setting is new to the row, so its range and its words are set too.
+
+
+
 local function showSliderValue(row, value, init)
     local setting, slider = row.fgpsSetting, row.Slider
     value = stepValue(setting, value)
@@ -413,8 +415,8 @@ local function showSliderValue(row, value, init)
     row.fgpsSilent = false
 end
 
--- The game's check box, 32 square as in the game's Edit Mode rows, its words beside it in the
--- row's font.
+
+
 local function createCheckbox(row)
     local look = Look()
     local check = look.CheckButton(row, "")
@@ -432,7 +434,7 @@ local function createCheckbox(row)
     return check
 end
 
--- The colour of a setting held as six hex digits (Look.HexColor), else of its default, else white.
+
 local function settingColor(setting, value)
     local look = Look()
     local r, g, b = look.HexColor(value)
@@ -441,10 +443,10 @@ local function settingColor(setting, value)
     return r, g, b
 end
 
--- The swatch was clicked: the game's colour picker opens on the colour now. Every colour picked
--- while it is open is the setting at once (the frame shows it while the player looks); a cancel
--- gives back the value from before. The setting and its handler are the ones of this click, in
--- case the panel shows another frame before the picker is closed.
+
+
+
+
 local function pickRowColor(row)
     local setting, onChange = row.fgpsSetting, row.fgpsOnChange
     local look = Look()
@@ -467,10 +469,10 @@ local function createSwatch(row)
     return swatch
 end
 
--- A row of pictures to choose from (setting.options = { { value, label, texture } }): each a
--- Look.PictureButton beside the label, its option's name in its tooltip, the chosen one marked. A
--- setting may paint them itself (setting.picture(value) -> texture, r, g, b), so that they show
--- what the frame would show, in its colour now.
+
+
+
+
 local PICTURE_SIZE, PICTURE_GAP = 32, 6
 
 local function ensurePictures(row, count)
@@ -526,7 +528,7 @@ local function createRow(dialog, index)
     return row
 end
 
--- Reads a setting into its row's control without reporting anything.
+
 local function showRowValue(row, setting)
     if setting.type == "slider" then
         showSliderValue(row, safeGet(setting), false)
@@ -570,7 +572,7 @@ local function configureRow(row, setting, entry)
         check:SetChecked(safeGet(setting) and true or false)
         check:Show()
     elseif kind == "color" then
-        -- Without the game's colour picker the swatch only shows the colour.
+
         row.Label:SetText(setting.label or "")
         local swatch = row.Swatch
         swatch:SetColorRGB(settingColor(setting, safeGet(setting)))
@@ -589,7 +591,7 @@ local function ensureDialog()
     local look = Look()
     if not (look and Frames()) then return nil end
     local dialog, how = look.EditPanel(UIParent)
-    -- Hidden before its scripts are set: a hide now must not clear the selection being made.
+
     dialog:Hide()
     dialog.fgpsLook = how
     dialog:SetSize(DIALOG_WIDTH, 160)
@@ -658,8 +660,8 @@ local function buildDialog(entry)
     return dialog
 end
 
--- Re-reads every setting of the selected entry into the dialog controls (settings may change
--- from a drag, a slash command or the Settings panel while the dialog is open).
+
+
 local function refreshDialogValues()
     local dialog = EditMode.dialog
     local entry = EditMode.selectedKey and EditMode.entries[EditMode.selectedKey]
@@ -671,8 +673,8 @@ local function refreshDialogValues()
 end
 EditMode.RefreshDialog = refreshDialogValues
 
--- Anchors the dialog beside the selected frame (right side when there is room, else left), unless
--- the player dragged it aside for this selection.
+
+
 updateDialogAnchor = function()
     local dialog = EditMode.dialog
     local entry = EditMode.selectedKey and EditMode.entries[EditMode.selectedKey]
@@ -691,9 +693,9 @@ updateDialogAnchor = function()
     end
 end
 
--------------------------------------------------------------------------------
--- Selection
--------------------------------------------------------------------------------
+
+
+
 function EditMode.Select(key)
     local entry = EditMode.entries[key]
     if not entry or not EditMode.active then return false end
@@ -738,8 +740,8 @@ function EditMode.GetSelected()
     return EditMode.selectedKey
 end
 
--- Restores the default position of an entry and the defaults of its settings (when the setting
--- descriptors carry a default value).
+
+
 function EditMode.ResetEntry(key)
     local entry = EditMode.entries[key]
     if not entry then return false end
@@ -757,11 +759,11 @@ function EditMode.ResetEntry(key)
     return true
 end
 
--------------------------------------------------------------------------------
--- Registration
--------------------------------------------------------------------------------
--- Applies the position an entry should have for the active layout: the module's applyPosition
--- callback when given (modules with placement presets), else Positions.Restore.
+
+
+
+
+
 function EditMode.ApplyEntryPosition(entry)
     if type(entry.applyPosition) == "function" then
         local ok, err = pcall(entry.applyPosition, entry.frame, EditMode.layoutName)
@@ -774,9 +776,9 @@ function EditMode.ApplyEntryPosition(entry)
     end
 end
 
--- opts.available, when given, says the element can be moved right now. While it cannot
--- (the arrow is switched off, or a fight has hidden it) the overlay stays down and takes
--- no mouse, instead of an invisible clickable patch where the element would be.
+
+
+
 local function entryAvailable(entry)
     if type(entry.available) ~= "function" then return true end
     local ok, yes = pcall(entry.available)
@@ -793,7 +795,10 @@ local function showEntry(entry)
 end
 
 local function hideEntryOverlay(entry)
-    -- ClearSelection would paint the overlay highlighted again. Drop the selection first.
+
+
+    if entry.dragging then EditMode.OnDragStop(entry.key) end
+
     if EditMode.selectedKey == entry.key then
         EditMode.selectedKey = nil
         if EditMode.dialog then
@@ -808,8 +813,12 @@ end
 
 local function enterEntry(entry)
     local frame = entry.frame
-    entry.wasMouseEnabled = frame:IsMouseEnabled() and true or false
-    entry.wasShown = frame:IsShown() and true or false
+
+    if not entry.editEntered then
+        entry.wasMouseEnabled = frame:IsMouseEnabled() and true or false
+        entry.wasShown = frame:IsShown() and true or false
+        entry.editEntered = true
+    end
     if entry.onEditModeEnter then
         local ok, err = pcall(entry.onEditModeEnter, frame)
         if not ok and FGPS.Log then FGPS.Log:Error("onEditModeEnter for %s failed: %s", entry.key, tostring(err)) end
@@ -837,6 +846,7 @@ end
 
 local function exitEntry(entry)
     local frame = entry.frame
+    entry.editEntered = nil
     if entry.dragging then EditMode.OnDragStop(entry.key) end
     frame:StopMovingOrSizing()
     frame:SetMovable(false)
@@ -850,10 +860,12 @@ local function exitEntry(entry)
     end
 end
 
--- opts = { key (required), label, defaultPosition, settings = { {type="slider"|"dropdown"|"checkbox",
---          label, min, max, step, format, options, get, set, default}, ... }, onPositionChanged(frame, reason, record),
---          applyPosition(frame, layoutName), available(), onEditModeEnter(frame), onEditModeExit(frame),
---          onSettingChanged(frame, setting, value), positionOpts (passed to Positions.Restore) }
+
+
+
+
+
+
 function EditMode.Register(frame, opts)
     assert(type(frame) == "table", "EditMode.Register: frame is required")
     assert(type(opts) == "table" and type(opts.key) == "string" and opts.key ~= "", "EditMode.Register: opts.key is required")
@@ -901,13 +913,23 @@ function EditMode.GetEntry(key)
     return EditMode.entries[key]
 end
 
--------------------------------------------------------------------------------
--- Enter / exit
--------------------------------------------------------------------------------
+
+
+
 local showEditorBar, hideEditorBar
 
 function EditMode.Enter(native)
-    if EditMode.active then return false end
+    if EditMode.active then
+
+
+        if native and not EditMode.native then
+            EditMode.native = true
+            EditMode.fallbackActive = false
+            hideEditorBar()
+            return true
+        end
+        return false
+    end
     EditMode.active = true
     EditMode.native = native and true or false
     EditMode.fallbackActive = not EditMode.native
@@ -940,7 +962,7 @@ function EditMode.Exit()
     return true
 end
 
--- Reloads positions when the active Edit Mode layout changed. Returns true when it did.
+
 function EditMode.RefreshLayout()
     local name = EditMode.GetLayoutName()
     if name == EditMode.layoutName then return false end
@@ -953,9 +975,9 @@ function EditMode.RefreshLayout()
     return true
 end
 
--------------------------------------------------------------------------------
--- Fallback layout editor ("/cabbie layout")
--------------------------------------------------------------------------------
+
+
+
 local function editorKeyDown(self, key)
     if key == "ESCAPE" then
         if self.SetPropagateKeyboardInput and not inCombat() then pcall(self.SetPropagateKeyboardInput, self, false) end
@@ -982,7 +1004,7 @@ showEditorBar = function()
         bar:SetFrameStrata("DIALOG")
         bar:SetToplevel(true)
         bar:EnableMouse(true)
-        bar.Text = frames.CreateLabel(bar, L["Move Cabbie's arrow and windows. The arrow keys move the selection a little (with Shift, more)."],
+        bar.Text = frames.CreateLabel(bar, L["Move Cabbie's arrow. The arrow keys move the selection a little (with Shift, more)."],
             { kind = "small", color = "text" })
         bar.Text:SetPoint("LEFT", bar, "LEFT", 10, 0)
         bar.Done = frames.CreateButton(bar, L["Done"], function() EditMode.Exit() end, { width = 70, primary = true })
@@ -1002,7 +1024,7 @@ hideEditorBar = function()
     bar:Hide()
 end
 
--- Toggles the fallback editor. Returns the new active state.
+
 function EditMode.ToggleEditor()
     if EditMode.active then
         if EditMode.native then return true end
@@ -1019,7 +1041,7 @@ end
 
 local function slashLayout()
     if EditMode.active and EditMode.native then
-        FGPS:Print(L["Edit Mode is open; move Cabbie's arrow and windows there."])
+        FGPS:Print(L["Edit Mode is open; move Cabbie's arrow there."])
         return
     end
     local nowActive = EditMode.ToggleEditor()
@@ -1030,15 +1052,15 @@ local function slashLayout()
     end
 end
 
--------------------------------------------------------------------------------
--- Init
--------------------------------------------------------------------------------
--- Keyboard capture must be given back before combat starts. SetPropagateKeyboardInput is
--- restricted in combat, so an overlay that still holds the keyboard when the fight begins can no
--- longer let a key through and would swallow the player's key presses for the rest of the fight.
--- The fallback editor closes itself, but Blizzard's own Edit Mode stays open through combat
--- (EditModeManagerFrame registers no combat event), so the selected overlay is released by hand
--- and re-enabled when combat ends and the same element is still selected.
+
+
+
+
+
+
+
+
+
 local function setSelectedKeyboard(enabled)
     local entry = EditMode.selectedKey and EditMode.entries[EditMode.selectedKey]
     local overlay = entry and entry.overlay
@@ -1080,9 +1102,9 @@ function EditMode:Init()
         end, EditMode)
     end
     if FGPS.Slash and FGPS.Slash.Register then
-        FGPS.Slash.Register("layout", slashLayout, L["Move Cabbie's arrow and windows on the screen (when the game has no Edit Mode)"])
+        FGPS.Slash.Register("layout", slashLayout, L["Move Cabbie's arrow on the screen (when the game has no Edit Mode)"])
     end
-    -- Late load while Edit Mode is already open.
+
     if EditMode.IsAvailable() and type(EditModeManagerFrame.IsEditModeActive) == "function" then
         local ok, activeNow = pcall(EditModeManagerFrame.IsEditModeActive, EditModeManagerFrame)
         if ok and activeNow then EditMode.Enter(true) end

@@ -16,6 +16,7 @@
 
 
 
+
 local ADDON_NAME, FGPS = ...
 
 local L = FGPS.L
@@ -73,10 +74,9 @@ local ELEMENT_KEYS = {
     { "window:preview", "Reset preview window position" },
     { "window:favorites", "Reset favorites window position" },
     { "window:itinerary", "Reset stops window position" },
-    { "window:quests", "Reset quest window position" },
 }
 local ELEMENT_ALIASES = { search = "window:search", preview = "window:preview", favorites = "window:favorites",
-                          itinerary = "window:itinerary", stops = "window:itinerary", quests = "window:quests" }
+                          itinerary = "window:itinerary", stops = "window:itinerary" }
 
 
 
@@ -163,22 +163,26 @@ end
 
 
 
-local function buttonInitializer(name, buttonText, onClick, tooltip)
+
+
+local function buttonInitializer(name, buttonText, onClick, tooltip, built)
     if not Settings.RegisterInitializer then return nil end
+    local label, tip = name, tooltip or name
+    if not built then label, tip = L[label], L[tip] end
     if CreateSettingsButtonInitializer then
-        return CreateSettingsButtonInitializer(L[name], L[buttonText], onClick, L[tooltip or name], true)
+        return CreateSettingsButtonInitializer(label, L[buttonText], onClick, tip, true)
     end
     if Settings.CreateElementInitializer then
-        local data = { name = L[name], buttonText = L[buttonText], buttonClick = onClick, tooltip = L[tooltip or name] }
+        local data = { name = label, buttonText = L[buttonText], buttonClick = onClick, tooltip = tip }
         local initializer = Settings.CreateElementInitializer("SettingButtonControlTemplate", data)
-        if initializer and initializer.AddSearchTags then initializer:AddSearchTags(L[name]) end
+        if initializer and initializer.AddSearchTags then initializer:AddSearchTags(label) end
         return initializer
     end
     return nil
 end
 
-local function addButton(category, name, buttonText, onClick, tooltip)
-    local initializer = buttonInitializer(name, buttonText, onClick, tooltip)
+local function addButton(category, name, buttonText, onClick, tooltip, built)
+    local initializer = buttonInitializer(name, buttonText, onClick, tooltip, built)
     if not initializer then return false end
     Settings.RegisterInitializer(category, initializer)
     return true
@@ -356,14 +360,14 @@ local function registerAbout(category)
     local added = addHeader(category, header, tooltip)
     local build = FGPS.build or {}
     local rowName = format(L["Client %s (%s), Edit Mode: %s"], tostring(build.version or "?"), tostring(build.buildNumber or "?"), lines[4][2])
-    if addButton(category, rowName, "Details", Actions.About, tooltip) then added = true end
+    if addButton(category, rowName, "Details", Actions.About, tooltip, true) then added = true end
     if not added then FGPS.Log:Debug("Settings about block unavailable in this client; use /cabbie about") end
     return added
 end
 
 local function registerGeneral(category)
-    checkbox(category, "worldMapLegend", "Show the map legend",
-        "The box in the corner of the world map that names the solid, dashed and coloured lines. Turn it off here, or with /cabbie legend.")
+    checkbox(category, "worldMapLegend", "Route label on the map",
+        "Names the route and its stops in a small label in the corner of the world map.")
     dropdown(category, "units", "Distance units", "Yards or metres and kilometres.", UNITS)
     dropdown(category, "textSize", "Text size", "Normal or Large. Large adds two points to window list and label fonts.", TEXT_SIZES)
     dropdown(category, "accessibility.colorScheme", "Colour scheme",
@@ -513,14 +517,20 @@ local function registerQuests(category)
     checkbox(category, "quests.objectiveAreas", "Draw objective areas",
         "A kill or collect objective is an area, not a point. Cabbie draws the measured area and labels it with its width, rather than putting a pin in the middle of it.")
     checkbox(category, "quests.followProgress", "Follow my quests",
-        "A quest route moves on to the next objective and the hand-in, and a click on the round marker beside a quest in the quest list or on the map starts the way to it.")
+        "A quest route moves on to the next objective and the turn-in, and a click on the round marker beside a quest in the quest list or on the map starts the way to it.")
     checkbox(category, "quests.searchForever", "Include Forever's own quests in search",
         "Quests that exist only in Forever. Cabbie knows a name and sometimes where they start, never a turn-in or an objective, and says so.")
+
+    checkbox(category, "quests.leveling", "Optimized Leveling",
+        "A quest order for your faction, race and class from level 1 to 60, from published Forever leveling guides. It follows your level and quests by itself, shows the next steps on its own page of Cabbie's book-style window, and puts its quests first in the quests to take nearby. Levels 31 to 60 were not played in the beta.")
+
+    checkbox(category, "quests.levelingMarks", "Mark Optimized Leveling quests at quest givers",
+        "When you talk to a quest giver, a small panel beside its window names the quests your Optimized Leveling order wants from it, which one comes next, and the turn-ins it wants. Taking and turning in stays yours.")
     checkbox(category, "quests.serverLookup", "Offer to look quest names up on the server",
         "Classic quest names come with Cabbie in English, and the game's own wording replaces them once it is known. This allows the button that spends part of a small per-session lookup budget to fill in the names of a search result.")
 
     slider(category, "quests.batchRadius", "Quests to take, yards",
-        "How far to look for quests you can take. Accept sets the stops. You press Start for the route.",
+        "How far to look for quests you can take. Add to Route sets the stops. You press Start for the route.",
         100, 2000, 50, function(value) return format("%d yd", value) end)
 end
 
@@ -594,25 +604,47 @@ function UISettings:Register()
         local advanced = Settings.RegisterVerticalLayoutSubcategory(category, L["Advanced"])
         self.subcategories = { general = general, guidance = guidance, map = map, transport = transport,
                                quests = quests, voice = voice, advanced = advanced }
-        registerGeneral(general)
-        registerGuidance(guidance)
-        registerMap(map)
-        registerTransport(transport)
-        registerQuests(quests)
-        registerVoice(voice)
-        registerAdvanced(advanced)
-        if Settings.RegisterAddOnCategory then Settings.RegisterAddOnCategory(category) end
     end)
     if not ok then
         self.failed = true
         FGPS.Log:Error("Settings registration failed: %s", tostring(err))
         return false
     end
+
+
+    local sub = self.subcategories
+    local pages = {
+        { "General", registerGeneral, sub.general }, { "Guidance", registerGuidance, sub.guidance },
+        { "Map", registerMap, sub.map }, { "Transport", registerTransport, sub.transport },
+        { "Quests", registerQuests, sub.quests }, { "Voice", registerVoice, sub.voice },
+        { "Advanced", registerAdvanced, sub.advanced },
+    }
+    for _, page in ipairs(pages) do
+        local pageOk, pageErr = pcall(page[2], page[3])
+        if not pageOk then FGPS.Log:Error("Settings page %s failed: %s", page[1], tostring(pageErr)) end
+    end
+    if Settings.RegisterAddOnCategory then
+        local added, addErr = pcall(Settings.RegisterAddOnCategory, self.category)
+        if not added then
+            self.failed = true
+            FGPS.Log:Error("Settings registration failed: %s", tostring(addErr))
+            return false
+        end
+    end
     self.registered = true
     return true
 end
 
+
+
+
+
 function UISettings:Open(subcategory)
+    if InCombatLockdown and InCombatLockdown() then
+        self.openAfterCombat = subcategory or true
+        FGPS:Print(L["The options panel opens when you leave combat."])
+        return false
+    end
     if not self.registered and not self:Register() then
         FGPS:Print(L["The options panel is not available in this client; use /cabbie help for the command list."])
         return false
@@ -682,14 +714,18 @@ local function slashStart()
     if waitOut then waitOut() end
 end
 
+
+
 local function slashPause()
     local Navigator = navigator()
-    if Navigator and Navigator.Pause then Navigator:Pause() end
+    if not (Navigator and Navigator.Pause) or Navigator:Pause() then return end
+    FGPS:Print(Navigator.state == "paused" and L["Guidance is already paused."] or L["No route to pause."])
 end
 
 local function slashResume()
     local Navigator = navigator()
-    if Navigator and Navigator.Resume then Navigator:Resume() end
+    if not (Navigator and Navigator.Resume) or Navigator:Resume() then return end
+    FGPS:Print(L["Nothing is paused."])
 end
 
 
@@ -710,7 +746,7 @@ local function slashLegend(args)
         return
     end
     DB:Set("worldMapLegend", on)
-    FGPS:Print(on and L["Map legend on."] or L["Map legend off."])
+    FGPS:Print(on and L["Route label on the map on."] or L["Route label on the map off."])
 end
 
 local function slashDebug(args)
@@ -734,10 +770,10 @@ local function slashReset(args)
         Actions.ResetRouting()
     elseif word ~= "" then
         if not Actions.ResetElement(word) then
-            FGPS:Print(FGPS.Util.EscapeBars(L["Usage: /cabbie reset settings|positions|routing|all|<element> (search, preview, favorites, stops, quests)"]))
+            FGPS:Print(FGPS.Util.EscapeBars(L["Usage: /cabbie reset settings|positions|routing|all|<element> (search, preview, favorites, stops)"]))
         end
     else
-        FGPS:Print(FGPS.Util.EscapeBars(L["Usage: /cabbie reset settings|positions|routing|all|<element> (search, preview, favorites, stops, quests)"]))
+        FGPS:Print(FGPS.Util.EscapeBars(L["Usage: /cabbie reset settings|positions|routing|all|<element> (search, preview, favorites, stops)"]))
     end
 end
 
@@ -772,7 +808,7 @@ local SLASH_WORDS = {
     { "start", slashStart, "Start (or resume) navigation for the previewed route" },
     { "pause", slashPause, "Pause guidance" },
     { "resume", slashResume, "Resume guidance" },
-    { "legend", slashLegend, "Map legend: on|off" },
+    { "legend", slashLegend, "Route label on the map: on|off" },
     { "debug", slashDebug, "Toggle debug output: on|off" },
     { "reset", slashReset, "Reset settings|positions|routing|all|<element>" },
     { "search", slashSearchFallback, "Open the destination search" },
@@ -789,4 +825,13 @@ end
 function UISettings:Init()
     self:RegisterSlashCommands()
     self:Register()
+    if not self.combatBound and FGPS.Events then
+        self.combatBound = true
+        FGPS.Events:Register("COMBAT_STATE", function(_, inCombat)
+            local pending = UISettings.openAfterCombat
+            if inCombat or not pending then return end
+            UISettings.openAfterCombat = nil
+            UISettings:Open(pending ~= true and pending or nil)
+        end, self)
+    end
 end

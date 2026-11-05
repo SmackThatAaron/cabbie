@@ -85,7 +85,8 @@ QuestData.HasBit = hasBit
 
 
 
-local function dataset()
+local dsD, dsQ, dsG, dsA, dsI, dsF, dsQid, dsQn, dsGinst, dsGn
+local function datasetSlow()
     local D = FGPS.Data
     if not D then return nil end
     local quests, givers = D.quests, D.questGivers
@@ -95,6 +96,29 @@ local function dataset()
     return quests, givers, (type(D.questAreas) == "table" and D.questAreas or nil),
            (type(D.questIndex) == "table" and D.questIndex or nil),
            (type(D.questsForever) == "table" and D.questsForever or nil)
+end
+
+local pinQ, pinG, pinA, pinI, pinF
+local function dataset()
+    if pinQ then return pinQ, pinG, pinA, pinI, pinF end
+    local D = FGPS.Data
+    if D and D == dsD then
+        local quests, givers = D.quests, D.questGivers
+        if quests == dsQ and givers == dsG and quests.id == dsQid and quests.n == dsQn
+                and givers.inst == dsGinst and givers.n == dsGn and D.questAreas == dsA
+                and D.questIndex == dsI and D.questsForever == dsF then
+            return quests, givers, (type(dsA) == "table" and dsA or nil), (type(dsI) == "table" and dsI or nil),
+                   (type(dsF) == "table" and dsF or nil)
+        end
+    end
+    local quests, givers, a, i, f = datasetSlow()
+    if quests then
+        dsD, dsQ, dsG, dsA, dsI, dsF = D, quests, givers, D.questAreas, D.questIndex, D.questsForever
+        dsQid, dsQn, dsGinst, dsGn = quests.id, quests.n, givers.inst, givers.n
+    else
+        dsD = nil
+    end
+    return quests, givers, a, i, f
 end
 QuestData.Dataset = dataset
 
@@ -157,7 +181,8 @@ QuestData.KindName = kindName
 
 
 
-local function binarySearch(quests, questID)
+local rmIds, rmN, rmMap
+local function binarySearchSlow(quests, questID)
     local ids, low, high = quests.id, 1, quests.n
     while low <= high do
         local mid = floor((low + high) / 2)
@@ -167,6 +192,21 @@ local function binarySearch(quests, questID)
         else high = mid - 1 end
     end
     return nil
+end
+local function binarySearch(quests, questID)
+    local ids, n = quests.id, quests.n
+    if ids ~= rmIds or n ~= rmN then
+        rmIds, rmN, rmMap = ids, n, {}
+        local prev
+        for i = 1, n do
+            local v = ids[i]
+            if type(v) ~= "number" or (prev and not (v > prev)) then rmMap = false break end
+            rmMap[v] = i
+            prev = v
+        end
+    end
+    if rmMap and type(questID) == "number" then return rmMap[questID] end
+    return binarySearchSlow(quests, questID)
 end
 
 local masksAllow
@@ -605,6 +645,7 @@ end
 
 
 
+
 function QuestData.QualityReasons(questID)
     local quests = dataset()
     local row = QuestData.RowFor(questID)
@@ -616,7 +657,7 @@ function QuestData.QualityReasons(questID)
     local out = {}
     for bit = 0, 8 do
         local value = 2 ^ bit
-        if hasBit(mask, value) and names[value] then out[#out + 1] = L[names[value]] end
+        if hasBit(mask, value) and names[value] then out[#out + 1] = names[value] end
     end
     return out
 end
@@ -780,10 +821,13 @@ end
 
 
 
+
+
+
 local MARK_TEXT = {
-    [0] = "From 1.12 records. Not confirmed in Forever - it may have moved or changed.",
-    [1] = "Reported for Forever by another source, not confirmed on this client.",
-    [2] = "Confirmed on this client.",
+    [0] = "May have moved: from the 1.12 records, not confirmed in Forever.",
+    [1] = "Not checked in game: reported for Forever by another source, not confirmed on this client.",
+    [2] = "From the game: confirmed on this client.",
 }
 function QuestData.MarkText(mark)
     return L[MARK_TEXT[mark] or MARK_TEXT[0]]
@@ -791,7 +835,7 @@ end
 
 
 
-local MARK_LABEL = { [0] = "1.12 record", [1] = "reported", [2] = "confirmed" }
+local MARK_LABEL = { [0] = "may have moved", [1] = "not checked in game", [2] = "from the game" }
 function QuestData.MarkLabel(mark)
     return L[MARK_LABEL[mark] or MARK_LABEL[0]]
 end
@@ -813,13 +857,42 @@ local function playerClassBit()
     return nil
 end
 
+local SIDE_CODE = { Alliance = 1, Horde = 2 }
+
+local SIDE_RACES = { { RACE_BIT.Human, RACE_BIT.Dwarf, RACE_BIT.NightElf, RACE_BIT.Gnome },
+                     { RACE_BIT.Orc, RACE_BIT.Undead, RACE_BIT.Tauren, RACE_BIT.Troll } }
+
+
+
+
+local function maskFitsSide(races)
+    if not UnitFactionGroup then return nil end
+    local ok, side = pcall(UnitFactionGroup, "player")
+    local bits = ok and SIDE_RACES[SIDE_CODE[side]]
+    if not bits then return nil end
+    local named = 0
+    for _, bit in ipairs(bits) do if hasBit(races, bit) then named = named + 1 end end
+    if named == #bits then return true end
+    if named == 0 then return false end
+    return nil
+end
+
+
+
+
+local function raceMaskAllows(quests, row, race)
+    local races = quests.races[row] or 0
+    if races == 0 or (quests.ru and quests.ru[row]) then return true end
+    if race then return hasBit(races, race) end
+    return maskFitsSide(races) ~= false
+end
+
 
 
 function masksAllow(quests, row)
     local race, class = playerRaceBit(), playerClassBit()
-    local races = quests.races[row] or 0
     local classes = quests.classes and quests.classes[row] or 0
-    if race and races ~= 0 and not hasBit(races, race) then return false end
+    if not raceMaskAllows(quests, row, race) then return false end
     if class and classes ~= 0 and not hasBit(classes, class) then return false end
     return true
 end
@@ -832,6 +905,10 @@ local function playerLevel()
 end
 QuestData.PlayerLevel = playerLevel
 
+local otherSidesQuest
+
+
+
 
 
 
@@ -840,16 +917,20 @@ function QuestData.AllowedForPlayer(questID)
     if not info then return true end
 
     if info.aliasOf then return true end
-    local race = playerRaceBit()
-    if race and info.races and info.races ~= 0 and not hasBit(info.races, race) then
+    local quests = dataset()
+    if quests and info.row and not raceMaskAllows(quests, info.row, playerRaceBit()) then
         return false, L["another race starts this quest"]
     end
     local class = playerClassBit()
     if class and info.classes and info.classes ~= 0 and not hasBit(info.classes, class) then
         return false, L["another class starts this quest"]
     end
+    if quests and info.row and (info.races or 0) == 0 and otherSidesQuest(quests, info.row) then
+        return false, L["the other side takes this quest"]
+    end
     return true
 end
+
 
 
 
@@ -923,6 +1004,10 @@ local function inLog(questID)
     local Quests = FGPS.Quests
     return Quests and Quests.byID and Quests.byID[questID] ~= nil or false
 end
+
+
+QuestData.IsDone = isDone
+QuestData.InLog = inLog
 
 local function questName(questID)
     return QuestData.Title(questID) or format(L["Quest %d"], questID)
@@ -1050,6 +1135,31 @@ local function giversSide(questID)
     return side
 end
 
+
+
+
+function otherSidesQuest(quests, row, mine)
+    if (quests.races[row] or 0) ~= 0 then return false end
+    mine = mine or playerSideCode()
+    if mine ~= 1 and mine ~= 2 then return false end
+    local _, givers = dataset()
+    if not givers then return false end
+    local memo = QuestData.giverSideBuilt
+    if not (memo and memo.quests == quests and memo.givers == givers and memo.sides == givers.side) then
+        memo = { quests = quests, givers = givers, sides = givers.side, rows = {} }
+        QuestData.giverSideBuilt = memo
+    end
+    local side = memo.rows[row]
+    if side == nil then
+        side = giversSide(quests.id[row]) or false
+        memo.rows[row] = side
+    end
+    return side ~= false and side ~= mine
+end
+
+
+local pastLevel = false
+
 local function vanillaFacts(questID, info)
     local quests = dataset()
     local row = info.row
@@ -1059,7 +1169,7 @@ local function vanillaFacts(questID, info)
     if info.aliasOf then
 
 
-        if level and info.minLevel and info.minLevel > level then return "no", "level", info.minLevel end
+        if not pastLevel and level and info.minLevel and info.minLevel > level then return "no", "level", info.minLevel end
         return "unknown", "reissued"
     end
     local race, class = playerRaceBit(), playerClassBit()
@@ -1068,7 +1178,10 @@ local function vanillaFacts(questID, info)
 
         maybe("race_doubtful")
     elseif info.races and info.races ~= 0 then
-        if race == nil then maybe("race_unknown")
+        if race == nil then
+            local fits = maskFitsSide(info.races)
+            if fits == false then return "no", "side" end
+            if fits == nil then maybe("race_unknown") end
         elseif not hasBit(info.races, race) then return "no", "race" end
     end
     if info.classes and info.classes ~= 0 then
@@ -1086,7 +1199,7 @@ local function vanillaFacts(questID, info)
             elseif mine ~= side then return "no", "side" end
         end
     end
-    if info.minLevel and info.minLevel > 0 then
+    if info.minLevel and info.minLevel > 0 and not pastLevel then
         if not level then maybe("level_unknown")
         elseif info.minLevel > level then return "no", "level", info.minLevel end
     end
@@ -1094,9 +1207,9 @@ local function vanillaFacts(questID, info)
         if id > 0 then
             local done = isDone(id)
             if done == nil then maybe("done_unknown")
-            elseif not done then return "no", "earlier", questName(id) end
+            elseif not done then return "no", "earlier", questName(id), nil, id end
         elseif not inLog(-id) then
-            return "no", "earlier_log", questName(-id)
+            return "no", "earlier_log", questName(-id), nil, id
         end
     end
 
@@ -1113,7 +1226,7 @@ local function vanillaFacts(questID, info)
             end
         end
         if not one then
-            if cannot then maybe("done_unknown") else return "no", "earlier_one", #anyOf end
+            if cannot then maybe("done_unknown") else return "no", "earlier_one", #anyOf, nil, anyOf end
         end
     end
     local group = quests.xg and quests.xg[row]
@@ -1144,11 +1257,6 @@ local function vanillaFacts(questID, info)
     if unknown then return "unknown", unknown end
     return nil
 end
-
-local SIDE_CODE = { Alliance = 1, Horde = 2 }
-
-local SIDE_RACES = { { RACE_BIT.Human, RACE_BIT.Dwarf, RACE_BIT.NightElf, RACE_BIT.Gnome },
-                     { RACE_BIT.Orc, RACE_BIT.Undead, RACE_BIT.Tauren, RACE_BIT.Troll } }
 
 
 local function playerSide()
@@ -1217,7 +1325,7 @@ local function foreverFacts(questID)
     local allowed, why = foreverMasksAllow(questID)
     if not allowed then return "no", why end
     local level = playerLevel()
-    if level and at("gmin") and at("gmin") > level then return "no", "level", at("gmin") end
+    if not pastLevel and level and at("gmin") and at("gmin") > level then return "no", "level", at("gmin") end
     if level and at("gmax") and at("gmax") < level then return "no", "level_max", at("gmax") end
     local first = at("gpq") and listOf(at("gpq")) or nil
     if first and not at("gpqn") then
@@ -1244,10 +1352,10 @@ local function foreverFacts(questID)
         if have < need and isDone(first[1]) ~= nil then
             if need == #first then
                 for _, id in ipairs(first) do
-                    if not isDone(id) then return "no", "earlier", questName(id) end
+                    if not isDone(id) then return "no", "earlier", questName(id), nil, id end
                 end
             end
-            return "no", "earlier_one", #first
+            return "no", "earlier_one", #first, nil, first
         end
     end
     local skill = at("gsk")
@@ -1255,26 +1363,106 @@ local function foreverFacts(questID)
     return "unknown", "forever_incomplete"
 end
 
-function QuestData.CanTake(questID)
+
+local function canTake(questID)
     questID = tonumber(questID)
     if not questID then return "unknown", canSay("no_record"), "no_record" end
-    local answer, code, a, b = commonFacts(questID)
+    local answer, code = commonFacts(questID)
+    local a, b, need
     if answer == "no" then return "no", canSay(code), code end
     local unknown = answer == "unknown" and code or nil
     local info = QuestData.Info(questID)
     local verdict, vcode
     if info then
-        verdict, vcode, a, b = vanillaFacts(questID, info)
+        verdict, vcode, a, b, need = vanillaFacts(questID, info)
     else
-        verdict, vcode, a, b = foreverFacts(questID)
+        verdict, vcode, a, b, need = foreverFacts(questID)
     end
     if verdict == "no" then
-        if a ~= nil then return "no", canSay(vcode, a, b), vcode end
-        return "no", canSay(vcode), vcode
+        if a ~= nil then return "no", canSay(vcode, a, b), vcode, need end
+        return "no", canSay(vcode), vcode, need
     end
     unknown = unknown or (verdict == "unknown" and vcode) or nil
     if unknown then return "unknown", canSay(unknown), unknown end
     return "yes", nil, nil
+end
+
+function QuestData.CanTake(questID)
+    local verdict, sentence, code = canTake(questID)
+    return verdict, sentence, code
+end
+
+
+
+
+
+
+
+function QuestData.CanTakeAtAnyLevel(questID)
+    pastLevel = true
+    local ok, verdict, sentence, code, need = pcall(canTake, questID)
+    pastLevel = false
+    if not ok then error(verdict, 0) end
+    return verdict, sentence, code, need
+end
+
+
+
+
+
+
+function QuestData.WaitsFor(questID)
+    local verdict, _, _, need = canTake(questID)
+    if verdict ~= "no" then return nil end
+    return need
+end
+
+
+
+
+
+function QuestData.ExclusiveDone(questID)
+    questID = tonumber(questID)
+    local quests = dataset()
+    local row = questID and quests and QuestData.RowFor(questID)
+    if not row or quests.id[row] ~= questID then return false end
+    local group = quests.xg and quests.xg[row]
+    if not group then return false end
+    for _, other in ipairs(groupIndex()[group] or {}) do
+        if other ~= questID and isDone(other) == true then return true end
+    end
+    return false
+end
+
+
+
+
+
+
+local function addIDs(out, value)
+    if type(value) == "number" then
+        out[#out + 1] = value < 0 and -value or value
+    elseif type(value) == "table" then
+        for _, id in ipairs(value) do out[#out + 1] = id < 0 and -id or id end
+    end
+end
+
+function QuestData.EarlierQuests(questID)
+    questID = tonumber(questID)
+    local out = {}
+    if not questID then return out end
+    local quests, _, _, _, forever = dataset()
+    local row = quests and QuestData.RowFor(questID)
+    if row then
+        if quests.id[row] == questID then
+            addIDs(out, quests.pq and quests.pq[row])
+            addIDs(out, quests.pqa and quests.pqa[row])
+        end
+    elseif forever and forever.gpq then
+        local i = foreverIndex()[questID]
+        if i then addIDs(out, forever.gpq[i]) end
+    end
+    return out
 end
 
 
@@ -1691,6 +1879,63 @@ QuestData.TitleIndex = titleIndex
 
 
 
+local hsIndex, hsText, hsStart, hsCount
+local lastNeedle, lastHits
+local function titleMatches(needle)
+    local index = titleIndex()
+    if index ~= hsIndex then
+        hsIndex, lastNeedle, lastHits = index, nil, nil
+        local parts, starts, at = {}, {}, 1
+        for k = 1, #index do
+            local f = index[k].folded
+            parts[k], starts[k] = f, at
+            at = at + #f + 1
+        end
+        starts[#index + 1] = at
+        hsText, hsStart, hsCount = table.concat(parts, "\n"), starts, #index
+    end
+    if needle == lastNeedle then return lastHits end
+    local hits, n = {}, 0
+    if lastNeedle and lastNeedle ~= "" and needle:find(lastNeedle, 1, true) then
+        for j = 1, #lastHits do
+            local k = lastHits[j]
+            if index[k].folded:find(needle, 1, true) then n = n + 1 hits[n] = k end
+        end
+    elseif needle:find("\n", 1, true) or needle == "" then
+        for k = 1, hsCount do
+            if index[k].folded:find(needle, 1, true) then n = n + 1 hits[n] = k end
+        end
+    else
+        local text, starts, count, find = hsText, hsStart, hsCount, string.find
+        local k, at = 1, 1
+        while true do
+            local s = find(text, needle, at, true)
+            if not s then break end
+
+            if starts[k + 1] <= s then
+                local step, lo, hi = 1, k, k + 1
+                while hi <= count and starts[hi + 1] <= s do lo = hi step = step * 2 hi = k + step end
+                if hi > count then hi = count end
+                while lo < hi do
+                    local mid = floor((lo + hi + 1) / 2)
+                    if starts[mid] <= s then lo = mid else hi = mid - 1 end
+                end
+                k = lo
+            end
+            n = n + 1 hits[n] = k
+            k = k + 1
+            if k > count then break end
+            at = starts[k]
+        end
+    end
+    lastNeedle, lastHits = needle, hits
+    return hits
+end
+
+
+
+
+
 
 
 
@@ -1782,6 +2027,12 @@ local function onQuestDataLoaded(_, questID, success)
     local pending = QuestData.lookups.inFlight
     if pending and pending.id == questID then QuestData.lookups.inFlight = nil end
     if not questID then return end
+
+
+
+
+    local ours = (pending and pending.id == questID) or QuestData.lookups.refused[questID]
+    if not ours and not QuestData.RowFor(questID) and not foreverIndex()[questID] then return end
     if success == false then
 
         if pending and pending.id == questID then
@@ -1835,9 +2086,40 @@ QuestData.ZoneIndex = zoneIndex
 
 
 
+local function foreverZoneIndex()
+    if QuestData.foreverZoneIndexBuilt then return QuestData.foreverZoneIndexBuilt end
+    local _, _, _, _, forever = dataset()
+    local index = {}
+    if forever and type(forever.sinst) == "table" and type(forever.smap) == "table" then
+        for i = 1, (forever.n or #forever.id) do
+            local map = forever.smap[i]
+            if forever.sinst[i] and map and map ~= 0 and not QuestData.RowFor(forever.id[i]) then
+                local bucket = index[map]
+                if not bucket then bucket = {} index[map] = bucket end
+                bucket[#bucket + 1] = i
+            end
+        end
+    end
+    QuestData.foreverZoneIndexBuilt = index
+    return index
+end
+QuestData.ForeverZoneIndex = foreverZoneIndex
+
+
+
+
+
 
 local LEADING_FILLER = { "^level%s+", "^quests?%s+", "^in%s+" }
 local TRAILING_FILLER = "%s+quests?$"
+
+
+local FILLER_WORD = { level = true, quest = true, quests = true, ["in"] = true }
+
+
+
+
+local ZONE_SCORE_MIN = 60
 
 local function dropFiller(text)
 
@@ -1864,23 +2146,53 @@ function QuestData.ParseQuery(text)
     if low then
         out.minLevel, out.maxLevel = tonumber(low), tonumber(high)
         rest = rest:gsub("%d+%s*%-%s*%d+", " ", 1)
+    end
+    rest = dropFiller(Util.Trim(rest))
+    if low then
+        if FILLER_WORD[Util.Lower(rest)] then rest = "" end
     else
-        local one = rest:match("^%s*level%s+(%d+)%s*$") or rest:match("^%s*(%d+)%s*$")
+
+
+        local one = rest:match("^%s*(%d+)%s*$")
         if one then
             out.minLevel, out.maxLevel = tonumber(one), tonumber(one)
             rest = ""
         end
     end
-    rest = dropFiller(Util.Trim(rest))
     if rest ~= "" then
         local D = FGPS.Destinations
-        if D and D.ResolveZoneName then
-            local ok, mapID = pcall(D.ResolveZoneName, rest)
-            if ok and type(mapID) == "number" and zoneIndex()[mapID] then
-                out.zone = mapID
-                out.zoneName = D.MapName and D.MapName(mapID) or nil
-                rest = ""
+        local function zoneOf(place)
+            if place == "" or not (D and D.ResolveZoneName) then return nil end
+            local ok, mapID, score = pcall(D.ResolveZoneName, place)
+
+            if ok and type(mapID) == "number" and (tonumber(score) or 0) >= ZONE_SCORE_MIN
+               and (zoneIndex()[mapID] or foreverZoneIndex()[mapID]) then
+                return mapID
             end
+            return nil
+        end
+        local mapID = zoneOf(rest)
+        if not mapID and not out.minLevel then
+
+
+
+
+            local place, one = rest:match("^(.-)%s+(%d+)$")
+            if place then
+                place = place:gsub("%s+[Ll][Ee][Vv][Ee][Ll]$", "")
+            else
+                one, place = rest:match("^(%d+)%s+(.+)$")
+            end
+            local zone = place and zoneOf(dropFiller(Util.Trim(place)))
+            if zone then
+                mapID = zone
+                out.minLevel, out.maxLevel = tonumber(one), tonumber(one)
+            end
+        end
+        if mapID then
+            out.zone = mapID
+            out.zoneName = D.MapName and D.MapName(mapID) or nil
+            rest = ""
         end
     end
     out.text = rest
@@ -1937,32 +2249,76 @@ end
 
 
 
+function QuestData.FoundStatus(query, found, partial, oneEnded, own, refused)
+    local function more(n, one, many)
+        return " " .. format(n == 1 and one or many, n)
+    end
+    local status
+    if query.zone then
+        status = format(L["%d routable quests start in %s."], found - partial - oneEnded - own, query.zoneName or tostring(query.zone))
+    else
+        status = format(L["%d quests found."], found)
+    end
+    if partial > 0 then
+        if query.zone then
+            status = status .. more(partial, L["%d more has an objective whose place is not known."],
+                L["%d more have an objective whose place is not known."])
+        else
+            status = status .. " " .. format(L["%d of them have an objective whose place is not known."], partial)
+        end
+    end
+    if oneEnded > 0 then
 
-function QuestData.Search(text, opts)
+        if query.zone then
+            status = status .. more(oneEnded, L["%d more has no known turn-in."], L["%d more have no known turn-in."])
+        else
+            status = status .. " " .. format(L["%d of them have no known giver or no known turn-in."], oneEnded)
+        end
+    end
+    if own > 0 and query.zone then
+        status = status .. more(own, L["%d more is one of Forever's own quests."], L["%d more are Forever's own quests."])
+    end
+    if refused > 0 then
+        status = status .. more(refused, L["%d more starts with another race or class."],
+            L["%d more start with another race or class."])
+    end
+    return status
+end
+
+
+
+
+
+
+
+local floor, huge = math.floor, math.huge
+local lazyId, lazyLayer, lazyYards, lazyHeap = {}, {}, {}, {}
+local function searchImpl(text, opts)
     opts = opts or {}
     local quests = dataset()
     if not quests then return {}, L["Quest data is not installed in this copy of Cabbie."], {} end
     local query = QuestData.ParseQuery(text)
     local limit = opts.limit or QuestData.SEARCH_LIMIT
     local pos = playerPos()
+    local mine = playerSideCode()
     local rows, seen, refused = {}, {}, 0
+
+
+
+    local found, partial, oneEnded, own = 0, 0, 0, 0
+    local function countVanilla(row)
+        found = found + 1
+        local qr = quests.qr and quests.qr[row] or 0
+        if hasBit(qr, QuestData.QR_ONE_ENDED) then oneEnded = oneEnded + 1
+        elseif hasBit(qr, QR_OBJECTIVE_UNPLACED) then partial = partial + 1 end
+    end
+    local function countForever()
+        found, own = found + 1, own + 1
+    end
     local settings = FGPS.DB and FGPS.DB.settings
     local includeForever = opts.includeForever
     if includeForever == nil then
         includeForever = not (settings and settings.quests and settings.quests.searchForever == false)
-    end
-
-    local function consider(questID, layer)
-        if seen[questID] then return end
-        if layer == "vanilla" and not opts.ignoreEligibility then
-            local allowed = QuestData.AllowedForPlayer(questID)
-            if not allowed then refused = refused + 1 return end
-        end
-        local row = searchRow(questID, pos, layer)
-        if not row then return end
-        if not levelMatches(query, row.level, row.minLevel) then return end
-        seen[questID] = true
-        rows[#rows + 1] = row
     end
 
 
@@ -1972,35 +2328,177 @@ function QuestData.Search(text, opts)
 
     local picked = {}
     local function pick(row)
-        if not opts.ignoreEligibility and not masksAllow(quests, row) then refused = refused + 1 return end
+
+
         if not levelMatches(query, quests.lvl[row], quests.min[row]) then return end
+        if not opts.ignoreEligibility and (not masksAllow(quests, row) or otherSidesQuest(quests, row, mine)) then
+            refused = refused + 1
+            return
+        end
         local questID = quests.id[row]
         local start = QuestData.Start(questID)
+        countVanilla(row)
         picked[#picked + 1] = { questID = questID, yards = start and distanceTo(pos, start.inst, start.x, start.y) or nil }
+    end
+
+
+
+    local function pickForever(forever, i)
+        if not levelMatches(query, forever.lvl and forever.lvl[i] or nil, nil) then return end
+        local questID = forever.id[i]
+        if not opts.ignoreEligibility and not foreverMasksAllow(questID) then
+            refused = refused + 1
+            return
+        end
+        countForever()
+        picked[#picked + 1] = { questID = questID, forever = true,
+                                yards = distanceTo(pos, forever.sinst[i], forever.sx[i], forever.sy[i]) }
     end
 
     if query.zone then
 
 
         for _, row in ipairs(zoneIndex()[query.zone] or {}) do pick(row) end
+        if includeForever then
+            local _, _, _, _, forever = dataset()
+            for _, i in ipairs(foreverZoneIndex()[query.zone] or {}) do pickForever(forever, i) end
+        end
     elseif query.text ~= "" then
 
 
         local needle = Util.Lower(query.text)
-        for _, entry in ipairs(titleIndex()) do
-            if entry.folded:find(needle, 1, true) then
-                local layer = entry.vanilla and "vanilla" or "forever"
-                if layer == "vanilla" or includeForever then consider(entry.id, layer) end
+
+
+        local raceBit, classBit = playerRaceBit(), playerClassBit()
+        local _, _, _, _, forever = dataset()
+        local fIndex = forever and foreverIndex() or nil
+        local qid, qlayer, qyards = lazyId, lazyLayer, lazyYards
+        local heap, hn = lazyHeap, 0
+        local HUGE = huge
+        local function worse(a, b)
+            local ya, yb = qyards[a], qyards[b]
+            if ya ~= yb then return ya > yb end
+            return qid[a] > qid[b]
+        end
+        local cn = 0
+        local tIndex = titleIndex()
+        local mList = titleMatches(needle)
+        for mj = 1, #mList do
+            local entry = tIndex[mList[mj]]
+            do
+                local id = entry.id
+                local vanilla = entry.vanilla
+                if (vanilla or includeForever) and not seen[id] then
+                    local ok, level, minLevel = false
+                    if vanilla then
+                        local row = entry.row
+                        if row == nil then row = QuestData.RowFor(id) or false entry.row = row end
+                        if row then
+                            local allowed = true
+                            if not opts.ignoreEligibility and tonumber(id) == quests.id[row] then
+                                local classes = quests.classes and quests.classes[row] or 0
+                                if not raceMaskAllows(quests, row, raceBit) then allowed = false
+                                elseif classBit and classes ~= 0 and not hasBit(classes, classBit) then allowed = false
+                                elseif (quests.races[row] or 0) == 0 and otherSidesQuest(quests, row, mine) then
+                                    allowed = false
+                                end
+                            end
+                            if not allowed then
+
+                                refused = refused + 1
+                                seen[id] = true
+                            else
+                                level, minLevel = quests.lvl[row], quests.min[row]
+                                ok = true
+                            end
+                        end
+                    else
+                        local i = fIndex and fIndex[tonumber(id)]
+                        if i then
+
+
+                            if not opts.ignoreEligibility and not foreverMasksAllow(id) then
+                                refused = refused + 1
+                                seen[id] = true
+                            else
+                                level = forever.lvl and forever.lvl[i] or nil
+                                ok = true
+                            end
+                        end
+                    end
+                    if ok and levelMatches(query, level, minLevel) then
+                        seen[id] = true
+                        local yards
+                        if vanilla then
+                            local row = entry.row
+                            local first, stop = quests.p0[row], quests.p0[row + 1] - 1
+                            local count = quests.gn[row] or 0
+                            if count > stop - first + 1 then count = stop - first + 1 end
+                            if count == 1 then
+                                local _, givers = dataset()
+                                yards = distanceTo(pos, givers.inst[first], givers.x[first], givers.y[first])
+                            elseif count >= 2 then
+                                local start = QuestData.Start(id)
+                                yards = start and distanceTo(pos, start.inst, start.x, start.y) or nil
+                            end
+                        else
+                            local i = fIndex[tonumber(id)]
+                            local inst = forever.sinst and forever.sinst[i]
+                            if inst then yards = distanceTo(pos, inst, forever.sx[i], forever.sy[i]) end
+                        end
+                        cn = cn + 1
+                        if vanilla then countVanilla(entry.row) else countForever() end
+                        qid[cn], qlayer[cn], qyards[cn] = tonumber(id) or id, vanilla, yards or HUGE
+                        if hn < limit then
+                            hn = hn + 1
+                            local j = hn
+                            while j > 1 do
+                                local p = floor(j / 2)
+                                if not worse(cn, heap[p]) then break end
+                                heap[j] = heap[p]
+                                j = p
+                            end
+                            heap[j] = cn
+                        elseif hn > 0 and worse(heap[1], cn) then
+                            local j = 1
+                            while true do
+                                local l = j * 2
+                                if l > hn then break end
+                                local c = l
+                                if l + 1 <= hn and worse(heap[l + 1], heap[l]) then c = l + 1 end
+                                if not worse(heap[c], cn) then break end
+                                heap[j] = heap[c]
+                                j = c
+                            end
+                            heap[j] = cn
+                        end
+                    end
+                end
             end
         end
+        for k = 1, hn do
+            local c = heap[k]
+            local row = searchRow(qid[c], pos, qlayer[c] and "vanilla" or "forever")
+            if row then rows[#rows + 1] = row end
+            heap[k] = nil
+        end
+        for k = 1, cn do qid[k], qlayer[k], qyards[k] = nil, nil, nil end
     elseif query.minLevel then
         for row = 1, quests.n do pick(row) end
+        if includeForever then
+            local _, _, _, _, forever = dataset()
+            for _, bucket in pairs(foreverZoneIndex()) do
+                for _, i in ipairs(bucket) do pickForever(forever, i) end
+            end
+        end
     end
+
+
 
     sortRows(picked)
     for _, candidate in ipairs(picked) do
         if #rows >= limit then break end
-        local row = searchRow(candidate.questID, pos, "vanilla")
+        local row = searchRow(candidate.questID, pos, candidate.forever and "forever" or "vanilla")
         if row then rows[#rows + 1] = row end
     end
 
@@ -2009,30 +2507,7 @@ function QuestData.Search(text, opts)
 
     local status
     if #rows > 0 then
-
-
-        local partial, oneEnded = 0, 0
-        for _, row in ipairs(rows) do
-            if row.oneEnded then oneEnded = oneEnded + 1
-            elseif row.partial then partial = partial + 1 end
-        end
-        if query.zone then
-            status = format(L["%d routable quests start in %s."], #rows - partial - oneEnded, query.zoneName or tostring(query.zone))
-        else
-            status = format(L["%d quests found."], #rows)
-        end
-        if partial > 0 then
-            status = status .. " " .. format(query.zone and L["%d more have an objective whose place is not known."]
-                or L["%d of them have an objective whose place is not known."], partial)
-        end
-        if oneEnded > 0 then
-
-            status = status .. " " .. format(query.zone and L["%d more have no known hand-in."]
-                or L["%d of them have no known giver or no known hand-in."], oneEnded)
-        end
-        if refused > 0 then
-            status = status .. " " .. format(L["%d more start with another race or class."], refused)
-        end
+        status = QuestData.FoundStatus(query, found, partial, oneEnded, own, refused)
     elseif query.text ~= "" and englishClient() then
 
 
@@ -2058,7 +2533,32 @@ end
 
 
 
-function QuestData.SearchTitles(text, opts)
+
+local titleRank
+local stId, stVan, stFold, stScore, stHeap, stRank = {}, {}, {}, {}, {}, {}
+local rkIndex, rkRank
+
+titleRank = function(index)
+    if index == rkIndex then return rkRank end
+    local order = {}
+    for k = 1, #index do order[k] = k end
+    table.sort(order, function(a, b)
+        local ea, eb = index[a], index[b]
+        local fa, fb = ea.folded, eb.folded
+        if fa ~= fb then return fa < fb end
+        return ea.id < eb.id
+    end)
+    local rank, r, prev = {}, 0, nil
+    for i = 1, #order do
+        local e = index[order[i]]
+        if not prev or e.folded ~= prev.folded or e.id ~= prev.id then r = r + 1 end
+        rank[order[i]] = r
+        prev = e
+    end
+    rkIndex, rkRank = index, rank
+    return rank
+end
+local function searchTitlesImpl(text, opts)
     opts = opts or {}
     local needle = Util.Lower(Util.Trim(tostring(text or "")))
     if needle == "" or not dataset() then return {} end
@@ -2069,41 +2569,80 @@ function QuestData.SearchTitles(text, opts)
     end
     local D = FGPS.Destinations
     local score = D and D.ScoreName
-    local hits = {}
-    for _, entry in ipairs(titleIndex()) do
-        if entry.folded:find(needle, 1, true) then
-            local layer = entry.vanilla and "vanilla" or "forever"
-            if layer == "vanilla" or includeForever then
-                hits[#hits + 1] = { id = entry.id, layer = layer, folded = entry.folded, score = score and score(entry.folded, needle) or 40 }
+
+
+    local hid, hvan, hfold, hscore, heap = stId, stVan, stFold, stScore, stHeap
+    local n = 0
+    local tIndex = titleIndex()
+    local mList = titleMatches(needle)
+    local rank = titleRank(tIndex)
+    local hrank = stRank
+    for mj = 1, #mList do
+        local mk = mList[mj]
+        local entry = tIndex[mk]
+        local folded = entry.folded
+        do
+            local vanilla = entry.vanilla
+            if vanilla or includeForever then
+                n = n + 1
+                hid[n], hvan[n], hfold[n], hrank[n] = entry.id, vanilla, folded, rank[mk]
+                hscore[n] = score and score(folded, needle) or 40
+                heap[n] = n
             end
         end
     end
-    table.sort(hits, function(a, b)
-        if a.score ~= b.score then return a.score > b.score end
-        if a.folded ~= b.folded then return a.folded < b.folded end
-        return a.id < b.id
-    end)
+
+
+    local function sift(j, size)
+        local v = heap[j]
+        local sv, rv = hscore[v], hrank[v]
+        while true do
+            local l = j * 2
+            if l > size then break end
+            local c = l
+            local cl = heap[l]
+            if l + 1 <= size then
+                local cr = heap[l + 1]
+                local s1, s2 = hscore[cr], hscore[cl]
+                if (s1 ~= s2 and s1 > s2) or (s1 == s2 and hrank[cr] < hrank[cl]) then c = l + 1 cl = cr end
+            end
+            local sc = hscore[cl]
+            if not ((sc ~= sv and sc > sv) or (sc == sv and hrank[cl] < rv)) then break end
+            heap[j] = cl
+            j = c
+        end
+        heap[j] = v
+    end
+    for j = floor(n / 2), 1, -1 do sift(j, n) end
+    local size = n
     local limit = opts.limit or QuestData.SEARCH_LIMIT
     local pos = playerPos()
     local rows, seen, seenTitle = {}, {}, {}
-    for _, hit in ipairs(hits) do
-        if #rows >= limit then break end
-        local allowed = (hit.layer == "vanilla" and QuestData.AllowedForPlayer(hit.id))
-            or (hit.layer == "forever" and foreverMasksAllow(hit.id))
 
 
 
-        if not seen[hit.id] and allowed and not (opts.distinct and seenTitle[hit.folded])
-                and not (opts.keep and not opts.keep(hit.id)) then
-            local row = searchRow(hit.id, pos, hit.layer)
+    while size > 0 and #rows < limit do
+        local k = heap[1]
+        heap[1] = heap[size]
+        heap[size] = nil
+        size = size - 1
+        if size > 0 then sift(1, size) end
+        local id, layer = hid[k], hvan[k] and "vanilla" or "forever"
+        local folded = hfold[k]
+        local allowed = (layer == "vanilla" and QuestData.AllowedForPlayer(id))
+            or (layer == "forever" and foreverMasksAllow(id))
+        if not seen[id] and allowed and not (opts.distinct and seenTitle[folded])
+                and not (opts.keep and not opts.keep(id)) then
+            local row = searchRow(id, pos, layer)
             if row then
-                seen[hit.id] = true
-                seenTitle[hit.folded] = true
-                row.score = hit.score
+                seen[id] = true
+                seenTitle[folded] = true
+                row.score = hscore[k]
                 rows[#rows + 1] = row
             end
         end
     end
+    for j = 1, n do hid[j], hvan[j], hfold[j], hscore[j], heap[j], hrank[j] = nil, nil, nil, nil, nil, nil end
     return rows
 end
 
@@ -2127,7 +2666,8 @@ function QuestData:Init()
     self.available = QuestData.Available()
 
     self.zoneIndexBuilt, self.areaIndexBuilt, self.foreverIndexBuilt, self.titleIndexBuilt = nil, nil, nil, nil
-    self.groupIndexBuilt, self.giversOnMapBuilt, self.newerIndexBuilt = nil, nil, nil
+    self.groupIndexBuilt, self.giversOnMapBuilt, self.newerIndexBuilt, self.giverSideBuilt = nil, nil, nil, nil
+    self.foreverZoneIndexBuilt = nil
     local Events = FGPS.Events
     Events:RegisterWoW("QUEST_DATA_LOAD_RESULT", onQuestDataLoaded, self)
 
@@ -2137,3 +2677,23 @@ function QuestData:Init()
         FGPS.Log:Info("Quest data files are not installed; the quest panel reports the feature as unavailable")
     end
 end
+
+
+
+
+local function unpinReturn(ok, ...)
+    pinQ, pinG, pinA, pinI, pinF = nil, nil, nil, nil, nil
+    if not ok then error((...), 0) end
+    return ...
+end
+local function pinned(impl)
+    return function(text, opts)
+        if pinQ then return impl(text, opts) end
+        local q, g, a, i, f = dataset()
+        if not q then return impl(text, opts) end
+        pinQ, pinG, pinA, pinI, pinF = q, g, a, i, f
+        return unpinReturn(pcall(impl, text, opts))
+    end
+end
+QuestData.Search = pinned(searchImpl)
+QuestData.SearchTitles = pinned(searchTitlesImpl)

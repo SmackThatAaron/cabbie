@@ -6,6 +6,8 @@
 
 
 
+
+
 local ADDON_NAME, FGPS = ...
 
 local L = FGPS.L
@@ -18,6 +20,7 @@ local Itinerary = {
     items = {},
     stops = {},
     closedByUser = false,
+    showOwed = false,
     hidingProgrammatically = false,
     optimizeArmedAt = nil,
 }
@@ -184,6 +187,11 @@ local function ensureRowWidgets(row)
     row.up = makeButton(row, L["^"], nil, 22, 18)
     row.up:SetPoint("RIGHT", row.down, "LEFT", -2, 0)
     row.text:SetPoint("RIGHT", row.up, "LEFT", -6, 0)
+
+
+    setButtonOnClick(row.remove, function() local item = row.item if item then Itinerary:RemoveStop(item.index) end end)
+    setButtonOnClick(row.up, function() local item = row.item if item then Itinerary:MoveStop(item.index, item.index - 1) end end)
+    setButtonOnClick(row.down, function() local item = row.item if item then Itinerary:MoveStop(item.index, item.index + 1) end end)
 end
 
 function Itinerary.RenderRow(row, item, index)
@@ -191,9 +199,6 @@ function Itinerary.RenderRow(row, item, index)
     row.item = item
     row.text:SetText(item.label or "")
     applyLabelColor(row.text, item.current and "accent" or "text")
-    setButtonOnClick(row.remove, function() Itinerary:RemoveStop(item.index) end)
-    setButtonOnClick(row.up, function() Itinerary:MoveStop(item.index, item.index - 1) end)
-    setButtonOnClick(row.down, function() Itinerary:MoveStop(item.index, item.index + 1) end)
     setButtonEnabled(row.up, not item.first)
     setButtonEnabled(row.down, not item.last)
 end
@@ -283,21 +288,30 @@ function Itinerary:Optimize()
     end
     self.optimizeArmedAt = nil
     if Navigator and Navigator.OptimizeStops then
-        local ok, err = pcall(Navigator.OptimizeStops, Navigator)
-        if not ok then FGPS.Log:Error("OptimizeStops failed: %s", tostring(err)) end
-        FGPS:Print(L["Stops reordered."])
+        local ok, result = pcall(Navigator.OptimizeStops, Navigator)
+        if not ok then FGPS.Log:Error("OptimizeStops failed: %s", tostring(result)) end
+
+        if ok and result ~= false then FGPS:Print(L["Stops reordered."]) end
     end
     self:Refresh()
     return true
 end
 
+
 function Itinerary:SkipStop()
+    local skipped = false
     local Navigator = FGPS.Navigator
     if Navigator and Navigator.SkipStop then
-        local ok, err = pcall(Navigator.SkipStop, Navigator)
-        if not ok then FGPS.Log:Error("SkipStop failed: %s", tostring(err)) end
+        local ok, result = pcall(Navigator.SkipStop, Navigator)
+        if ok then
+            skipped = result == true
+        else
+            skipped = nil
+            FGPS.Log:Error("SkipStop failed: %s", tostring(result))
+        end
     end
     self:Refresh()
+    return skipped
 end
 
 
@@ -342,7 +356,7 @@ local function buildWindow()
     local specs = {
         { key = "optimize", label = "Optimize", fn = function() Itinerary:Optimize() end },
         { key = "skip", label = "Skip stop", fn = function() Itinerary:SkipStop() end },
-        { key = "cancel", label = "Cancel route", fn = function() Itinerary:CancelJourney() end },
+        { key = "cancel", label = "Stop Route", fn = function() Itinerary:CancelJourney() end },
     }
     window.fgpsButtons = {}
     local previous
@@ -395,8 +409,31 @@ function Itinerary:IsShown()
     return self.window ~= nil and self.window:IsShown()
 end
 
+
+
+function Itinerary:ShowOwed()
+    if not self.showOwed then return false end
+    self.showOwed = false
+    if self.closedByUser or #navigatorStops() < 2 then return false end
+    if not self.window then self:EnsureWindow() end
+    if not self.window or self.window:IsShown() then return false end
+    self.window:Show()
+    self:Refresh()
+    return true
+end
+
+
+
+function Itinerary:SearchClosed()
+    local Navigator = FGPS.Navigator
+    if Navigator and Navigator.IsJourney and Navigator:IsJourney() then return self:ShowOwed() end
+    return false
+end
+
+
+
 function Itinerary:Toggle()
-    if self:IsShown() then self:Hide() else self:Show() end
+    if self:IsShown() then self.window:Hide() else self:Show() end
 end
 
 
@@ -408,15 +445,24 @@ local function onItineraryChanged(_, stops)
     if #stops > 1 then
         if not Itinerary.closedByUser then
 
+
+
             local Search = FGPS.UI and FGPS.UI.Search
             local searchOpen = Search and Search.IsShown and Search:IsShown()
             if not searchOpen then
                 if not Itinerary.window then Itinerary:EnsureWindow() end
                 if Itinerary.window and not Itinerary.window:IsShown() then Itinerary.window:Show() end
+            elseif not Itinerary:IsShown() then
+                Itinerary.showOwed = true
             end
         end
         Itinerary:Refresh()
     else
+
+
+
+        Itinerary.closedByUser = false
+        Itinerary.showOwed = false
         Itinerary:HideProgrammatically()
         if Itinerary.window then Itinerary:Refresh() end
     end
@@ -424,6 +470,7 @@ end
 
 local function onJourneyEnded()
     Itinerary.closedByUser = false
+    Itinerary.showOwed = false
     Itinerary.optimizeArmedAt = nil
     Itinerary.stops = {}
     Itinerary:HideProgrammatically()
@@ -441,7 +488,10 @@ function Itinerary:Init()
 
 
     local function onRoute() if Itinerary:IsShown() then Itinerary:Refresh() end end
-    Events:Register("ROUTE_STARTED", onRoute, self)
+
+    Events:Register("ROUTE_STARTED", function()
+        if not Itinerary:ShowOwed() then onRoute() end
+    end, self)
     Events:Register("ROUTE_UPDATED", onRoute, self)
 
     Events:Register("SETTINGS_CHANGED", function(_, key)
@@ -449,12 +499,17 @@ function Itinerary:Init()
     end, self)
     FGPS.Slash.Register("stops", function(args)
         local word = Util.Lower(Util.Trim(args))
-        if word == "skip" then Itinerary:SkipStop()
+
+
+        if word == "skip" then
+            if Itinerary:SkipStop() == false then FGPS:Print(L["No stop to skip."]) end
         elseif word == "clear" then
 
 
             local Navigator = FGPS.Navigator
-            if Navigator and Navigator.Clear then Navigator:Clear("user") end
+            if Navigator and Navigator.Clear and not Navigator:Clear("user") then
+                FGPS:Print(L["No route or stops to clear."])
+            end
         else Itinerary:Toggle() end
     end, L["Stops window; skip|clear"])
 end

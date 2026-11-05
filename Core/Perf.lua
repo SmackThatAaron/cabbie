@@ -21,7 +21,7 @@ local L = FGPS.L
 local debugprofilestop = debugprofilestop
 local pairs, ipairs, type, tostring, format = pairs, ipairs, type, tostring, string.format
 
-local MAX_SAMPLES, MAX_TRIPS, MAX_ROUTES = 60, 20, 20
+local MAX_SAMPLES, MAX_TRIPS, MAX_ROUTES, MAX_LOADS = 60, 20, 20, 40
 local PROFILER_METRICS = { "SessionAverageTime", "RecentAverageTime", "LastTime", "PeakTime",
                            "CountTimeOver1Ms", "CountTimeOver5Ms", "CountTimeOver10Ms" }
 
@@ -294,8 +294,9 @@ end
 
 Perf.sessionRoutes = {}
 
-local function routeRing(create)
-    if not FGPS:IsOwnerInstall() then return Perf.sessionRoutes end
+
+local function ownerList(key, create)
+    if not FGPS:IsOwnerInstall() then return nil end
     local account = FGPS.DB and FGPS.DB.account
     if type(account) ~= "table" then return nil end
     local session = account.lastSession
@@ -304,13 +305,18 @@ local function routeRing(create)
         session = {}
         account.lastSession = session
     end
-    local routes = session.routes
-    if type(routes) ~= "table" then
+    local list = session[key]
+    if type(list) ~= "table" then
         if not create then return nil end
-        routes = {}
-        session.routes = routes
+        list = {}
+        session[key] = list
     end
-    return routes
+    return list
+end
+
+local function routeRing(create)
+    if not FGPS:IsOwnerInstall() then return Perf.sessionRoutes end
+    return ownerList("routes", create)
 end
 
 function Perf:NoteRoute(row)
@@ -335,6 +341,36 @@ end
 
 function Perf:Routes()
     return routeRing(false) or {}
+end
+
+
+
+
+
+
+
+
+function Perf:NoteLoad(row)
+    if type(row) ~= "table" then return nil end
+    local loads = ownerList("loads", true)
+    if not loads then return nil end
+    local entry = {
+        folder = type(row.folder) == "string" and row.folder or nil,
+        ms = tonumber(row.ms) and math.floor(row.ms * 10 + 0.5) / 10 or nil,
+        why = type(row.why) == "string" and row.why or nil,
+        state = type(row.state) == "string" and row.state or nil,
+        t = GetTime and math.floor(GetTime() * 10 + 0.5) / 10 or nil,
+    }
+
+    if type(row.loading) == "boolean" then entry.loading = row.loading end
+    if type(row.position) == "boolean" then entry.position = row.position end
+    loads[#loads + 1] = entry
+    while #loads > MAX_LOADS do table.remove(loads, 1) end
+    return entry
+end
+
+function Perf:Loads()
+    return ownerList("loads", false) or {}
 end
 
 

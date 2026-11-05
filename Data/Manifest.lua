@@ -24,12 +24,12 @@ local ADDON_NAME, FGPS = ...
 FGPS.Data = FGPS.Data or {}
 
 FGPS.Data.manifest = {
-  dataVersion = "2026.10.31.3", clientBuild = "1.60.1.69913", interface = 16001, generated = "2026-10-31T03:18:55Z",
+  dataVersion = "2026.11.01.2", clientBuild = "1.60.1.69913", interface = 16001, generated = "2026-11-01T04:08:59Z",
   sources = {
     { id = "wago-db2", name = "wago.tools DB2 export", build = "1.60.1.69913", license = "Blizzard game data (community datamining, see DATA_PROVENANCE.md)" },
     { id = "cmangos-classic-db", name = "CMaNGOS classic-db world database", version = "z2815 (1.12.1)", license = "GPL-3.0 + COPYRIGHT.md notice" },
     { id = "melloui-routedata", name = "MelloUI Media/RouteData.lua", version = "commit 70b9f6b434bb8be190b86506077261f07e5a22c8", license = "MIT" },
-    { id = "forevergps-learned", name = "Cabbie learner recordings", version = "2026-10-31T03:14:40Z", license = "player's own recording" },
+    { id = "forevergps-learned", name = "Cabbie learner recordings", version = "2026-11-01T04:04:44Z", license = "player's own recording" },
   },
   counts = {
     nodes = 553024,
@@ -89,7 +89,7 @@ FGPS.Data.manifest = {
   },
   instances = {
     [0] = {
-      file = "Graph_0_01.lua .. Graph_0_10.lua",
+      file = "Graph_0_01.lua .. Graph_0_21.lua",
       nodes = 246624,
       edges = 1671198,
       verifiedNodes = 25842,
@@ -142,7 +142,7 @@ FGPS.Data.manifest = {
       hazardCrossings = 0,
     },
     [1] = {
-      file = "Graph_1_01.lua .. Graph_1_12.lua",
+      file = "Graph_1_01.lua .. Graph_1_24.lua",
       nodes = 297523,
       edges = 1996898,
       verifiedNodes = 25744,

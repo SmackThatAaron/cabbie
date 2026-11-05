@@ -1,5 +1,5 @@
 -- Cabbie/UI/Go.lua
--- The one way the new entry points start a route: a Shift-click on the map, "Take me there" on a
+-- The one way the new entry points start a route: a Shift-click on the map, "Guide Me" on a
 -- quest, and a typed place all end in Go.Start, which begins guidance at once. There is no
 -- preview step and no chat line; the Route block shows where the route leads.
 local ADDON_NAME, FGPS = ...
@@ -15,6 +15,12 @@ FGPS.UI.Go = Go
 -- The dispatch entry of the plain "/go"; the word itself is in the global SLASH_CABBIEGO1.
 local GO_SLASH_NAME = "CABBIEGO"
 local GO_WORD = "/go"
+
+-- The word a text shows the player: "/go" belongs to somebody else where RegisterSlash stepped
+-- aside, and "/cabbie go" is Cabbie's either way.
+local function goWord()
+    return Go.slashRegistered and GO_WORD or "/cabbie go"
+end
 
 -- A town or a capital the typed name matches comes first, whichever side it belongs to: by score
 -- alone "crossroads" was the Crossroads Graveyard in the Wetlands. Landmarks are not in the list,
@@ -109,7 +115,7 @@ function Go.FromText(text)
     if text == "" then
         -- "/go" with nothing after it opens the line. The sentence is for a client without it.
         if Line and Line.Open and Line.Open() then return false end
-        FGPS:Print(L["Type a place after the command, for example: /go Goldshire"])
+        FGPS:Print(L["Type a place after the command, for example: %s Goldshire"], goWord())
         return false
     end
     local dest, problem = fromCoordinates(text)
@@ -231,12 +237,10 @@ function Go.FromUnknownCommand(text)
     if dest and type(dest.name) == "string" and plain(dest.name) == plain(text) and (not command or word ~= text) then
         return Go.Start(dest)
     end
-    -- The advice names the word Cabbie answers: "/go" belongs to somebody else where RegisterSlash
-    -- stepped aside, and "/cabbie go" is Cabbie's either way.
-    local goWord = Go.slashRegistered and GO_WORD or "/cabbie go"
+    local ownWord = goWord()
     if command then
         FGPS:Print(L["'%s' is not a command. Did you mean /cabbie %s? /cabbie help lists the commands, and %s %s looks for a place."],
-            word, command, goWord, text)
+            word, command, ownWord, text)
         return false
     end
     local Destinations = FGPS.Destinations
@@ -251,7 +255,7 @@ function Go.FromUnknownCommand(text)
     end
     if dest then
         FGPS:Print(L["'%s' is neither a command nor enough of a place name to start a route. /cabbie help lists the commands, and %s %s looks for a place."],
-            text, goWord, text)
+            text, ownWord, text)
     else
         FGPS:Print(L["'%s' is neither a command nor a place Cabbie knows. /cabbie help lists the commands."], text)
     end

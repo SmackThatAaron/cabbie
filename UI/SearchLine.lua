@@ -771,7 +771,6 @@ function SearchLine.FirstLogin()
     account.guideSeenAtLogin = true
     local Navigator = FGPS.Navigator
     if Navigator and Navigator.HasAnythingSet and Navigator:HasAnythingSet() then return false end
-    local Setup = FGPS.UI.Setup
     if Setup and Setup.Show and Setup:Show() then return true end
     return SearchLine.Guide()
 end
