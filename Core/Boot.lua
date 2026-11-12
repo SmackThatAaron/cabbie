@@ -12,15 +12,14 @@ local Boot = {
     -- Core services that need saved settings; they run before the module list.
     coreOrder = { "Scheduler", "Perf", "DataLoad" },
     -- Fixed init order (ARCHITECTURE.md section 6). It keeps the TOC's order (section 4) by and large but
-    -- not exactly: ServiceSearch, Calibrate and Social before QuestData, Compat and Bindings before Cues,
-    -- SelfTest last.
+    -- not exactly: Calibrate before Social, Compat and Bindings before Cues, SelfTest last.
     order = {
         "Coords", "Graph", "Access", "Cost", "Route", "Router", "Instructions", "Personal", "Transport",
-        "Destinations", "Quests", "ServiceSearch", "Calibrate", "Social", "QuestData", "Leveling", "LevelingAuto", "QuestBatch", "Inside", "Navigator",
+        "Destinations", "ServiceSearch", "Calibrate", "Social", "Inside", "Navigator",
         "UI.Guide", "UI.RouteBlock", "UI.Callout", "UI.Go", "UI.Menus", "UI.SearchLine",
         "UI.Skins", "UI.Frames", "UI.Positions", "UI.Tome", "UI.EditMode", "UI.WorldMap",
-        "UI.MapPlaces", "UI.Minimap", "UI.Launcher", "UI.QuestMap", "UI.QuestMarks", "UI.QuestPanel", "UI.LevelingMarks", "UI.Search", "UI.Preview", "UI.Favorites", "UI.Itinerary", "UI.Voice",
-        "UI.InWorldPin", "UI.Settings", "UI.Setup", "UI.Compat", "UI.Bindings", "UI.Cues", "SelfTest",
+        "UI.MapPlaces", "UI.Minimap", "UI.Launcher", "UI.Search", "UI.Preview", "UI.Favorites", "UI.Itinerary", "UI.Voice",
+        "UI.InWorldPin", "UI.Settings", "UI.Setup", "UI.Compat", "UI.QuestClicks", "UI.Bindings", "UI.Cues", "SelfTest",
     },
     report = nil,
 }
@@ -41,6 +40,7 @@ local function initOne(name, report)
     local module = resolve(name)
     if not module or type(module.Init) ~= "function" then
         report.skipped[#report.skipped + 1] = name
+        FGPS.Log:Warn("Module %s is not there and was skipped", name)
         return false
     end
     local ok, err = pcall(module.Init, module)
@@ -70,11 +70,14 @@ local function onLogin()
     local report = Boot.InitModules()
     FGPS.ready = true
     FGPS.Events:Fire("ADDON_READY")
-    if #report.failed > 0 then FGPS:Print(L.BOOT_FAILED_MODULES, #report.failed) end
+    local broken = #report.failed + #report.skipped
+    if FGPS.UpdatedWhileRunning and FGPS.UpdatedWhileRunning() then
+        FGPS:Print(L.BOOT_UPDATED_WHILE_RUNNING)
+    elseif broken > 0 then
+        FGPS:Print(L.BOOT_FAILED_MODULES, broken)
+    end
     FGPS.Log:Info("%s %s ready: %d module(s) initialised, %d skipped, %d failed", FGPS.name, FGPS.version,
         #report.initialised, #report.skipped, #report.failed)
-    -- the login memory sample (UpdateAddOnMemoryUsage walks every add-on) only when instrumentation is on (CB-0014)
-    if FGPS.Perf and FGPS.Perf.enabled and FGPS.Perf.Sample then pcall(FGPS.Perf.Sample, FGPS.Perf) end
 end
 Boot.OnLogin = onLogin
 

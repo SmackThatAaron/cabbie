@@ -444,6 +444,7 @@ end
 
 
 
+
 local function slowedDown(speed, t)
     if speed == nil then return false end
     local ground = bestGroundSpeed()
@@ -630,6 +631,9 @@ function Transport.OnPosition(pos)
     local speed
     if last and last.inst == pos.inst and last.time and t > last.time then
         speed = dist(pos.x, pos.y, last.x, last.y) / (t - last.time)
+    end
+    if last and last.inst ~= pos.inst then
+        Transport.slowSince = nil
     end
 
     if state.onTransport and diedOnBoard() then

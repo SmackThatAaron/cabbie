@@ -10,7 +10,7 @@ FGPS.Cost = Cost
 
 local L = FGPS.L
 local Const = FGPS.Const
-local floor, ceil, sqrt, huge = math.floor, math.ceil, math.sqrt, math.huge
+local floor, ceil, sqrt = math.floor, math.ceil, math.sqrt
 local type = type
 
 
@@ -34,8 +34,6 @@ Const.PREFER_ROADS_SURFACE = 1.20
 
 Const.ROADS_ONLY_SURFACE = 3.0
 Const.ROADS_ONLY_FACTOR = 4.0
-Const.DANGER_STEP = 0.15
-Const.DANGER_CAP = 3.0
 Const.TELEPORT_MAX_WAIT = 120
 
 
@@ -212,6 +210,7 @@ end
 
 
 
+
 function Cost.EdgeSeconds(kind, yards, access, edgeSeconds, extra, shaped)
     yards = yards or 0
     if GROUND_KINDS[kind] then
@@ -225,6 +224,7 @@ function Cost.EdgeSeconds(kind, yards, access, edgeSeconds, extra, shaped)
 
 
         if not allowUnverified(access) and yards > Const.UNVERIFIED_STRICT_MAX_YARDS then return nil end
+        if extra and extra.onFoot then return yards * Const.INFERRED_FACTOR / Const.RUN_SPEED end
         return yards * Const.INFERRED_FACTOR / Cost.GroundSpeed(access)
     elseif kind == 14 then
         if not allowUnverified(access) and yards > Const.UNVERIFIED_STRICT_MAX_YARDS then return nil end
@@ -393,6 +393,246 @@ function Cost.ModeOf(kind, transportRecord)
     if kind == Cost.KIND_SPELL then return "spell" end
     return "ground"
 end
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Const.GUARDED_FACTOR = 25
+
+
+Const.GUARDED_NEAR = 256
+
+
+
+
+
+
+
+Const.GUARDED_HEIGHT = 10
+Const.GUARDED_HEIGHT_SPAN = 100
+
+local guardedIndexes = setmetatable({}, { __mode = "k" })
+
+local function guardedCell(x, y)
+    return (floor(x / Const.GUARDED_NEAR) + 32768) * 65536 + (floor(y / Const.GUARDED_NEAR) + 32768)
+end
+
+
+
+local function guardedLayer(entries)
+    local near = Const.GUARDED_NEAR
+    local list, cells = {}, {}
+    for _, entry in ipairs(entries) do
+        list[#list + 1] = entry
+        for cx = floor((entry.minX - near) / near), floor((entry.maxX + near) / near) do
+            for cy = floor((entry.minY - near) / near), floor((entry.maxY + near) / near) do
+                local k = (cx + 32768) * 65536 + (cy + 32768)
+                local cell = cells[k]
+                if not cell then cell = {} cells[k] = cell end
+                cell[#cell + 1] = entry
+            end
+        end
+    end
+    return { list = list, cells = cells }
+end
+
+
+local function buildGuardedIndex(data, side)
+    local index = {}
+    for inst, places in pairs(data) do
+        local entries = {}
+        for _, place in ipairs(places) do
+            local xs, ys = place.x, place.y
+            if place.side == side and type(xs) == "table" and type(ys) == "table" and #xs >= 3 and #xs == #ys then
+                local minX, maxX, minY, maxY = math.huge, -math.huge, math.huge, -math.huge
+                for i = 1, #xs do
+                    if xs[i] < minX then minX = xs[i] end
+                    if xs[i] > maxX then maxX = xs[i] end
+                    if ys[i] < minY then minY = ys[i] end
+                    if ys[i] > maxY then maxY = ys[i] end
+                end
+                local zLo = type(place.zmin) == "number" and place.zmin - Const.GUARDED_HEIGHT or nil
+                local zHi = type(place.zmax) == "number" and place.zmax + Const.GUARDED_HEIGHT or nil
+                entries[#entries + 1] = { place = place, x = xs, y = ys, n = #xs, minX = minX, maxX = maxX, minY = minY, maxY = maxY,
+                    zLo = zLo, zHi = zHi }
+            end
+        end
+        if #entries > 0 then index[inst] = guardedLayer(entries) end
+    end
+    return index
+end
+
+
+
+
+function Cost.GuardedIndex(access)
+    if not access or not access.avoidGuarded or access.dead then return nil end
+    local side = (access.faction == "Alliance" and 2) or (access.faction == "Horde" and 1) or nil
+    local data = FGPS.Data and FGPS.Data.guarded
+    if not side or type(data) ~= "table" then return nil end
+    local bySide = guardedIndexes[data]
+    if not bySide then bySide = {} guardedIndexes[data] = bySide end
+    local index = bySide[side]
+    if not index then index = buildGuardedIndex(data, side) bySide[side] = index end
+    return index
+end
+
+
+
+
+Const.GUARDED_TOWN_YARDS = 150
+
+
+function Cost.GuardedHold(index, inst, x, y, held)
+    local place = Cost.GuardedAt(index, inst, x, y)
+    if not place or held[place] then return end
+    local list = index[inst].list
+    local at
+    for i = 1, #list do
+        if list[i].place == place then at = list[i] break end
+    end
+    local reach = Const.GUARDED_TOWN_YARDS
+    for i = 1, #list do
+        local e = list[i]
+        if (place.name and e.place.name == place.name) or (e.minX <= at.maxX + reach and e.maxX >= at.minX - reach
+                and e.minY <= at.maxY + reach and e.maxY >= at.minY - reach) then
+            held[e.place] = true
+        end
+    end
+end
+
+
+function Cost.GuardedExcept(index, held)
+    if not index or next(held) == nil then return index end
+    local out = {}
+    for inst, layer in pairs(index) do
+        local entries = {}
+        for _, e in ipairs(layer.list) do
+            if not held[e.place] then entries[#entries + 1] = e end
+        end
+        if #entries > 0 then out[inst] = guardedLayer(entries) end
+    end
+    return out
+end
+
+
+function Cost.GuardedNear(index, inst, x, y)
+    local layer = index and index[inst]
+    if not layer or x == nil or y == nil then return false end
+    return layer.cells[guardedCell(x, y)] ~= nil
+end
+
+
+
+
+local function offBand(e, z1, z2, long2, anyLength)
+    if z1 == nil or z2 == nil or not (e.zLo and e.zHi) then return false end
+    if not anyLength and long2 > Const.GUARDED_HEIGHT_SPAN * Const.GUARDED_HEIGHT_SPAN then return false end
+    return (z1 < e.zLo and z2 < e.zLo) or (z1 > e.zHi and z2 > e.zHi)
+end
+
+local function insideOutline(e, x, y)
+    local xs, ys, n = e.x, e.y, e.n
+    for i = 1, n do
+        local j = i < n and i + 1 or 1
+        if (xs[j] - xs[i]) * (y - ys[i]) - (ys[j] - ys[i]) * (x - xs[i]) < 0 then return false end
+    end
+    return true
+end
+
+
+
+local function shareInside(e, x1, y1, x2, y2)
+    local xs, ys, n = e.x, e.y, e.n
+    local dx, dy = x2 - x1, y2 - y1
+    local t0, t1 = 0, 1
+    for i = 1, n do
+        local j = i < n and i + 1 or 1
+        local ex, ey = xs[j] - xs[i], ys[j] - ys[i]
+        local num = ex * (y1 - ys[i]) - ey * (x1 - xs[i])
+        local den = ex * dy - ey * dx
+        if den == 0 then
+            if num < 0 then return 0 end
+        else
+            local t = -num / den
+            if den > 0 then
+                if t > t0 then t0 = t end
+            elseif t < t1 then
+                t1 = t
+            end
+            if t0 >= t1 then return 0 end
+        end
+    end
+    return t1 - t0
+end
+
+
+
+
+
+function Cost.GuardedShare(index, inst, x1, y1, x2, y2, z1, z2, anyLength)
+    local layer = index and index[inst]
+    if not layer or x1 == nil or x2 == nil then return 0, nil end
+    local near = Const.GUARDED_NEAR
+    local list
+    local long2 = (x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1)
+    if long2 <= near * near then
+        list = layer.cells[guardedCell(x1, y1)]
+        if not list then return 0, nil end
+    else
+        list = layer.list
+    end
+    local minX, maxX = x1 < x2 and x1 or x2, x1 < x2 and x2 or x1
+    local minY, maxY = y1 < y2 and y1 or y2, y1 < y2 and y2 or y1
+    local share, first = 0, nil
+    for i = 1, #list do
+        local e = list[i]
+        if maxX >= e.minX and minX <= e.maxX and maxY >= e.minY and minY <= e.maxY and not offBand(e, z1, z2, long2, anyLength) then
+            local s
+            if x1 == x2 and y1 == y2 then
+                s = insideOutline(e, x1, y1) and 1 or 0
+            else
+                s = shareInside(e, x1, y1, x2, y2)
+            end
+            if s > 0 then
+                share = share + s
+                first = first or e.place
+            end
+        end
+    end
+    if share > 1 then share = 1 end
+    return share, first
+end
+
+
+function Cost.GuardedFactor(share)
+    if not share or share <= 0 then return 1 end
+    return 1 + (Const.GUARDED_FACTOR - 1) * share
+end
+
+
+function Cost.GuardedAt(index, inst, x, y)
+    local layer = index and index[inst]
+    if not layer or x == nil or y == nil then return nil end
+    local list = layer.cells[guardedCell(x, y)]
+    if not list then return nil end
+    for i = 1, #list do
+        local e = list[i]
+        if x >= e.minX and x <= e.maxX and y >= e.minY and y <= e.maxY and insideOutline(e, x, y) then return e.place end
+    end
+    return nil
+end
+
 
 
 
@@ -621,36 +861,6 @@ end
 
 
 
-
-
-
-
-
-function Cost.DangerFactor(inst, x, y, access)
-    if not access or not access.avoidDanger then return 1.0 end
-    local layer = FGPS.Data and FGPS.Data.danger and FGPS.Data.danger[inst]
-    if not layer or x == nil or y == nil then return 1.0 end
-    local grid = (access.faction == "Alliance" and layer.lvlA) or (access.faction == "Horde" and layer.lvlH) or layer.lvl
-    if type(grid) ~= "table" then return 1.0 end
-    local cell = layer.cell or 200
-    local col = floor((x - layer.ox) / cell)
-    local row = floor((y - layer.oy) / cell)
-    if col < 0 or row < 0 or col >= (layer.w or huge) or row >= (layer.h or huge) then return 1.0 end
-    local lvl = grid[row * (layer.w or 0) + col + 1]
-    if not lvl then return 1.0 end
-    local level = access.level or 60
-    local margin = access.dangerMargin or 3
-    local excess = lvl - level - margin
-    if excess <= 0 then return 1.0 end
-    local factor = 1 + Const.DANGER_STEP * excess
-    if factor > Const.DANGER_CAP then factor = Const.DANGER_CAP end
-    return factor
-end
-
-
-
-
-
 local HAZARD_LIQUIDS = { "fel", "slime", "lava" }
 local HAZARD_EXPLAIN = {
     fel = L["%s cross fel read from the game's own world: it hurts, but there is no dry way."],
@@ -674,14 +884,20 @@ function Cost.Explain(route)
 
 
         local mesh = route.meshYards or 0
-        if unverified - mesh >= 0.5 then
+        local dock = route.dockYards or 0
+        if unverified - mesh - dock >= 0.5 then
             add(string.format(L["%s of this route is open ground (drawn dashed)."],
-                FGPS.Util.FormatDistance(unverified - mesh, units)))
+                FGPS.Util.FormatDistance(unverified - mesh - dock, units)))
         end
         if mesh >= 0.5 then
             add(string.format(
                 L["%s cross open ground from one place where creatures are known to stand to the next; nobody has walked the way between them."],
                 FGPS.Util.FormatDistance(mesh, units)))
+        end
+        if dock >= 0.5 then
+            add(string.format(
+                L["%s step onto or off a dock or landing; nobody has walked that step, and it is drawn like the path to it."],
+                FGPS.Util.FormatDistance(dock, units)))
         end
     end
 
@@ -737,6 +953,14 @@ function Cost.Explain(route)
     for _, liquid in ipairs(HAZARD_LIQUIDS) do
         if (hazard[liquid] or 0) >= 0.5 then
             add(string.format(HAZARD_EXPLAIN[liquid], FGPS.Util.FormatDistance(hazard[liquid], units)))
+        end
+    end
+
+    for _, name in ipairs(route and route.guardedPassed or {}) do
+        if name then
+            add(string.format(L["This route goes through %s, which the other side holds: you may be attacked there."], name))
+        else
+            add(L["This route goes through an outpost of the other side: you may be attacked there."])
         end
     end
     return text

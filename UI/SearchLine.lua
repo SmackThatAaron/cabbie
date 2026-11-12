@@ -12,7 +12,7 @@
 local ADDON_NAME, FGPS = ...
 
 local L = FGPS.L
-local type, ipairs, pcall, tostring, format, max, min = type, ipairs, pcall, tostring, string.format, math.max, math.min
+local type, pairs, ipairs, pcall, tostring, format, max, min = type, pairs, ipairs, pcall, tostring, string.format, math.max, math.min
 
 local SearchLine = {
     surfaces = {},
@@ -93,7 +93,7 @@ local function createRow(surface, index)
     local Look = FGPS.UI.Look
     local key = surface.key
     local row = CreateFrame("Button", nil, surface.list)
-    row:SetHeight(SearchLine.ROW_HEIGHT)
+    row:SetHeight(SearchLine.ROW_HEIGHT + Look.TextSizeDelta())
     row.Highlight = row:CreateTexture(nil, "BACKGROUND")
     row.Highlight:SetAllPoints(row)
     Look.Highlight(row.Highlight)
@@ -102,11 +102,11 @@ local function createRow(surface, index)
 
     row.Icon = row:CreateTexture(nil, "ARTWORK")
     row.Icon:SetPoint("CENTER", row, "LEFT", SearchLine.PAD + SearchLine.ICON / 2, 0)
-    row.Distance = row:CreateFontString(nil, "OVERLAY", Look.Font("rowSmall"))
+    row.Distance = Look.FontString(row, "OVERLAY", "rowSmall")
     row.Distance:SetPoint("RIGHT", row, "RIGHT", -SearchLine.PAD, 0)
 
 
-    row.Text = row:CreateFontString(nil, "OVERLAY", Look.Font("row"))
+    row.Text = Look.FontString(row, "OVERLAY", "row")
     row.Text:SetPoint("LEFT", row, "LEFT", SearchLine.PAD + SearchLine.ICON + SearchLine.GAP, 0)
     if row.Text.SetJustifyH then row.Text:SetJustifyH("LEFT") end
     row:RegisterForClicks("LeftButtonUp")
@@ -126,6 +126,7 @@ local function paint(surface)
         return
     end
     local Look = FGPS.UI.Look
+    local delta = Look.TextSizeDelta()
 
     surface.cursorX, surface.cursorY = cursorAt()
     local y = SearchLine.PAD
@@ -134,7 +135,7 @@ local function paint(surface)
         Look.SetLine(list.Hint, view.hint or "", Look.Color("grey"))
         list.Title:Show()
         list.Hint:Show()
-        y = y + SearchLine.TITLE_HEIGHT
+        y = y + SearchLine.TITLE_HEIGHT + delta
     else
         list.Title:Hide()
         list.Hint:Hide()
@@ -162,8 +163,8 @@ local function paint(surface)
             row.Icon:Hide()
         end
         row.Highlight:SetShown(view.selectable == true and i == surface.selected)
-        local height = SearchLine.ROW_HEIGHT
-        if sentence then height = max(height, (row.Text:GetStringHeight() or 0) + 8) end
+        local height = SearchLine.ROW_HEIGHT + delta
+        if sentence then height = max(height, (row.Text:GetStringHeight() or 0) + 8 + delta) end
         row:SetHeight(height)
         row:ClearAllPoints()
         row:SetPoint("TOPLEFT", list, "TOPLEFT", SearchLine.ROW_INSET, -y)
@@ -219,6 +220,7 @@ end
 
 
 
+
 local function refresh(surface)
     local Rows = FGPS.UI.SearchRows
     local text = trimmed(surface.text)
@@ -240,7 +242,15 @@ local function refresh(surface)
             rows, service = {}, nil
         end
         if #rows == 0 then
-            surface.view = { rows = { { kind = "note", text = format(L["No place matches '%s'."], text) } }, selectable = false }
+
+
+            local Search = FGPS.UI.Search
+            local hint = ok and Search and Search.TrainerHint and Search.TrainerHint(text)
+
+
+            local QuestSearch = FGPS.QuestSearch
+            if ok and QuestSearch and QuestSearch.Note then QuestSearch.Note(text) end
+            surface.view = { rows = { { kind = "note", text = hint or format(L["No place matches '%s'."], text) } }, selectable = false }
         else
             surface.view = { rows = rows, selectable = true }
             if service then restBeforeNearest(surface, text) end
@@ -356,9 +366,9 @@ local function createList(surface, parent)
     list:SetWidth(SearchLine.LIST_WIDTH)
     list:EnableMouse(true)
     list:Hide()
-    list.Title = list:CreateFontString(nil, "OVERLAY", Look.Font("listTitle"))
+    list.Title = Look.FontString(list, "OVERLAY", "listTitle")
     list.Title:SetPoint("TOPLEFT", list, "TOPLEFT", SearchLine.PAD, -SearchLine.PAD)
-    list.Hint = list:CreateFontString(nil, "OVERLAY", Look.Font("rowSmall"))
+    list.Hint = Look.FontString(list, "OVERLAY", "rowSmall")
     list.Hint:SetPoint("TOPRIGHT", list, "TOPRIGHT", -SearchLine.PAD, -SearchLine.PAD)
     list.Rows = {}
 
@@ -451,7 +461,7 @@ local function createLine()
     edit:SetPoint("TOPLEFT", holder, "TOPLEFT", 6, 0)
     edit:SetPoint("BOTTOMRIGHT", holder, "BOTTOMRIGHT", -6, 0)
 
-    surface.label = edit:CreateFontString(nil, "OVERLAY", Look.Font("listTitle"))
+    surface.label = Look.FontString(edit, "OVERLAY", "listTitle")
     surface.label:SetPoint("LEFT", edit, "LEFT", 6, 0)
     surface.label:SetText(L["Go to:"])
     if edit.SetTextInsets then edit:SetTextInsets((surface.label:GetStringWidth() or 40) + 12, 6, 0, 0) end
@@ -827,5 +837,23 @@ function SearchLine:Init()
 
     Events:Register("WORLD_ENTERED", function() armFirstLogin() end, self)
     Events:Register("DESTINATION_SET", function() SearchLine.EndGuide() end, self)
+
+
+    Events:Register("QUEST_NAMES_READY", function()
+        local Rows = FGPS.UI.SearchRows
+        for _, surface in pairs(SearchLine.surfaces) do
+            if surface.listWanted and surface.view and Rows and #trimmed(surface.text) >= Rows.MIN_LETTERS then refresh(surface) end
+        end
+    end, self)
+    Events:Register("SETTINGS_CHANGED", function(_, key)
+        if key ~= "textSize" and key ~= "*" then return end
+        local line = SearchLine.surfaces.line
+        if line and line.edit and line.edit.SetTextInsets and line.label then
+            line.edit:SetTextInsets((line.label:GetStringWidth() or 40) + 12, 6, 0, 0)
+        end
+        for _, surface in pairs(SearchLine.surfaces) do
+            if surface.listWanted and surface.view then paint(surface) end
+        end
+    end, self)
     self.eventsBound = true
 end

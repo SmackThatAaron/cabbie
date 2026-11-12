@@ -421,6 +421,10 @@ function DataLoad:Message(addon)
     local entry = self.parts[addon]
     if not entry then return nil end
     local state, where = self:State(addon), whereOf(entry)
+    if (state == "missing" or state == "stale")
+        and FGPS.UpdatedWhileRunning and FGPS.UpdatedWhileRunning() then
+        return string.format(L["Cabbie cannot route in %s yet: Cabbie was updated while the game was open. Close the game completely and start it again."], where)
+    end
     if state == "missing" then
         return string.format(L["Cabbie cannot route in %s: its map add-on, %s, is not installed. Reinstall Cabbie with all its folders."], where, addon)
     elseif state == "disabled" then
@@ -581,6 +585,25 @@ end
 
 
 
+local function usableTeleports(access)
+    local out, list = {}, {}
+    local t = access and access.transports or {}
+    if access and access.hearth and t.hearth ~= false then list[#list + 1] = access.hearth end
+    if t.spells ~= false and type(access and access.spells) == "table" then
+        for _, sp in ipairs(access.spells) do list[#list + 1] = sp end
+    end
+    local maxWait = FGPS.Const and FGPS.Const.TELEPORT_MAX_WAIT or 120
+    for _, e in ipairs(list) do
+        if type(e) == "table" and e.inst then
+            local remaining = e.ready and 0 or (tonumber(e.cdRemaining) or math.huge)
+            if remaining < maxWait then out[#out + 1] = e end
+        end
+    end
+    return out
+end
+
+
+
 
 
 
@@ -616,18 +639,10 @@ function DataLoad:PartsFor(handle)
         end
         return false
     end
-    local t = access.transports or {}
-    local teleports = {}
-    if access.hearth and t.hearth ~= false then teleports[#teleports + 1] = access.hearth end
-    if t.spells ~= false and type(access.spells) == "table" then
-        for _, sp in ipairs(access.spells) do teleports[#teleports + 1] = sp end
-    end
-    local maxWait = FGPS.Const and FGPS.Const.TELEPORT_MAX_WAIT or 120
-    for _, e in ipairs(teleports) do
-        local remaining = e.ready and 0 or (tonumber(e.cdRemaining) or math.huge)
-        if e.inst and remaining < maxWait and joined(e.inst) then
+    for _, e in ipairs(usableTeleports(access)) do
+        if joined(e.inst) then
             add(e.inst, "teleport")
-            leaves = true
+            if origin and homeOf(e.inst) ~= home then leaves = true end
         end
     end
     if leaves or handle.needsJoined then
@@ -926,11 +941,21 @@ function DataLoad:WantsJoined(handle, route)
         end
     end
     if next(waiting) == nil then return false end
+    local landings = {}
+    for _, e in ipairs(usableTeleports(access)) do
+        if e.inst == origin.inst and type(e.x) == "number" and type(e.y) == "number" then
+            landings[#landings + 1] = e
+        end
+    end
     local seconds = route.totalSeconds
     local low, prev = math.huge, origin
     for _, stop in ipairs(stops) do
         local bound = DataLoad.DetourBound(origin.inst, prev, stop, access, variant)
         if bound < low then low = bound end
+        for _, e in ipairs(landings) do
+            bound = DataLoad.DetourBound(origin.inst, e, stop, access, variant)
+            if bound < low then low = bound end
+        end
         prev = stop
     end
     if low >= seconds then return false end
@@ -938,9 +963,13 @@ function DataLoad:WantsJoined(handle, route)
     local visits = {}
     prev = origin
     for _, stop in ipairs(stops) do
-        for m, s in pairs(DataLoad.VisitBounds(origin.inst, prev, stop, access, variant)) do
-            if not visits[m] or s < visits[m] then visits[m] = s end
+        local function addVisits(start)
+            for m, s in pairs(DataLoad.VisitBounds(origin.inst, start, stop, access, variant)) do
+                if not visits[m] or s < visits[m] then visits[m] = s end
+            end
         end
+        addVisits(prev)
+        for _, e in ipairs(landings) do addVisits(e) end
         prev = stop
     end
     local only, wanted = {}, false

@@ -184,6 +184,8 @@ Callout.TEXT_SIZE = { min = 0.75, max = 2, step = 0.05 }
 
 Callout.ART_TINT = "Interface\\AddOns\\Cabbie\\Media\\arrow_guide_tint"
 
+Callout.OPEN_TINT = { 0.86, 0.48, 0.16 }
+
 
 
 
@@ -234,13 +236,21 @@ end
 
 
 
-local function paintArt(glyph)
-    local art, r, g, b = stylePicture(lookStyle())
+local function paintArt(glyph, openCue)
+    local style = lookStyle()
+    local art, r, g, b
+    if openCue then
+        art = style.art
+        r, g, b = Callout.OPEN_TINT[1], Callout.OPEN_TINT[2], Callout.OPEN_TINT[3]
+    else
+        art, r, g, b = stylePicture(style)
+    end
     if glyph.fgpsArt ~= art then
         glyph.fgpsArt = art
         glyph:SetTexture(art)
     end
     glyph:SetVertexColor(r, g, b)
+    glyph.fgpsOpenCue = openCue == true
 end
 
 
@@ -345,10 +355,11 @@ local function applyLook(frame)
     frame.Glyph:SetSize(glyph, glyph)
     local alpha = lookNumber("arrowAlpha", Callout.ALPHA)
     frame.Glyph:SetAlpha(alpha)
-    paintArt(frame.Glyph)
+    local openCue = frame.Glyph.fgpsOpenCue == true
+    paintArt(frame.Glyph, openCue)
 
 
-    paintArt(frame.Pulse)
+    paintArt(frame.Pulse, openCue)
     local pulse = frame.Pulse.anim
     if pulse then
         local peak = FGPS.UI.Look.TOKENS.pulsePeak * alpha
@@ -745,6 +756,10 @@ local function paint(model)
         Callout.live, Callout.shownX, Callout.shownY, Callout.blendLeft = nil, nil, nil, 0
         Callout.offset, Callout.offsetRate, Callout.turnFrom = 0, 0, nil
         Callout.wrongWayPulsed = false
+        if frame.Glyph.fgpsOpenCue then
+            paintArt(frame.Glyph, false)
+            paintArt(frame.Pulse, false)
+        end
         stopPulse(frame)
         fadeTo(frame, 0)
         return
@@ -780,7 +795,14 @@ local function paint(model)
 
 
 
-    if callout.open and not hideWords then
+
+
+    local openCue = callout.open == true and words == "" and (live ~= nil or Callout.ROTATION[callout.glyph] ~= nil)
+    if (frame.Glyph.fgpsOpenCue == true) ~= openCue then
+        paintArt(frame.Glyph, openCue)
+        paintArt(frame.Pulse, openCue)
+    end
+    if callout.open and words ~= "" then
         local r, g, b = Look.Color(onScroll and "inkGrey" or "grey")
         words = words .. string.format(" |cff%02x%02x%02x%s|r", math.floor(r * 255 + 0.5), math.floor(g * 255 + 0.5), math.floor(b * 255 + 0.5), FGPS.L["(open ground)"])
     end

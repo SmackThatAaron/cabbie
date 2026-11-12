@@ -132,14 +132,12 @@ function Launcher:ClearAll()
     end
 end
 
+
+
+
 function Launcher:ToggleSearch()
     local Search = FGPS.UI.Search
-    if not Search then return end
-    if Search.IsShown and Search:IsShown() and Search.Hide then
-        Search:Hide()
-        return
-    end
-    if Search.Show then Search:Show() end
+    if Search and Search.Toggle then Search:Toggle() end
 end
 
 
@@ -167,20 +165,23 @@ end
 
 
 
+
+
+
 function Launcher.MenuEntries()
     local UI = FGPS.UI
-    return {
-        { label = L["Optimized Leveling"], onClick = function()
-            local QuestPanel = UI.QuestPanel
-            if QuestPanel and QuestPanel.Show then QuestPanel:Show({ tab = "leveling" }) end
-        end },
-        { label = L["Settings"], onClick = function()
-            local Settings = UI.Settings
-            if Settings and Settings.Open then Settings:Open() end
-        end },
-        { label = L["Stop Route"], onClick = function() Launcher:ClearAll() end,
-          disabled = not somethingIsSet() or nil, enabled = somethingIsSet, destructive = true },
-    }
+    local entries = {}
+    local Social = FGPS.Social
+    if Social and Social.IsGhost and Social.GoToCorpse and Social.IsGhost() then
+        entries[#entries + 1] = { label = L["Go to My Corpse"], onClick = function() Social.GoToCorpse(true) end }
+    end
+    entries[#entries + 1] = { label = L["Settings"], onClick = function()
+        local Settings = UI.Settings
+        if Settings and Settings.Open then Settings:Open() end
+    end }
+    entries[#entries + 1] = { label = L["Stop Route"], onClick = function() Launcher:ClearAll() end,
+                              disabled = not somethingIsSet() or nil, enabled = somethingIsSet, destructive = true }
+    return entries
 end
 
 

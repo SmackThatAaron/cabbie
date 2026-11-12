@@ -17,6 +17,15 @@
 
 
 
+
+
+
+
+
+
+
+
+
 local ADDON_NAME, FGPS = ...
 
 local L = FGPS.L
@@ -58,25 +67,28 @@ function UISettings.MapClickLabel(modifier)
     end
     return nil
 end
-local COMBAT_MODES = { { "all", "Keep everything (visuals and voice)" }, { "visuals_only", "Visuals only, no voice" },
+
+
+local COMBAT_MODES = { { "all", "Keep Map Lines and Voice", "The arrow still fades in a fight." },
+                       { "visuals_only", "Visuals only, no voice" },
                        { "hide_all", "Hide all guidance" } }
 local VERBOSITY = { { "minimal", "Minimal" }, { "normal", "Normal" }, { "detailed", "Detailed" } }
 local ASSUME_MOUNT = { { "auto", "Detect automatically" }, { "none", "Never mounted" },
                        { "60", "60% mount" }, { "100", "100% mount" } }
 
-local COLOR_SCHEMES = { { "preset", "Preset colours" }, { "colorblind", "Colour-blind friendly" } }
+local COLOR_SCHEMES = { { "preset", "Standard Colours" }, { "colorblind", "Colour-blind friendly" } }
 UISettings.COLOR_SCHEMES = COLOR_SCHEMES
 
 
 
+
+
 local ELEMENT_KEYS = {
-    { "window:search", "Reset search window position" },
-    { "window:preview", "Reset preview window position" },
-    { "window:favorites", "Reset favorites window position" },
-    { "window:itinerary", "Reset stops window position" },
+    { "window:tome", "Reset Cabbie window position" },
 }
-local ELEMENT_ALIASES = { search = "window:search", preview = "window:preview", favorites = "window:favorites",
-                          itinerary = "window:itinerary", stops = "window:itinerary" }
+local ELEMENT_ALIASES = { window = "window:tome", tome = "window:tome", search = "window:tome", places = "window:tome",
+                          preview = "window:tome", favorites = "window:tome", itinerary = "window:tome",
+                          stops = "window:tome" }
 
 
 
@@ -208,28 +220,6 @@ local function addHeader(category, text, tooltip)
 end
 
 
-local function canvasButtons(parentCategory, specs)
-    if not Settings.RegisterCanvasLayoutSubcategory then return false end
-    local frame = CreateFrame("Frame")
-    frame:SetSize(600, 400)
-    local previous
-    for _, spec in ipairs(specs) do
-        local button = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-        button:SetSize(260, 22)
-        button:SetText(L[spec.name])
-        button:SetScript("OnClick", spec.onClick)
-        if previous then button:SetPoint("TOPLEFT", previous, "BOTTOMLEFT", 0, -6) else button:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -16) end
-        previous = button
-    end
-    local ok, category = pcall(Settings.RegisterCanvasLayoutSubcategory, parentCategory, frame, L["Actions"])
-    if ok and category then
-        UISettings.subcategories.actions = category
-        return true
-    end
-    return false
-end
-
-
 
 
 local Actions = {}
@@ -288,9 +278,9 @@ function Actions.ClearRecents()
     local Destinations = FGPS.Destinations
     if Destinations and Destinations.ClearRecents then
         Destinations.ClearRecents()
-        FGPS:Print(L["Recent destinations cleared."])
+        FGPS:Print(L["Recent places cleared."])
     else
-        FGPS:Print(L["Recent destinations are not available right now."])
+        FGPS:Print(L["Recent places aren't available right now."])
     end
 end
 
@@ -326,7 +316,7 @@ function UISettings.AboutLines()
                 editMode = L["native integration available"]
             end
         else
-            editMode = L["not available (fallback layout editor via /cabbie layout)"]
+            editMode = L["not available, Cabbie's own layout editor instead"]
         end
     else
         editMode = L["unknown (Edit Mode is not ready)"]
@@ -351,55 +341,77 @@ end
 
 
 
-local function registerAbout(category)
+
+
+local function registerClientLine(category)
     local lines = UISettings.AboutLines()
     local tooltipParts = {}
     for _, line in ipairs(lines) do tooltipParts[#tooltipParts + 1] = line[1] .. ": " .. line[2] end
     local tooltip = table.concat(tooltipParts, "\n")
-    local header = format(L["About %s %s (data %s)"], L.ADDON_TITLE, tostring(FGPS.version), lines[2][2])
-    local added = addHeader(category, header, tooltip)
     local build = FGPS.build or {}
     local rowName = format(L["Client %s (%s), Edit Mode: %s"], tostring(build.version or "?"), tostring(build.buildNumber or "?"), lines[4][2])
-    if addButton(category, rowName, "Details", Actions.About, tooltip, true) then added = true end
-    if not added then FGPS.Log:Debug("Settings about block unavailable in this client; use /cabbie about") end
+    local added = addButton(category, rowName, "Details", Actions.About, tooltip, true)
+    if not added then FGPS.Log:Debug("Settings client build row unavailable in this client; use /cabbie about") end
     return added
 end
 
+
+
+
 local function registerGeneral(category)
+    checkbox(category, "callout.enabled", "Turn arrow", "The arrow at the top of the screen that points along your route.")
+    checkbox(category, "callout.showWords", "Show the words", "Names the turn and its landmark on a small scroll under the arrow.")
+    checkbox(category, "callout.showDistance", "Show the distance", "Shows how far away the turn is, under the arrow.")
+    checkbox(category, "callout.turnPulse", "Pulse at turns", "The arrow glows once, softly, when a turn comes up.")
+    checkbox(category, "windowSounds", "Window sounds",
+        "Plays the game's quest log sounds in the Cabbie window: opening, closing, turning a page and picking a row.")
+    checkbox(category, "worldMapLine", "World map line", "Draws your route on the world map.")
     checkbox(category, "worldMapLegend", "Route label on the map",
         "Names the route and its stops in a small label in the corner of the world map.")
+    checkbox(category, "minimapLine", "Minimap line", "Draws your route on the minimap as a line of dots.")
+    checkbox(category, "minimapButton", "Minimap button", "A button on the edge of the minimap that opens the Cabbie window.")
     dropdown(category, "units", "Distance units", "Yards or metres and kilometres.", UNITS)
-    dropdown(category, "textSize", "Text size", "Normal or Large. Large adds two points to window list and label fonts.", TEXT_SIZES)
-    dropdown(category, "accessibility.colorScheme", "Colour scheme",
-        "Colour-blind friendly replaces the route, transport and accent colours with a set that stays distinguishable for the common forms of colour blindness. The distinction between a road and open ground never depends on colour alone in either scheme: the map draws open ground dashed and the minimap draws it as larger hollow dots.",
-        COLOR_SCHEMES)
-    dropdown(category, "mapClickModifier", "Extra world map click",
-        "An extra click that sets a destination on the world map. Choose its modifier and mouse button, or switch it off. Shift + Left-click always goes to the spot at once.",
-        MODIFIERS)
-    checkbox(category, "compat.wayCommand", "Answer the /way command",
-        "Lets Cabbie take waypoint coordinates written the way guides and web sites write them. The word is only claimed when no other add-on already owns it; /cabbie way always works.")
-    registerAbout(category)
 end
 
+
 local function registerGuidance(category)
-    addHeader(category, L["On screen"])
+    addHeader(category, L["Guidance"])
 
     checkbox(category, "routeBlock.enabled", "Show your route's steps beside the quest list",
         "The time and distance left, and the next few steps of your route, in a list beside the game's quest list. Drag it by its first line to move it. The arrow at the top of the screen guides you without it.")
-    checkbox(category, "callout.enabled", "Show the turn call-out")
+
+
+
+    checkbox(category, "askCorpseRun", "Ask to take me back to my body when I die",
+        "When you release your spirit, Cabbie asks whether to guide you back to your body. With this off, nothing is asked: as a ghost, pick Go to My Corpse at the top of the Places page, in your route's menu, or in the menu you get by right-clicking Cabbie beside the minimap.")
     dropdown(category, "combatMode", "In combat", "What guidance keeps doing while you are in combat.", COMBAT_MODES)
 end
 
+local function registerTextAndColours(category)
+    addHeader(category, L["Text and Colours"])
+    dropdown(category, "textSize", "Text size", "Normal or Large. Large adds two points to text in the Cabbie window, the Go to: line, the Route steps and the welcome window.", TEXT_SIZES)
+    dropdown(category, "accessibility.colorScheme", "Colour scheme",
+        "Colour-blind friendly replaces the route, transport and accent colours with a set that stays distinguishable for the common forms of colour blindness. The distinction between a road and open ground never depends on colour alone in either scheme: the map draws open ground dashed and the minimap draws it as larger hollow dots.",
+        COLOR_SCHEMES)
+end
+
+
 
 local function registerMap(category)
-    checkbox(category, "worldMapLine", "Draw the route on the world map")
+    addHeader(category, L["Map"])
     checkbox(category, "openWithMap", "Open Cabbie when the world map opens",
-        "The destination search appears beside the world map each time you open it, and closes with it. It never takes the keyboard.")
-    checkbox(category, "minimapLine", "Draw route hints on the minimap")
-    checkbox(category, "minimapButton", "Show the minimap button",
-        "A compass button on the minimap opens search without typing /cabbie.")
+        "The Places page opens beside the world map each time you open it, and closes with it. It never takes the keyboard.")
     checkbox(category, "inWorldPin", "Show the in-world waypoint marker", "Uses the game's own waypoint marker for the next point of the route.")
-    addHeader(category, L["Place icons"])
+    dropdown(category, "mapClickModifier", "Extra world map click",
+        "An extra click that sets a destination on the world map. Choose its modifier and mouse button, or switch it off. Shift + Left-click always goes to the spot at once.",
+        MODIFIERS)
+    checkbox(category, "removeStopOnMarkerOnly", "Remove a stop only when I click its marker",
+        "Off (the default): Shift + Right-click anywhere on the world map removes the stop nearest the click, or the stop you are heading to when none is on the map. On: only Shift + Right-click on a stop's own marker removes it. When the extra world map click is Shift + Right-click, that click sets a destination and only the marker removes a stop.")
+    checkbox(category, "goToMapPin", "Go to the map pin I place",
+        "A pin you place on the world map becomes your route's new place, as a click on the map does, and starts a route when none runs. While you travel, Cabbie's marker uses the same pin and puts yours back at the end.")
+    checkbox(category, "compat.wayCommand", "Answer the /way command",
+        "Lets Cabbie take waypoint coordinates written the way guides and web sites write them. The word is only claimed when no other add-on already owns it.")
+    addHeader(category, L["Place Icons"])
 
 
     local MapPlaces = FGPS.UI.MapPlaces
@@ -409,19 +421,14 @@ local function registerMap(category)
 end
 
 local function registerTransport(category)
+    addHeader(category, L["Transport"])
     checkbox(category, "transports.taxi", "Use flight paths")
     checkbox(category, "transports.boat", "Use boats")
     checkbox(category, "transports.zeppelin", "Use zeppelins")
     checkbox(category, "transports.tram", "Use the Deeprun Tram")
     checkbox(category, "transports.hearth", "Consider the Hearthstone",
-        "Routes may start with your Hearthstone when that is quicker. Cabbie learns where it takes you the first time you use it or make an inn your home. The route preview says when it is left out, and why.")
+        "Routes may start with your Hearthstone when that is quicker. Cabbie learns where it takes you the first time you use it or make an inn your home. Your Route's tooltip on the Places page says when it is left out, and why.")
     checkbox(category, "transports.spells", "Consider teleport spells")
-    checkbox(category, "routing.preferRoads", "Prefer roads",
-        "Routes stick to roads unless the way round is much longer. Open ground, wandering creature paths and guessed stretches cost more. Off: the fastest line, often straight across open ground.")
-    checkbox(category, "routing.roadShortcuts", "Allow shortcuts off the road",
-        "Off (the default): routes keep to the road wherever one goes, and leave it only to reach a place off the road. On: a route may cut across open ground when that is clearly quicker. Needs \"Prefer roads\".")
-    checkbox(category, "routing.allowUnverified", "Allow open ground", "The guide may draw a straight leg across open ground. Turning this off keeps routes on roads.")
-    checkbox(category, "routing.avoidDanger", "Avoid high-level areas", "Adds cost to cells whose hostile creatures are above your level.")
 end
 
 
@@ -503,42 +510,26 @@ local function registerVoice(category)
     checkbox(category, "cues.arrival", "Cue on arrival")
 end
 
-
-
-
-local function registerQuests(category)
-    checkbox(category, "quests.enabled", "Quest help",
-        "The quest panel, quest pins and quest search. Turning this off leaves the bundled quest data loaded but unused.")
-    checkbox(category, "quests.mapPins", "Quest pins on the world map",
-        "Pins for the quests you have accepted and for a quest you searched for and selected. Never for quests you have not taken.")
-    checkbox(category, "quests.minimapPins", "Quest pins on the minimap")
-    checkbox(category, "quests.pickupMarks", "Show quests I can pick up",
-        "A yellow ! on the world map and the minimap where you can take a quest now, as far as the records say. Hover one to see where its place comes from; Shift-click it on the world map to go there.")
-    checkbox(category, "quests.objectiveAreas", "Draw objective areas",
-        "A kill or collect objective is an area, not a point. Cabbie draws the measured area and labels it with its width, rather than putting a pin in the middle of it.")
-    checkbox(category, "quests.followProgress", "Follow my quests",
-        "A quest route moves on to the next objective and the turn-in, and a click on the round marker beside a quest in the quest list or on the map starts the way to it.")
-    checkbox(category, "quests.searchForever", "Include Forever's own quests in search",
-        "Quests that exist only in Forever. Cabbie knows a name and sometimes where they start, never a turn-in or an objective, and says so.")
-
-    checkbox(category, "quests.leveling", "Optimized Leveling",
-        "A quest order for your faction, race and class from level 1 to 60, from published Forever leveling guides. It follows your level and quests by itself, shows the next steps on its own page of Cabbie's book-style window, and puts its quests first in the quests to take nearby. Levels 31 to 60 were not played in the beta.")
-
-    checkbox(category, "quests.levelingMarks", "Mark Optimized Leveling quests at quest givers",
-        "When you talk to a quest giver, a small panel beside its window names the quests your Optimized Leveling order wants from it, which one comes next, and the turn-ins it wants. Taking and turning in stays yours.")
-    checkbox(category, "quests.serverLookup", "Offer to look quest names up on the server",
-        "Classic quest names come with Cabbie in English, and the game's own wording replaces them once it is known. This allows the button that spends part of a small per-session lookup budget to fill in the names of a search result.")
-
-    slider(category, "quests.batchRadius", "Quests to take, yards",
-        "How far to look for quests you can take. Add to Route sets the stops. You press Start for the route.",
-        100, 2000, 50, function(value) return format("%d yd", value) end)
-end
-
-local function registerAdvanced(category)
+local function registerRouting(category)
     addHeader(category, L["Routing"])
-    slider(category, "routing.arrivalRadius", "Arrival radius (yards)", "Distance from the destination at which you count as arrived.", 5, 60, 1,
+    local preferInit = checkbox(category, "routing.preferRoads", "Prefer roads",
+        "Routes stick to roads unless the way round is much longer. Open ground, wandering creature paths and guessed stretches cost more. Off: the fastest line, often straight across open ground.")
+    local shortcutInit = checkbox(category, "routing.roadShortcuts", "Allow shortcuts off the road",
+        "Off (the default): routes keep to the road wherever one goes, and leave it only to reach a place off the road. On: a route may cut across open ground when that is clearly quicker. Needs \"Prefer roads\".")
+
+
+    if type(preferInit) == "table" and type(shortcutInit) == "table" and shortcutInit.SetParentInitializer then
+        shortcutInit:SetParentInitializer(preferInit, function()
+            return FGPS.DB ~= nil and FGPS.DB:Get("routing.preferRoads") == true
+        end)
+    end
+    checkbox(category, "routing.avoidGuarded", "Keep out of the other side's towns",
+        "Routes go round the towns and outposts the other side holds, off the road where they must. A route still goes in when you start or stop there, or when there is no other way. Off: routes take the road through them.")
+    checkbox(category, "routing.allowUnverified", "Allow straight guesses",
+        "Where Cabbie knows no ground it may draw a straight line. Off: a place far from any known ground gets no route. To stay on roads use \"Prefer roads\".")
+    slider(category, "routing.arrivalRadius", "Arrival radius (yards)", "How close to the place you need to be for Cabbie to say you've arrived.", 5, 60, 1,
         function(value) return format("%d", value) end)
-    slider(category, "routing.offRouteYards", "Off-route distance (yards)", "How far from the route you can stray before it is recalculated.", 15, 150, 5,
+    slider(category, "routing.offRouteYards", "Off-route distance (yards)", "How far you can stray from the route before Cabbie finds a new one.", 15, 150, 5,
         function(value) return format("%d", value) end)
 
 
@@ -547,23 +538,17 @@ local function registerAdvanced(category)
         "Longest stretch across open ground a route may include. 0 turns these stretches off. The last-resort line across open ground is not affected.",
         0, 5000, 100, function(value) if value == 0 then return L["Off"] end return format("%d", value) end,
         { default = Router and Router.DEFAULT_MAX_STRAIGHT_YARDS or 3000 })
-    slider(category, "routing.dangerMargin", "Danger margin (levels)", "Levels above yours before an area counts as dangerous.", 0, 10, 1,
-        function(value) return format("%d", value) end)
-    dropdown(category, "routing.assumeMount", "Assume mount speed", "Speed used for estimates when mount detection is uncertain.", ASSUME_MOUNT)
+    dropdown(category, "routing.assumeMount", "Assume mount speed", "The speed Cabbie uses for travel times when it can't tell whether you're mounted.", ASSUME_MOUNT)
     slider(category, "routing.recalcMinSeconds", "Shortest time between recalculations (seconds)",
-        "After you leave the route a new one is requested at most this often.", 2, 30, 1,
+        "Once you're off the route, Cabbie looks for a new one at most this often.", 2, 30, 1,
         function(value) return format("%d", value) end)
-    addHeader(category, L["Developer"])
-    checkbox(category, "perf.instrument", "Performance instrumentation", "Cheap timers behind /cabbie perf.")
-    slider(category, "perf.frameBudgetMs", "Route computation budget (ms per frame)", "Time slice per frame for route calculation.", 1, 8, 1,
-        function(value) return format("%d", value) end)
-    checkbox(category, "perf.spareFrame", "Use spare frame time for routes",
-        "When the frame rate is high and you are not in combat, in a cutscene, or looking at the flight map, route calculation may use a longer slice of each frame.")
-    slider(category, "perf.frameBudgetMaxMs", "Longest route slice (ms per frame)",
-        "Upper limit on that longer slice. The shorter budget above is used in combat, in a cutscene, below 30 frames a second, or with the flight map open.",
-        4, 16, 1, function(value) return format("%d", value) end)
-    checkbox(category, "debug", "Debug output", "Prints diagnostics to chat and forwards errors to the error handler.")
+end
 
+
+
+
+local function registerActions(category)
+    addHeader(category, L["Actions"])
     local buttonSpecs = {}
     for _, entry in ipairs(ELEMENT_KEYS) do
         local key = entry[1]
@@ -578,10 +563,56 @@ local function registerAdvanced(category)
         if addButton(category, spec.name, spec.button, spec.onClick, spec.name) then added = added + 1 end
     end
     if added == 0 then
-        if not canvasButtons(category, buttonSpecs) then
-            FGPS.Log:Warn("Settings buttons unavailable in this client; use /cabbie reset and /cabbie perf instead")
-        end
+        FGPS.Log:Warn("Settings buttons unavailable in this client; use /cabbie reset and /cabbie perf instead")
     end
+    registerClientLine(category)
+end
+
+
+local function debugOn()
+    local DB = FGPS.DB
+    return DB ~= nil and DB.Get ~= nil and DB:Get("debug") == true
+end
+
+
+
+
+
+local function registerDeveloper(category)
+    local header = headerInitializer(L["Developer"])
+    local canHide = type(header) == "table" and type(header.AddShownPredicate) == "function"
+    local makeRows = canHide or debugOn()
+    if header and makeRows then
+        if canHide then header:AddShownPredicate(debugOn) end
+        Settings.RegisterInitializer(category, header)
+    end
+    local function row(path, kind, name, make)
+        if not makeRows then
+            proxy(category, path, kind, L[name])
+            return
+        end
+        local initializer = make(name)
+        if canHide and type(initializer) == "table" and initializer.AddShownPredicate then initializer:AddShownPredicate(debugOn) end
+    end
+    row("perf.instrument", "boolean", "Performance instrumentation", function(name)
+        return checkbox(category, "perf.instrument", name, "Cheap timers for the performance report.")
+    end)
+    row("perf.frameBudgetMs", "number", "Route computation budget (ms per frame)", function(name)
+        return slider(category, "perf.frameBudgetMs", name, "Time slice per frame for route calculation.", 1, 8, 1,
+            function(value) return format("%d", value) end)
+    end)
+    row("perf.spareFrame", "boolean", "Use spare frame time for routes", function(name)
+        return checkbox(category, "perf.spareFrame", name,
+            "When the frame rate is high and you are not in combat, in a cutscene, or looking at the flight map, route calculation may use a longer slice of each frame.")
+    end)
+    row("perf.frameBudgetMaxMs", "number", "Longest route slice (ms per frame)", function(name)
+        return slider(category, "perf.frameBudgetMaxMs", name,
+            "Upper limit on that longer slice. The shorter budget above is used in combat, in a cutscene, below 30 frames a second, or with the flight map open.",
+            4, 16, 1, function(value) return format("%d", value) end)
+    end)
+    row("debug", "boolean", "Debug output", function(name)
+        return checkbox(category, "debug", name, "Prints diagnostics to chat and forwards errors to the error handler.")
+    end)
 end
 
 function UISettings:Register()
@@ -596,14 +627,9 @@ function UISettings:Register()
         local category = Settings.RegisterVerticalLayoutCategory(L[CATEGORY_NAME])
         self.category = category
         local general = Settings.RegisterVerticalLayoutSubcategory(category, L["General"])
-        local guidance = Settings.RegisterVerticalLayoutSubcategory(category, L["Guidance"])
-        local map = Settings.RegisterVerticalLayoutSubcategory(category, L["Map"])
-        local transport = Settings.RegisterVerticalLayoutSubcategory(category, L["Transport"])
-        local quests = Settings.RegisterVerticalLayoutSubcategory(category, L["Quests"])
         local voice = Settings.RegisterVerticalLayoutSubcategory(category, L["Voice"])
         local advanced = Settings.RegisterVerticalLayoutSubcategory(category, L["Advanced"])
-        self.subcategories = { general = general, guidance = guidance, map = map, transport = transport,
-                               quests = quests, voice = voice, advanced = advanced }
+        self.subcategories = { general = general, voice = voice, advanced = advanced }
     end)
     if not ok then
         self.failed = true
@@ -612,12 +638,17 @@ function UISettings:Register()
     end
 
 
+
     local sub = self.subcategories
     local pages = {
-        { "General", registerGeneral, sub.general }, { "Guidance", registerGuidance, sub.guidance },
-        { "Map", registerMap, sub.map }, { "Transport", registerTransport, sub.transport },
-        { "Quests", registerQuests, sub.quests }, { "Voice", registerVoice, sub.voice },
-        { "Advanced", registerAdvanced, sub.advanced },
+        { "General", registerGeneral, sub.general }, { "Voice", registerVoice, sub.voice },
+        { "Advanced: guidance", registerGuidance, sub.advanced },
+        { "Advanced: text and colours", registerTextAndColours, sub.advanced },
+        { "Advanced: map", registerMap, sub.advanced },
+        { "Advanced: transport", registerTransport, sub.advanced },
+        { "Advanced: routing", registerRouting, sub.advanced },
+        { "Advanced: actions", registerActions, sub.advanced },
+        { "Advanced: developer", registerDeveloper, sub.advanced },
     }
     for _, page in ipairs(pages) do
         local pageOk, pageErr = pcall(page[2], page[3])
@@ -719,7 +750,8 @@ end
 local function slashPause()
     local Navigator = navigator()
     if not (Navigator and Navigator.Pause) or Navigator:Pause() then return end
-    FGPS:Print(Navigator.state == "paused" and L["Guidance is already paused."] or L["No route to pause."])
+    local state = Navigator.GetState and Navigator:GetState()
+    FGPS:Print(state == "paused" and L["Guidance is already paused."] or L["No route to pause."])
 end
 
 local function slashResume()
@@ -770,10 +802,10 @@ local function slashReset(args)
         Actions.ResetRouting()
     elseif word ~= "" then
         if not Actions.ResetElement(word) then
-            FGPS:Print(FGPS.Util.EscapeBars(L["Usage: /cabbie reset settings|positions|routing|all|<element> (search, preview, favorites, stops)"]))
+            FGPS:Print(FGPS.Util.EscapeBars(L["Usage: /cabbie reset settings|positions|routing|all|window"]))
         end
     else
-        FGPS:Print(FGPS.Util.EscapeBars(L["Usage: /cabbie reset settings|positions|routing|all|<element> (search, preview, favorites, stops)"]))
+        FGPS:Print(FGPS.Util.EscapeBars(L["Usage: /cabbie reset settings|positions|routing|all|window"]))
     end
 end
 
@@ -810,8 +842,8 @@ local SLASH_WORDS = {
     { "resume", slashResume, "Resume guidance" },
     { "legend", slashLegend, "Route label on the map: on|off" },
     { "debug", slashDebug, "Toggle debug output: on|off" },
-    { "reset", slashReset, "Reset settings|positions|routing|all|<element>" },
-    { "search", slashSearchFallback, "Open the destination search" },
+    { "reset", slashReset, "Reset settings|positions|routing|all|window" },
+    { "search", slashSearchFallback, "Open the Places page (optionally with a query)" },
 }
 
 function UISettings:RegisterSlashCommands()
@@ -827,11 +859,15 @@ function UISettings:Init()
     self:Register()
     if not self.combatBound and FGPS.Events then
         self.combatBound = true
-        FGPS.Events:Register("COMBAT_STATE", function(_, inCombat)
+        local function openDeferred(_, inCombat)
             local pending = UISettings.openAfterCombat
             if inCombat or not pending then return end
             UISettings.openAfterCombat = nil
             UISettings:Open(pending ~= true and pending or nil)
+        end
+        FGPS.Events:Register("COMBAT_STATE", openDeferred, self)
+        FGPS.Events:Register("WORLD_ENTERED", function()
+            if not (InCombatLockdown and InCombatLockdown()) then openDeferred(nil, false) end
         end, self)
     end
 end

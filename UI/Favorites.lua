@@ -10,6 +10,7 @@
 
 
 
+
 local ADDON_NAME, FGPS = ...
 
 local L = FGPS.L
@@ -17,8 +18,8 @@ local Util = FGPS.Util
 local type, ipairs, tostring, tonumber = type, ipairs, tostring, tonumber
 
 local Favorites = {
-    items = { favorites = {}, recent = {} },
     renaming = nil,
+    clearRecentsArmedAt = nil,
 }
 FGPS.UI.Favorites = Favorites
 
@@ -186,9 +187,10 @@ function Favorites:ClearRecents()
     local Destinations = FGPS.Destinations
     if not (Destinations and Destinations.ClearRecents) then return false end
     Destinations.ClearRecents()
-    FGPS:Print(L["Recent destinations cleared."])
+    FGPS:Print(L["Recent places cleared."])
     return true
 end
+
 
 
 
@@ -198,18 +200,19 @@ function Favorites.OpenRowMenu(owner, item)
     local Menus, Search = FGPS.UI.Menus, places()
     if not (Menus and Menus.OpenRowMenu and Search) or type(item) ~= "table" or not isPlace(item.dest) then return nil end
     local dest = item.dest
-    local entries = {
-        { label = L["Go"], onClick = function() Search.GoTo(dest, "start", { quiet = true }) end },
-        { label = L["Add as a Stop"], onClick = function() Search.GoTo(dest, "addStop") end },
-    }
+    local entries = { { label = L["Go"], onClick = function() Search.GoTo(dest, "start", { quiet = true }) end } }
+
+    if Search.addStopMode or (Search.JourneyRunning and Search.JourneyRunning()) then
+        entries[#entries + 1] = { label = L["Add as a Stop"], onClick = function() Search.GoTo(dest, "addStop") end }
+    end
     if item.section == "favorites" then
-        entries[3] = { label = L["Rename"], onClick = function() Favorites:BeginRename(dest) end }
-        entries[4] = { label = L["Remove from Favorites"], onClick = function() Favorites:Remove(dest) end,
+        entries[#entries + 1] = { label = L["Rename"], onClick = function() Favorites:BeginRename(dest) end }
+        entries[#entries + 1] = { label = L["Remove from Favorites"], onClick = function() Favorites:Remove(dest) end,
             destructive = true }
     else
-        entries[3] = { label = L["Add to Favorites"], onClick = function() Favorites:Add(dest) end,
+        entries[#entries + 1] = { label = L["Add to Favorites"], onClick = function() Favorites:Add(dest) end,
             disabled = function() return isFavorite(dest) end }
-        entries[4] = { label = L["Clear Recent"], onClick = function() Favorites:ClearRecents() end,
+        entries[#entries + 1] = { label = L["Clear Recent"], onClick = function() Favorites:ClearRecents() end,
             destructive = true }
     end
     return Menus.OpenRowMenu(owner, {
@@ -225,7 +228,7 @@ local function openRowMenu(row, item) return Favorites.OpenRowMenu(row, item) en
 
 local function pageText(parent, role, color)
     local look = Look()
-    local text = parent:CreateFontString(nil, "OVERLAY", look.Font(role))
+    local text = look.FontString(parent, "OVERLAY", role)
     text:SetTextColor(look.Color(color))
     text:SetJustifyH("LEFT")
     if text.SetWordWrap then text:SetWordWrap(false) end
@@ -239,7 +242,7 @@ end
 
 local function hintOf(key)
     if key == "favorites" then return L["Right-click any place and choose Add to Favorites."] end
-    return L["No recent destinations."]
+    return L["No recent places yet."]
 end
 
 
@@ -260,10 +263,14 @@ end
 
 local function paintSection(f, key)
     local Search = places()
-    local tokens = Look().TOKENS
+    local look = Look()
+    local tokens = look.TOKENS
+    local delta = look.TextSizeDelta()
+    local rowH = look.PlaceRowHeight()
+    local headH = HEAD_HEIGHT + delta
+    local hintH = HINT_HEIGHT + delta
     local width = Search.PageWidth()
     local items = itemsOf(savedList(key), key)
-    Favorites.items[key] = items
 
 
     local page = Search.placesPage
@@ -274,9 +281,11 @@ local function paintSection(f, key)
         end
         if not still then Search:Unpick(key) end
     end
+    f.Head:SetHeight(headH)
+    f.Hint:SetHeight(hintH)
     local renaming = key == "favorites" and Favorites.renaming or nil
     local renameRow
-    local y = HEAD_HEIGHT
+    local y = headH
     for i, item in ipairs(items) do
         local row = f.Rows[i]
         if not row then
@@ -285,7 +294,7 @@ local function paintSection(f, key)
         end
         row:ClearAllPoints()
         row:SetPoint("TOPLEFT", f, "TOPLEFT", 0, -y)
-        row:SetSize(width, tokens.rowPlace)
+        row:SetSize(width, rowH)
         Search.PaintPlaceRow(row, item, width)
         Search.PaintPick(row)
         local covered = renaming ~= nil and renameRow == nil and samePlace(item.dest, renaming)
@@ -294,7 +303,7 @@ local function paintSection(f, key)
         row.Zone:SetShown(not covered)
         row.Right:SetShown(not covered)
         row:Show()
-        y = y + tokens.rowPlace
+        y = y + rowH
     end
     for i = #items + 1, #f.Rows do
         f.Rows[i].entry = nil
@@ -306,7 +315,7 @@ local function paintSection(f, key)
             local inset = tokens.iconBox + tokens.gap
             box:ClearAllPoints()
             box:SetPoint("TOPLEFT", renameRow, "TOPLEFT", inset, 0)
-            box:SetSize(math.max(1, width - inset), tokens.rowPlace)
+            box:SetSize(math.max(1, width - inset), rowH)
 
             if box.SetFrameLevel and renameRow.GetFrameLevel then box:SetFrameLevel(renameRow:GetFrameLevel() + 2) end
             box:Show()
@@ -324,7 +333,7 @@ local function paintSection(f, key)
         f.Hint:SetPoint("TOPLEFT", f, "TOPLEFT", 0, -y)
         f.Hint:SetWidth(width)
         f.Hint:Show()
-        y = y + HINT_HEIGHT
+        y = y + hintH
     else
         f.Hint:Hide()
     end
@@ -374,10 +383,18 @@ function Favorites:IsShown()
     return Search ~= nil and Search.IsShown ~= nil and Search:IsShown() and true or false
 end
 
+
+
+
+
 function Favorites:Toggle(section)
-    if self:IsShown() then
-        self:Hide()
-        return false
+    local Search = places()
+    if self:IsShown() and Search then
+        if Search.FlushPending then Search:FlushPending() end
+        if not (Search.ShowingMatches and Search:ShowingMatches()) then
+            self:Hide()
+            return false
+        end
     end
     return self:Show(section)
 end
@@ -402,7 +419,7 @@ local function slashFav(args)
     if word == "add" then
         local dest = currentDestination()
         if not dest or not Destinations or not Destinations.AddFavorite then
-            FGPS:Print(L["No current destination to add. Set a destination first."])
+            FGPS:Print(L["There's no place to add yet. Pick one first."])
             return
         end
         if rest ~= "" then dest = Util.ShallowCopy(dest) dest.name = rest end
@@ -411,7 +428,7 @@ local function slashFav(args)
             local Compat = FGPS.UI.Compat
             local why = Compat and Compat.ReasonText and Compat.ReasonText(reason, L["unknown reason"])
                 or tostring(reason or L["unknown reason"])
-            FGPS:Print(L["Could not add favorite (%s)."], why)
+            FGPS:Print(L["Couldn't add that to your favorites (%s)."], why)
         else
             FGPS:Print(L["Added to favorites: %s"], describe(dest))
         end
@@ -451,9 +468,22 @@ local function slashFav(args)
     end
 end
 
+
+
+
+local CLEAR_CONFIRM_SECONDS = 5
+
 local function slashRecent(args)
     local word = Util.Lower(Util.Trim(args))
     if word == "clear" then
+        local now = (GetTime and GetTime()) or 0
+        local armed = Favorites.clearRecentsArmedAt
+        if not armed or now - armed > CLEAR_CONFIRM_SECONDS then
+            Favorites.clearRecentsArmedAt = now
+            FGPS:Print(L["Type /cabbie recent clear again to confirm."])
+            return
+        end
+        Favorites.clearRecentsArmedAt = nil
         Favorites:ClearRecents()
     else
         Favorites:Show("recent")

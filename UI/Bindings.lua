@@ -57,10 +57,11 @@ end
 
 
 
+
 local function actionSearch()
     local Search = FGPS.UI.Search
     if not Search or not Search.Toggle then
-        FGPS:Print(L["The search window is not available in this session."])
+        FGPS:Print(L["The Places page is not available in this session."])
         return false
     end
     return Search:Toggle() ~= false
@@ -115,7 +116,7 @@ local function actionClear()
     if cleared then
         local Guide = FGPS.UI and FGPS.UI.Guide
         if Guide and Guide.Say then
-            Guide.Say((L["Cleared. No route and no stops are set. Undo for %d seconds (/cabbie undo)."]):format(Navigator.UNDO_SECONDS),
+            Guide.Say(L["Your route and its stops are cleared."],
                 Navigator.CLEARED_HOLD)
         end
     end
@@ -181,12 +182,19 @@ local function actionMapDestination()
     local Compat = FGPS.UI.Compat
     if not ok or not dest then
         local reason = (ok and err) and (Compat and Compat.ReasonText and Compat.ReasonText(err, L["unknown reason"]) or tostring(err))
-        FGPS:Print(L["That map position cannot be used as a destination%s"], reason and (": " .. reason) or ".")
+        FGPS:Print(L["I can't take you to that spot%s"], reason and (": " .. reason) or ".")
         return false
     end
-    if Compat and Compat.Accept then return Compat.Accept(dest, { source = "binding" }) end
-    local WorldMap = FGPS.UI.WorldMap
-    if WorldMap and WorldMap.GoTo then return WorldMap.GoTo(dest) and true or false end
+
+
+
+
+    local WorldMap, Search, Go = FGPS.UI.WorldMap, FGPS.UI.Search, FGPS.UI.Go
+    if Search and Search.addStopMode == true and WorldMap and WorldMap.GoTo then
+        return WorldMap.GoTo(dest, { addStop = true }) and true or false
+    end
+    if Go and Go.Start then return Go.Start(dest) and true or false end
+    if WorldMap and WorldMap.GoTo then return WorldMap.GoTo(dest, { start = true, quiet = true }) and true or false end
     return false
 end
 
@@ -195,7 +203,7 @@ end
 Bindings.ORDER = { "goTo", "search", "pauseResume", "repeat", "mute", "cancel", "clear", "mapDestination" }
 Bindings.ACTIONS = {
     goTo = { binding = "CABBIE_GOTO", label = "Go to a place", run = actionGoTo },
-    search = { binding = "CABBIE_SEARCH", label = "Open the destination search", run = actionSearch },
+    search = { binding = "CABBIE_SEARCH", label = "Open the Places page", run = actionSearch },
     pauseResume = { binding = "CABBIE_PAUSE_RESUME", label = "Pause or resume guidance", run = actionPauseResume },
     ["repeat"] = { binding = "CABBIE_REPEAT", label = "Repeat the current instruction", run = actionRepeat },
     mute = { binding = "CABBIE_MUTE", label = "Mute voice guidance", run = actionMute },

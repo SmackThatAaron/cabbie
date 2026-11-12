@@ -21,24 +21,20 @@ Setup.WIDTH = 440
 Setup.HEIGHT = 286
 Setup.GAP = 10
 
-local FOLLOW_TIP = "A quest route moves on to the next objective and the turn-in, and a click on the round marker beside a quest in the quest list or on the map starts the way to it."
-
 local function Look()
     return FGPS.UI.Look
 end
 
-local function follows()
-    local Quests = FGPS.Quests
-    if Quests and Quests.FollowsMine then return Quests.FollowsMine() == true end
-    return true
-end
-
 local function text(parent, role)
-    local fs = parent:CreateFontString(nil, "OVERLAY", Look().Font(role))
+    local fs = Look().FontString(parent, "OVERLAY", role)
     if fs.SetJustifyH then fs:SetJustifyH("LEFT") end
     if fs.SetJustifyV then fs:SetJustifyV("TOP") end
     if fs.SetWordWrap then fs:SetWordWrap(true) end
     return fs
+end
+
+local function windowHeight()
+    return Setup.HEIGHT + 12 * Look().TextSizeDelta()
 end
 
 
@@ -52,7 +48,7 @@ function Setup:Create()
     local Frames = FGPS.UI.Frames
     if not (Frames and Frames.CreateWindow) then return nil end
     local ok, win = pcall(Frames.CreateWindow, "setup", {
-        title = L.SETUP_TITLE, width = Setup.WIDTH, height = Setup.HEIGHT, persist = false, escape = true,
+        title = L.SETUP_TITLE, width = Setup.WIDTH, height = windowHeight(), persist = false, escape = true,
     })
     if not ok or type(win) ~= "table" then
         if FGPS.Log then FGPS.Log:Error("The welcome window could not be made: %s", tostring(win)) end
@@ -66,18 +62,6 @@ function Setup:Create()
     win.Intro:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -2)
     win.Intro:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, -2)
     win.Intro:SetText(L.SETUP_INTRO)
-
-    win.Follow = look.CheckButton(content, L["Follow my quests"])
-    win.Follow:SetPoint("TOPLEFT", win.Intro, "BOTTOMLEFT", -2, -Setup.GAP)
-    win.Follow:SetScript("OnClick", function(button)
-        local Quests = FGPS.Quests
-        if Quests and Quests.SetFollowsMine then Quests.SetFollowsMine(button:GetChecked() and true or false) end
-    end)
-
-    win.FollowTip = text(content, "hint")
-    win.FollowTip:SetPoint("TOPLEFT", win.Follow, "BOTTOMLEFT", 26, 0)
-    win.FollowTip:SetPoint("RIGHT", content, "RIGHT", 0, 0)
-    win.FollowTip:SetText(L[FOLLOW_TIP])
 
     win.Done = look.Button(content, L.SETUP_DONE, 96, 22)
     win.Done:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, 0)
@@ -101,18 +85,13 @@ function Setup:Create()
 end
 
 
-
 function Setup:Show()
     local win = self:Create()
     if not win then return false end
-    win.Follow:SetChecked(follows())
     self:MarkDone()
     win:Show()
 
-
-    local follow = win.Follow
-    Look().NoteOnce("welcome", "Welcome window: ground %s, check box %s, words %s", tostring(win.fgpsGround),
-        tostring(follow.fgpsLook), (follow.Text or follow.text) == follow.Label and "template Text" or "own")
+    Look().NoteOnce("welcome", "Welcome window: ground %s", tostring(win.fgpsGround))
     return true
 end
 
@@ -133,4 +112,7 @@ function Setup:Init()
     Events:Register("COMBAT_STATE", function(_, inCombat) if inCombat == true then hide() end end, self)
     Events:Register("DESTINATION_SET", hide, self)
     Events:Register("MAP_SHOWN", hide, self)
+    Events:Register("SETTINGS_CHANGED", function(_, key)
+        if (key == "textSize" or key == "*") and self.frame then self.frame:SetHeight(windowHeight()) end
+    end, self)
 end

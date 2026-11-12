@@ -24,17 +24,13 @@
 
 
 
-
-
-
-
 local ADDON_NAME, FGPS = ...
 
 local Util = FGPS.Util
 local type, pairs, ipairs, tonumber, tostring = type, pairs, ipairs, tonumber, tostring
 
 local DB = {
-    VERSION = 7,
+    VERSION = 8,
     initialized = false,
 }
 FGPS.DB = DB
@@ -71,27 +67,16 @@ local settingsDefaults = {
 
     windowSounds = true,
     mapClickModifier = "CTRL_RIGHT",
+    removeStopOnMarkerOnly = false,
+    goToMapPin = true,
+    askCorpseRun = false,
     combatMode = "visuals_only",
 
     voice = { enabled = false, systemVoice = false, rate = 0, volume = 70, verbosity = "normal" },
     transports = { taxi = true, boat = true, zeppelin = true, tram = true, hearth = true, spells = true },
-    routing = { preferRoads = true, roadShortcuts = false, allowUnverified = true, avoidDanger = false, dangerMargin = 3, arrivalRadius = 10,
-                offRouteYards = 40, recalcMinSeconds = 5, assumeMount = "auto" },
-
-
-
-
-
-
-    quests = { enabled = false, mapPins = true, minimapPins = false, objectiveAreas = true,
-               searchForever = true, serverLookup = true, followProgress = true, pickupMarks = false,
-
-               batchRadius = 600,
-
-
-               leveling = true,
-
-               levelingMarks = true },
+    routing = { preferRoads = true, roadShortcuts = false, allowUnverified = true, arrivalRadius = 10,
+                offRouteYards = 40, recalcMinSeconds = 5, assumeMount = "auto",
+                avoidGuarded = true },
 
 
     perf = { instrument = true, frameBudgetMs = 4, spareFrame = true, frameBudgetMaxMs = 12 },
@@ -104,8 +89,6 @@ DB.defaults = {
                 recents = {}, learnedServices = {} },
 
     char = { knownTaxi = {}, itinerary = {} },
-
-    quests = { titles = {} },
 }
 
 
@@ -191,6 +174,81 @@ end
 
 
 
+
+local QUEST_STOP_FIELDS = { "questID", "questTarget", "questChosen", "objectiveIndex", "areaIndex", "areaRadius",
+                            "finishedCount", "complete", "source" }
+
+local function isQuestStop(stop)
+    if type(stop) ~= "table" then return false end
+    if stop.kind == "quest" or stop.type == "quest" then return true end
+    return stop.questTarget ~= nil
+end
+
+
+local function filterInPlace(list, keep)
+    if type(list) ~= "table" then return end
+    local count, kept = #list, 0
+    for i = 1, count do
+        local entry = list[i]
+        if keep(entry) then
+            kept = kept + 1
+            list[kept] = entry
+        end
+    end
+    for i = kept + 1, count do list[i] = nil end
+end
+
+
+
+
+local function keepAsPlace(entry)
+    if not isQuestStop(entry) then return true end
+    if type(entry.inst) ~= "number" or type(entry.x) ~= "number" or type(entry.y) ~= "number" then return false end
+    for _, f in ipairs(QUEST_STOP_FIELDS) do entry[f] = nil end
+    if entry.kind == "quest" then entry.kind = "custom" end
+    if entry.type == "quest" then entry.type = "custom" end
+    return true
+end
+
+local function notQuestStop(stop) return not isQuestStop(stop) end
+
+
+
+
+
+
+
+local function dropQuestRecords(char)
+    if type(char) ~= "table" then return end
+    char.leveling, char.questPickups, char.questRoute = nil, nil, nil
+    filterInPlace(char.itinerary, notQuestStop)
+    if isQuestStop(char.lastDestination) then char.lastDestination = nil end
+end
+
+
+
+
+
+
+local function dropQuestPlaces(account)
+    if type(account) ~= "table" then return end
+    if type(account.settings) == "table" then account.settings.quests = nil end
+    filterInPlace(account.favorites, keepAsPlace)
+    filterInPlace(account.recents, keepAsPlace)
+end
+
+
+
+
+
+migrations[7] = function(account, char)
+    if type(account) ~= "table" then return end
+    dropQuestPlaces(account)
+    dropQuestRecords(char)
+end
+
+
+
 migrations[0] = function(account)
     if type(account.settings) ~= "table" then account.settings = {} end
     for key in pairs(settingsDefaults) do
@@ -235,11 +293,6 @@ DB.defaultChanges = {
 
 
 
-
-
-
-    [6] = { { path = "quests.enabled", from = true }, { path = "quests.minimapPins", from = true },
-            { path = "quests.pickupMarks", from = true } },
 }
 
 
@@ -327,25 +380,27 @@ end
 
 
 
-local RETIRED_QUEST_FIELDS = { "observed", "stats", "_seq", "_export", "_exportTime" }
+
+
+
 
 local function dropRetired(self)
-    for _, key in ipairs(RETIRED_QUEST_FIELDS) do self.quests[key] = nil end
     self.account.routeReports = nil
     if not FGPS:IsOwnerInstall() then
         self.account.lastSession = nil
         self.account.selftest = nil
     end
     local settings = self.account.settings
-    local quests = type(settings) == "table" and settings.quests or nil
-    if type(quests) == "table" then quests.harvest = nil end
     if type(settings) == "table" then
         settings.learnPaths = nil
         settings.factionAccent = nil
-        if settings.preset ~= nil and settings.preset ~= settingsDefaults.preset then
-            settings.preset = settingsDefaults.preset
+        if type(settings.routing) == "table" then
+            settings.routing.avoidDanger = nil
+            settings.routing.dangerMargin = nil
         end
     end
+    dropQuestPlaces(self.account)
+    dropQuestRecords(self.char)
 end
 
 
@@ -354,10 +409,8 @@ end
 function DB:Init()
     if type(CabbieDB) ~= "table" then CabbieDB = {} end
     if type(CabbieCharDB) ~= "table" then CabbieCharDB = {} end
-    if type(CabbieQuests) ~= "table" then CabbieQuests = {} end
     self.account = CabbieDB
     self.char = CabbieCharDB
-    self.quests = CabbieQuests
 
     local hasContent = next(self.account) ~= nil
     local from = tonumber(self.account.version)
@@ -369,7 +422,6 @@ function DB:Init()
 
     applyDefaults(self.account, DB.defaults.account)
     applyDefaults(self.char, DB.defaults.char)
-    applyDefaults(self.quests, DB.defaults.quests)
     self.account.perf = nil
     self.settings = self.account.settings
 
@@ -467,7 +519,6 @@ end
 
 
 
-
 function DB:ResetAll()
     self:ResetSettings()
     self:ResetPositions()
@@ -478,7 +529,4 @@ function DB:ResetAll()
     for key in pairs(PROTECTED_ACCOUNT_FLAGS) do
         if self.account[key] == nil then self.account[key] = false end
     end
-
-
-    if type(self.quests) == "table" then applyDefaults(self.quests, DB.defaults.quests) end
 end

@@ -92,19 +92,19 @@ end
 
 
 local REQUIRED_GLOBALS = {
-    "CreateFrame", "UIParent", "WorldFrame", "Minimap", "GetTime", "GetBuildInfo", "GetLocale",
+    "CreateFrame", "UIParent", "Minimap", "GetTime", "GetBuildInfo", "GetLocale",
     "UnitPosition", "GetPlayerFacing", "GetUnitSpeed", "UnitFactionGroup", "UnitClass", "UnitLevel",
     "IsMounted", "UnitOnTaxi", "InCombatLockdown", "GetScreenWidth", "GetScreenHeight",
     "collectgarbage", "debugprofilestop", "geterrorhandler", "LibStub", "SlashCmdList", "Enum",
 }
 local OPTIONAL_GLOBALS = {
-    "WorldMapFrame", "MinimapCluster", "GameTooltip", "Settings", "EventRegistry", "hooksecurefunc",
+    "WorldMapFrame", "GameTooltip", "Settings", "EventRegistry", "hooksecurefunc",
     "UpdateAddOnMemoryUsage", "GetAddOnMemoryUsage", "GetFramerate", "GetCVar", "IsIndoors", "IsSwimming",
 }
 local REQUIRED_MEMBERS = {
-    { "C_Map", "GetBestMapForUnit", "GetMapInfo", "GetPlayerMapPosition", "GetWorldPosFromMapPos", "GetMapPosFromWorldPos" },
+    { "C_Map", "GetBestMapForUnit", "GetMapInfo", "GetWorldPosFromMapPos" },
     { "C_Timer", "After", "NewTimer", "NewTicker" },
-    { "C_AddOns", "GetAddOnMetadata" },
+    { "C_AddOns", "GetAddOnMetadata", "LoadAddOn" },
 }
 
 
@@ -114,17 +114,15 @@ local OPTIONAL_MEMBERS = {
     { "C_TTSSettings", "GetVoiceOptionID" },
     { "C_SuperTrack", "SetSuperTrackedUserWaypoint" },
     { "C_Map", "SetUserWaypoint", "GetUserWaypoint", "CanSetUserWaypointOnMap", "GetMapChildrenInfo" },
-    { "WorldMapFrame", "GetCanvasScale", "GetViewRect", "ZoomMapTo", "PanMapTo" },
+    { "WorldMapFrame", "GetCanvasScale", "GetViewRect" },
     { "C_SkillInfo", "GetSkillLineInfoByID" },
     { "C_MountJournal", "GetMountIDs", "GetMountInfoByID" },
-    { "C_QuestLog", "GetNumQuestLogEntries", "GetInfo" },
     { "C_Container", "GetItemCooldown" },
 
     { "C_Container", "PlayerHasHearthstone",
       alt = { "C_Container.GetContainerNumSlots", "C_Container.GetContainerItemID" } },
     { "C_Minimap", "GetViewRadius" },
     { "C_AddOnProfiler", "GetAddOnMetric" },
-    { "C_EditMode", "GetLayouts" },
     { "C_Spell", "GetSpellName", "GetSpellCooldown" },
     { "C_SpellBook", "IsSpellKnown" },
     { "C_Texture", "GetAtlasInfo" },
@@ -635,19 +633,25 @@ local function checkRoute(finish)
         local running = Router.running
         return type(running) == "table" and running ~= handle and not running.done
     end
-    local function giveUp(detail)
+    local function stopSample(status, detail)
         if answered then return end
         if handle then pcall(Router.Cancel, Router, handle) end
-        answer("fail", detail)
+        answer(status, detail)
     end
     local function waitTurn()
         if answered then return end
         if not behindAnother() then
             C_Timer.After(SelfTest.ROUTE_TIMEOUT, function()
-                giveUp(format("the router did not answer within %d s", SelfTest.ROUTE_TIMEOUT))
+
+
+                if handle and handle.waitingForData == "combat" then
+                    stopSample("skip", "the sample route waits for a map that loads after the fight")
+                else
+                    stopSample("fail", format("the router did not answer within %d s", SelfTest.ROUTE_TIMEOUT))
+                end
             end)
         elseif waited >= SelfTest.ROUTE_QUEUE_LIMIT then
-            giveUp(format("the router was still busy with other routes after %.0f s", waited))
+            stopSample("fail", format("the router was still busy with other routes after %.0f s", waited))
         else
             waited = waited + SelfTest.ROUTE_POLL
             C_Timer.After(SelfTest.ROUTE_POLL, waitTurn)
@@ -955,6 +959,9 @@ end
 local function perfCounters()
     local Perf = FGPS.Perf
     if not Perf then return nil end
+
+
+    if Perf.enabled and Perf.Sample then pcall(Perf.Sample, Perf) end
     local ok, report = pcall(Perf.Report, Perf)
     if not ok or type(report) ~= "table" then return nil end
     local labels = {}
@@ -1082,15 +1089,25 @@ local function onActionBlocked(event, addon, func)
     recordClientNotice("The client blocked a protected call by this addon: %s (%s)", tostring(func), tostring(event))
 end
 
-local function onLuaWarning(_, warnType, text)
-    if mentionsAddon(text) then recordClientNotice("Client Lua warning (type %s): %s", tostring(warnType), tostring(text)) end
+
+local function onLuaWarning(_, a, b)
+    local warnType, text
+    if type(b) == "string" then warnType, text = a, b else warnType, text = nil, a end
+    if not mentionsAddon(text) then return end
+    if warnType ~= nil then
+        recordClientNotice("Client Lua warning (type %s): %s", tostring(warnType), tostring(text))
+    else
+        recordClientNotice("Client Lua warning: %s", tostring(text))
+    end
 end
 
 
 
 
 
+
 local function chainErrorHandler()
+    if not (FGPS.IsOwnerInstall and FGPS:IsOwnerInstall()) then return end
     if SelfTest.errorHandlerChained or not (geterrorhandler and seterrorhandler) then return end
     local previous = geterrorhandler()
     if type(previous) ~= "function" then return end
@@ -1153,17 +1170,52 @@ end
 
 
 
-SelfTest.OFF_ROUTE_LOG_MAX = 100
-SelfTest.offRoutes = {}
 
-local function onOffRoute(_, yards)
+
+
+
+
+
+
+
+
+
+
+
+SelfTest.OFF_ROUTE_LOG_MAX = 100
+local openRow = nil
+local openRowAt = nil
+
+local function offRouteRows()
+    local account = FGPS.DB and FGPS.DB.account
+    if type(account) ~= "table" then return nil end
+    if type(account.lastSession) ~= "table" then account.lastSession = {} end
+    local rows = account.lastSession.offRoute
+    if type(rows) ~= "table" then
+        rows = {}
+        account.lastSession.offRoute = rows
+    end
+    return rows
+end
+
+local function clientHeight()
+    if not UnitPosition then return nil end
+    local ok, _, _, z = pcall(UnitPosition, "player")
+    if not ok or (issecretvalue and issecretvalue(z)) or type(z) ~= "number" then return nil end
+    return round1(z)
+end
+
+local function onOffRoute(_, yards, limit)
     SelfTest.CountOffRoute()
     if not FGPS:IsOwnerInstall() then return end
-    local entry = { t = round1(GetTime and GetTime() or nil), yards = round1(tonumber(yards)) }
+    local now = GetTime and GetTime() or nil
+    local entry = { t = round1(now), yards = round1(tonumber(yards)), lim = round1(tonumber(limit)), cz = clientHeight() }
     local Coords = FGPS.Coords
     if Coords and Coords.PlayerPos then
         local ok, pos = pcall(Coords.PlayerPos)
-        if ok and type(pos) == "table" then entry.inst, entry.x, entry.y = pos.inst, round1(pos.x), round1(pos.y) end
+        if ok and type(pos) == "table" then
+            entry.inst, entry.x, entry.y, entry.map = pos.inst, round1(pos.x), round1(pos.y), pos.map
+        end
     end
     local Navigator = FGPS.Navigator
     local route = Navigator and Navigator.GetRoute and Navigator:GetRoute()
@@ -1173,16 +1225,128 @@ local function onOffRoute(_, yards)
     if type(leg) == "table" then
         entry.leg = leg.kind or "walk"
         local point = type(leg.points) == "table" and progress.pointIndex and leg.points[progress.pointIndex]
-        entry.k = type(point) == "table" and point.k or nil
+        if type(point) == "table" then
+            entry.k, entry.z, entry.proom, entry.form = point.k, round1(tonumber(point.z)), point.room, point.climbForm
+            entry.stacked = point.stacked and true or nil
+        end
     end
-    local log = SelfTest.offRoutes
-    log[#log + 1] = entry
-    while #log > SelfTest.OFF_ROUTE_LOG_MAX do table.remove(log, 1) end
+    local place = Navigator and Navigator.CurrentPlace and Navigator:CurrentPlace()
+    if type(place) == "table" then
+        entry.room, entry.indoor = place.name, place.indoor
+        if type(place.z) == "number" then
+            entry.floor = round1(place.z)
+            if now and type(place.at) == "number" then entry.floorAge = round1(now - place.at) end
+        end
+    end
+    local rows = offRouteRows()
+    if not rows then return end
+    rows[#rows + 1] = entry
+    while #rows > SelfTest.OFF_ROUTE_LOG_MAX do table.remove(rows, 1) end
+    openRow, openRowAt = entry, now
+end
+
+local function onRecalcStart(_, _, why)
+    local row = openRow
+    if not row then return end
+
+
+    if why ~= "offroute" then
+        openRow = nil
+    elseif row.recalc == nil then
+        row.recalc = "asked"
+
+
+        if GetTime and openRowAt then row.ask = round1(GetTime() - openRowAt) end
+    end
+end
+
+local function onRecalcDone(_, route, err, kept)
+    SelfTest.CountRecalc()
+    local row = openRow
+    if not row or row.recalc ~= "asked" then return end
+    openRow = nil
+    if kept == "kept" then
+        row.recalc = "kept"
+    elseif type(route) == "table" then
+        row.recalc = "new"
+        local first = type(route.legs) == "table" and route.legs[1]
+        local pts = type(first) == "table" and first.points
+        if type(pts) == "table" then
+            for i = 1, math.min(#pts, 2) do
+                local z = type(pts[i]) == "table" and tonumber(pts[i].z)
+                if z then row.newZ = round1(z) break end
+            end
+        end
+    else
+        row.recalc = type(err) == "table" and err.code or "failed"
+    end
+end
+
+
+
+
+
+
+local function trainerRecord()
+    local Services = FGPS.ServiceSearch
+    if not Services then return nil end
+    local q = type(Services.questie) == "table" and Services.questie or {}
+    local stats = type(q.stats) == "table" and q.stats or {}
+    local byKind, services = {}, {}
+    for kind, n in pairs(type(stats.read) == "table" and stats.read or {}) do services[kind] = { read = n, kept = 0 } end
+    for _, row in ipairs(type(q.rows) == "table" and q.rows or {}) do
+        if type(row.trainer) == "string" then byKind[row.trainer] = (byKind[row.trainer] or 0) + 1 end
+        if type(row.kind) == "string" then
+            local kind = services[row.kind] or { read = 0, kept = 0 }
+            kind.kept = kind.kept + 1
+            services[row.kind] = kind
+        end
+    end
+    local withKind, withoutKind = 0, 0
+    for _, s in ipairs(Services.Learned and Services.Learned() or {}) do
+        if s.kind == "trainer" then
+            if type(s.trainer) == "string" then withKind = withKind + 1 else withoutKind = withoutKind + 1 end
+        end
+    end
+    local guard = type(Services.guardStats) == "table" and Services.guardStats or {}
+    return {
+        questie = { state = q.state, rows = type(q.rows) == "table" and #q.rows or 0, byKind = byKind, ms = stats.ms,
+                    slices = stats.slices, scanned = stats.scanned, trainers = stats.trainers,
+                    classTrainers = stats.classTrainers, services = services, npcsWithService = stats.services,
+                    seasonal = stats.seasonal, objects = stats.objects, mailboxes = stats.mailboxes },
+        guard = { offered = guard.offered or 0, taken = guard.taken or 0 },
+        recorded = { withKind = withKind, withoutKind = withoutKind },
+        routes = Util.DeepCopy(Services.trainerRoutes) or {},
+    }
+end
+
+
+
+
+
+
+
+local function questRecord()
+    local QuestSearch = FGPS.QuestSearch
+    if not QuestSearch then return nil end
+    local stats = type(QuestSearch.stats) == "table" and QuestSearch.stats or {}
+    local names = type(QuestSearch.names) == "table" and QuestSearch.names or {}
+    local Services = FGPS.ServiceSearch
+    local lib, why
+    if Services and Services.QuestieLib then lib, why = Services.QuestieLib() end
+    return {
+        searches = stats.searches or 0, withRows = stats.withRows or 0,
+        clicks = Util.DeepCopy(stats.clicks) or {}, routes = Util.DeepCopy(stats.routes) or {},
+        nothing = Util.DeepCopy(stats.nothing) or {}, searchNothing = Util.DeepCopy(stats.searchNothing) or {},
+        questie = lib and "read" or why,
+        names = { state = names.state, count = type(names.ids) == "table" and #names.ids or 0, ms = names.ms, slices = names.slices },
+    }
 end
 
 
 
 local function onLogout()
+    openRow = nil
     if not FGPS:IsOwnerInstall() then return end
     local account = FGPS.DB and FGPS.DB.account
     if type(account) ~= "table" then return end
@@ -1191,7 +1355,7 @@ local function onLogout()
 
 
     local kept = type(account.lastSession) == "table" and account.lastSession or {}
-    local keptRoutes, keptLoads = kept.routes, kept.loads
+    local keptRoutes, keptLoads, keptOffRoute = kept.routes, kept.loads, kept.offRoute
     account.lastSession = {
         began = SelfTest.sessionStart,
         ended = stamp(),
@@ -1201,7 +1365,7 @@ local function onLogout()
         log = lastLogLines(SelfTest.SESSION_LOG_LINES),
         trips = savedTrips(),
         places = Util.DeepCopy(SelfTest.places) or {},
-        offRoute = Util.DeepCopy(SelfTest.offRoutes) or {},
+        offRoute = keptOffRoute or {},
 
         inside = Util.DeepCopy(FGPS.Inside and FGPS.Inside.visits) or {},
 
@@ -1211,18 +1375,36 @@ local function onLogout()
         loads = keptLoads,
         perf = perfCounters(),
         voice = voiceRecord(),
+        trainers = trainerRecord(),
+        questSearch = questRecord(),
 
-        quests = Util.DeepCopy(FGPS.Quests and FGPS.Quests.answers and FGPS.Quests.answers.list) or {},
+
+        dummies = Util.DeepCopy(FGPS.ServiceSearch and FGPS.ServiceSearch.dummyStats) or {},
+
+        questions = Util.DeepCopy(FGPS.UI and FGPS.UI.Question and FGPS.UI.Question.record) or {},
+
+
+        stackedNames = Util.DeepCopy(FGPS.Graph and FGPS.Graph.stackedNames) or {},
+
+        taxiMapOpens = Util.DeepCopy(FGPS.Access and FGPS.Access.taxiMapOpens) or {},
+
+        showOnMapTaint = FGPS.UI and FGPS.UI.Menus and FGPS.UI.Menus.showOnMapTaint
+            and Util.DeepCopy(FGPS.UI.Menus.showOnMapTaint) or nil,
+
+        ttsStatus = FGPS.UI and FGPS.UI.Voice and FGPS.UI.Voice.ttsStatus
+            and Util.DeepCopy(FGPS.UI.Voice.ttsStatus) or nil,
     }
 end
 
 
 
 
-local function onRoute(event, route)
+local function onRoute(event, route, reason)
     local summary = summariseRoute(route)
     if summary then SelfTest.lastRoute = summary end
     if event == "ROUTE_STARTED" or event == "ROUTE_UPDATED" then SelfTest.NoteTrip(route) end
+
+    if event == "ROUTE_STARTED" or (event == "ROUTE_UPDATED" and reason ~= "recalc") then openRow = nil end
 end
 
 local function onArrived(_, _, isFinal)
@@ -1231,6 +1413,7 @@ end
 
 local function onCancelled()
     SelfTest.CloseTrip()
+    openRow = nil
 end
 
 function SelfTest:Init()
@@ -1244,7 +1427,8 @@ function SelfTest:Init()
         FGPS.Events:Register("ROUTE_UPDATED", onRoute, self)
         FGPS.Events:Register("ROUTE_PREVIEW", onRoute, self)
         FGPS.Events:Register("NAV_OFF_ROUTE", onOffRoute, self)
-        FGPS.Events:Register("NAV_RECALC_DONE", function() SelfTest.CountRecalc() end, self)
+        FGPS.Events:Register("NAV_RECALC_START", onRecalcStart, self)
+        FGPS.Events:Register("NAV_RECALC_DONE", onRecalcDone, self)
         FGPS.Events:Register("NAV_ARRIVED", onArrived, self)
         FGPS.Events:Register("NAV_CANCELLED", onCancelled, self)
         FGPS.Events:Register("WORLD_ENTERED", onWorldEntered, self)
@@ -1255,10 +1439,10 @@ function SelfTest:Init()
 
 
 
-        if FGPS:IsOwnerInstall() then
+        if FGPS.IsOwnerInstall and FGPS:IsOwnerInstall() then
             for _, event in ipairs(SelfTest.PLACE_EVENTS) do FGPS.Events:RegisterWoW(event, onPlaceChanged, self) end
+            chainErrorHandler()
         end
-        chainErrorHandler()
     end
 end
 

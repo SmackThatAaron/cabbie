@@ -325,6 +325,7 @@ function Perf:NoteRoute(row)
     if not routes then return nil end
     local entry = {
         cpuMs = tonumber(row.cpuMs) or 0,
+        maxSliceMs = tonumber(row.maxSliceMs) or 0,
         wallMs = tonumber(row.wallMs) or 0,
         frames = tonumber(row.frames) or 0,
         expansions = tonumber(row.expansions) or 0,
@@ -334,6 +335,15 @@ function Perf:NoteRoute(row)
         why = type(row.why) == "string" and row.why or nil,
         continent = tonumber(row.continent),
     }
+
+
+    if FGPS:IsOwnerInstall() then
+        entry.kind = type(row.kind) == "string" and row.kind or nil
+        entry.service = type(row.service) == "string" and row.service or nil
+        entry.ends = type(row.ends) == "string" and row.ends or nil
+        entry.zone = tonumber(row.zone)
+        entry.again = row.again == true or nil
+    end
     routes[#routes + 1] = entry
     while #routes > MAX_ROUTES do table.remove(routes, 1) end
     return entry

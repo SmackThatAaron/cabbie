@@ -26,7 +26,15 @@ local function metadata(field)
 end
 
 FGPS.version = metadata("Version") or "0.0.0-dev"
+
+
+FGPS.fileVersion = "1.6.0"
 FGPS.title = metadata("Title") or "Cabbie"
+
+function FGPS.UpdatedWhileRunning()
+    return type(FGPS.fileVersion) == "string" and type(FGPS.version) == "string"
+        and FGPS.version ~= "0.0.0-dev" and FGPS.fileVersion ~= FGPS.version
+end
 
 function FGPS.IsForeverBuild(versionString, interface)
     interface = tonumber(interface)
@@ -86,11 +94,7 @@ FGPS.Const = {
 
     TRANSPORT_ARRIVE_YARDS = 60,
     POS_HZ = 4,
-    GRID_CELL_YARDS = 256,
     ORIGIN_CELL_YARDS = 32,
-    ATTACH_RADIUS_YARDS = 150,
-    ATTACH_VERIFIED_ONLY_YARDS = 25,
-    YARDS_PER_METER = 1.0936133,
     METERS_PER_YARD = 0.9144,
 }
 
@@ -375,6 +379,7 @@ function Slash.Dispatch(message)
     if message == "" then
 
 
+
         local line = FGPS.UI and FGPS.UI.SearchLine
         if line and line.Open then
             local ok, opened = pcall(line.Open)
@@ -388,7 +393,7 @@ function Slash.Dispatch(message)
 
             if UIParent and UIParent.IsVisible and not UIParent:IsVisible() then return end
             local ok, err = pcall(opener, search)
-            if not ok and FGPS.Log then FGPS.Log:Error("Search window failed to open: %s", tostring(err)) end
+            if not ok and FGPS.Log then FGPS.Log:Error("The Places page failed to open: %s", tostring(err)) end
             return
         end
         Slash.Help()

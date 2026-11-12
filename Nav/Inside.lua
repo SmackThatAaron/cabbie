@@ -9,6 +9,7 @@ local ADDON_NAME, FGPS = ...
 
 local Events = FGPS.Events
 local type, pairs, ipairs, tonumber, pcall, select = type, pairs, ipairs, tonumber, pcall, select
+local sqrt = math.sqrt
 
 local Inside = {
     map = nil,
@@ -195,6 +196,63 @@ function Inside.Origin(inside)
         return { inst = map, x = door.x, y = door.y, inferred = true }
     end
     return nil
+end
+
+
+
+
+
+
+
+
+local function playerPos()
+    local Coords = FGPS.Coords
+    if Coords and Coords.PlayerPos then
+        local ok, pos = pcall(Coords.PlayerPos)
+        if ok and type(pos) == "table" then return pos end
+    end
+    local D = FGPS.Destinations
+    if D and D.PlayerPos then
+        local ok, pos = pcall(D.PlayerPos)
+        if ok and type(pos) == "table" then return pos end
+    end
+    return nil
+end
+
+
+local function distanceTo(pos, inst, x, y)
+    if not pos or not pos.x or not pos.y or pos.inst == nil then return nil end
+    if inst == nil or x == nil or y == nil or inst ~= pos.inst then return nil end
+    local dx, dy = x - pos.x, y - pos.y
+    return sqrt(dx * dx + dy * dy)
+end
+
+
+
+
+
+
+
+
+function Inside.EntranceFor(inst, insideX, insideY)
+    if inst == nil then return nil end
+    local pos = playerPos()
+    local best, bestWing, bestD
+    local list = FGPS.Data and FGPS.Data.interiors
+    for _, record in ipairs(type(list) == "table" and list or {}) do
+        local entrance = type(record) == "table" and record.instanceMap == inst and record.entrance or nil
+        if type(entrance) == "table" and entrance.inst and entrance.x and entrance.y then
+            local landing, wing = record.inside, 1e9
+            if insideX and insideY and type(landing) == "table" and landing.x and landing.y then
+                wing = distanceTo({ inst = inst, x = insideX, y = insideY }, inst, landing.x, landing.y)
+            end
+            local d = distanceTo(pos, entrance.inst, entrance.x, entrance.y) or 1e9
+            if not best or wing < bestWing or (wing == bestWing and d < bestD) then
+                best, bestWing, bestD = record, wing, d
+            end
+        end
+    end
+    return best
 end
 
 

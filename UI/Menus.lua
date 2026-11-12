@@ -9,8 +9,6 @@
 
 
 
-
-
 local ADDON_NAME, FGPS = ...
 
 local L = FGPS.L
@@ -20,169 +18,12 @@ local Menus = { bound = false }
 FGPS.UI.Menus = Menus
 
 
-
-
-Menus.TRACKER_TAG = "MENU_QUEST_OBJECTIVE_TRACKER"
-Menus.QUEST_LOG_TAG = "MENU_QUEST_MAP_LOG_TITLE"
-
-Menus.NO_PLACE_HOLD = 4
-
 Menus.STOPPED_HOLD = 6
 
 
 
 
 Menus.UNDO_CLICK_DELAY = 0.5
-
-local MAX_PARENTS = 4
-
-
-
-
-
-local NOT_THE_PLAYERS = { not_in_log = true, no_quest = true }
-
-
-
-
-local function questHelpOff()
-    local db = FGPS.DB
-    return db ~= nil and db.Get ~= nil and db:Get("quests.enabled") == false
-end
-
-
-
-
-function Menus.TakeMeThere(questID)
-    local Quests, Go, Guide = FGPS.Quests, FGPS.UI.Go, FGPS.UI.Guide
-    if not (Quests and Quests.DestinationFor and Go and Go.Start) then return false end
-    local dest, reason = Quests.DestinationFor(questID)
-
-
-
-
-    local Pin = FGPS.UI.InWorldPin
-    if (dest or not NOT_THE_PLAYERS[reason]) and Pin and Pin.FocusQuest then Pin.FocusQuest(questID) end
-    if not dest then
-        if Guide and Guide.Say then Guide.Say(Menus.NoPlaceText(reason, questID), Menus.NO_PLACE_HOLD) end
-        return false
-    end
-    return Go.Start(dest)
-end
-
-
-
-
-
-
-
-
-
-
-
-
-
-function Menus.NoPlaceText(reason, questID)
-    if reason == "failed" then return L["This quest has failed"] end
-    if reason == "interior" then return L["This quest's place is inside a dungeon with no known entrance"] end
-    if reason == "objective_unknown" then
-        local Quests = FGPS.Quests
-        if Quests and Quests.HandInKnown and Quests.HandInKnown(questID) == true then
-            return L["No place known for the objective: ask again when the quest is ready to turn in."]
-        end
-    end
-    return L["No place known for this quest"]
-end
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-function Menus.QuestSelected(questID)
-    local Quests, Go, Guide, Navigator = FGPS.Quests, FGPS.UI.Go, FGPS.UI.Guide, FGPS.Navigator
-    if type(questID) ~= "number" or not (Quests and Quests.FollowsMine and Quests.IsQuestRoute and Quests.DestinationFor) then return nil end
-    if questHelpOff() then return nil end
-    if not (Go and Go.Start and Navigator and Navigator.HasAnythingSet and Navigator.GetStops) then return nil end
-    if not Quests.FollowsMine() then return nil end
-    if Navigator:HasAnythingSet() and not Quests.IsQuestRoute() then return nil end
-    local stops = Navigator:GetStops()
-    if #stops == 1 and stops[1].questID == questID and Navigator:IsJourney() then return "followed" end
-    local dest, reason = Quests.DestinationFor(questID)
-    if not dest then
-        if NOT_THE_PLAYERS[reason] then return nil end
-        local said = tostring(questID) .. ":" .. tostring(reason)
-        if Menus.noPlaceSaid ~= said then
-            Menus.noPlaceSaid = said
-            if Guide and Guide.Say then Guide.Say(Menus.NoPlaceText(reason, questID), Menus.NO_PLACE_HOLD) end
-        end
-        return "noplace"
-    end
-    Menus.noPlaceSaid = nil
-    return Go.Start(dest) and "started" or nil
-end
-
-local function questNumber(value)
-    if type(value) == "number" and value > 0 then return value end
-    return nil
-end
-
-local function blockUnderMouse()
-    local foci = GetMouseFoci()
-    if type(foci) ~= "table" then return nil end
-    for i = 1, #foci do
-        local frame = foci[i]
-        for _ = 1, MAX_PARENTS do
-            if type(frame) ~= "table" then break end
-            if questNumber(frame.id) and frame.parentModule ~= nil then return frame.id end
-            frame = type(frame.GetParent) == "function" and frame:GetParent() or nil
-        end
-    end
-    return nil
-end
-
-
-
-
-
-function Menus.QuestUnderMouse()
-    if type(GetMouseFoci) ~= "function" then return nil end
-    local ok, questID = pcall(blockUnderMouse)
-    if ok then return questNumber(questID) end
-    return nil
-end
-
-
-local function addTakeMeThere(root, questID)
-    if not questID or type(root) ~= "table" or type(root.CreateButton) ~= "function" then return end
-    if questHelpOff() then return end
-    root:CreateButton(L["Guide Me"], function() Menus.TakeMeThere(questID) end)
-end
-
-
-
-function Menus.OnTrackerMenu(owner, root, contextData)
-    local named = type(contextData) == "table" and (questNumber(contextData.id) or questNumber(contextData.questID)) or nil
-    addTakeMeThere(root, named or Menus.QuestUnderMouse())
-end
-
-
-
-function Menus.OnQuestLogMenu(owner, root)
-    addTakeMeThere(root, type(owner) == "table" and questNumber(owner.questID) or nil)
-end
 
 
 
@@ -196,6 +37,24 @@ local function now()
     return (GetTime and GetTime()) or 0
 end
 
+local function readMapIdTaint()
+    if type(issecurevariable) ~= "function" or type(WorldMapFrame) ~= "table" then return nil end
+    local ok, secure, source = pcall(issecurevariable, WorldMapFrame, "mapID")
+    if not ok then return nil end
+    if issecretvalue and (issecretvalue(secure) or issecretvalue(source)) then return nil end
+    return { secure = secure and true or false, source = type(source) == "string" and source or nil }
+end
+
+
+
+local function noteShowOnMapOpen()
+    if not (FGPS.IsOwnerInstall and FGPS.IsOwnerInstall()) then return end
+    local reading = readMapIdTaint()
+    if not reading then return end
+    Menus.showOnMapTaint = { afterOpen = reading }
+    Menus.awaitingMapShownTaint = true
+end
+
 
 
 
@@ -204,14 +63,15 @@ function Menus.ShowOnMap(mapID)
     mapID = tonumber(mapID)
     if mapID then
         OpenWorldMap(mapID)
-        return true
+    else
+        local Navigator = FGPS.Navigator
+        local route = Navigator and Navigator.GetRoute and Navigator:GetRoute() or nil
+        local stops = type(route) == "table" and route.stops or nil
+        local stop = type(stops) == "table" and stops[#stops] or nil
+        local dest = stop and (stop.dest or stop) or nil
+        OpenWorldMap(type(dest) == "table" and dest.map or nil)
     end
-    local Navigator = FGPS.Navigator
-    local route = Navigator and Navigator.GetRoute and Navigator:GetRoute() or nil
-    local stops = type(route) == "table" and route.stops or nil
-    local stop = type(stops) == "table" and stops[#stops] or nil
-    local dest = stop and (stop.dest or stop) or nil
-    OpenWorldMap(type(dest) == "table" and dest.map or nil)
+    noteShowOnMapOpen()
     return true
 end
 
@@ -248,24 +108,6 @@ local function addGoToCorpse(root)
     local Social = FGPS.Social
     if not (Social and Social.IsGhost and Social.GoToCorpse and Social.IsGhost()) then return end
     root:CreateButton(L["Go to My Corpse"], function() Social.GoToCorpse(true) end)
-end
-
-
-
-
-
-
-local function addFollowMyQuests(root)
-    local Quests = FGPS.Quests
-    if not (Quests and Quests.IsQuestRoute and Quests.FollowsMine and Quests.SetFollowsMine and Quests.IsQuestRoute()) then return end
-    local function toggle() Quests.SetFollowsMine(not Quests.FollowsMine()) end
-    if type(root.CreateCheckbox) == "function" then
-        root:CreateCheckbox(L["Follow My Quests"], function() return Quests.FollowsMine() end, toggle)
-    elseif Quests.FollowsMine() then
-        root:CreateButton(L["Stop Following My Quests"], toggle)
-    else
-        root:CreateButton(L["Follow My Quests"], toggle)
-    end
 end
 
 
@@ -327,7 +169,6 @@ function Menus.RouteMenu(owner, root)
             if Navigator and Navigator.Pause then Navigator:Pause() end
         end)
     end
-    addFollowMyQuests(root)
     if not inCombat() then
         root:CreateButton(L["Show on Map"], function() Menus.ShowOnMap() end)
     end
@@ -419,6 +260,7 @@ end
 
 
 
+
 function Menus.OpenRowMenu(owner, spec)
     local Look = FGPS.UI.Look
     if not (Look and Look.TomeHas and Look.TomeHas("global", "MenuUtil")) then
@@ -447,20 +289,14 @@ end
 
 
 
-
-
 function Menus.RouteTooltip(onLine)
     local Navigator = FGPS.Navigator
-    local Guide = FGPS.UI.Guide
-    local model = Guide and type(Guide.model) == "table" and Guide.model or nil
-    local unknown = model and tonumber(model.unknownQuest) or nil
-    local number = unknown and format(L["Quest %d"], unknown) or nil
     if onLine and routeStopped() then
-        return { title = L["Route"], line = number, hint = L["Click to bring the route back"] }
+        return { title = L["Route"], hint = L["Click to bring the route back"] }
     end
-    local tip = { title = L["Route"], line = number, hint = L["Click for options. Drag to move."] }
+    local tip = { title = L["Route"], hint = L["Click for options. Drag to move."] }
     if Navigator and Navigator.GetState and Navigator:GetState() == "paused" and Navigator.pauseReason ~= nil then
-        tip.line = number and (number .. L[" - "] .. L["Resume tries again."]) or L["Resume tries again."]
+        tip.line = L["Press Resume to try again."]
     end
     return tip
 end
@@ -538,13 +374,13 @@ Menus.NEAREST = {
     { "inn", "Inn", "Inn" }, { "bank", "Bank", "Bank" }, { "flightmaster", "Flight Master", "Flight master" },
     { "repair", "Repair", "Repair vendor" }, { "mailbox", "Mailbox", "Mailbox" }, { "vendor", "Vendor", "Vendor" },
     { "trainer", "Class Trainer", "Class trainer" }, { "stable", "Stable Master", "Stable master" },
+    { "dummy", "Training Dummy", "Training dummy" },
 }
 
 
 
 
-
-local NAVIGATOR_ENDS = { quest = true, resurrected = true }
+local NAVIGATOR_ENDS = { resurrected = true }
 
 
 
@@ -608,20 +444,13 @@ function Menus:Init()
     if self.bound then return end
     self.bound = true
     if type(Menu) == "table" and type(Menu.ModifyMenu) == "function" then
-        Menu.ModifyMenu(Menus.TRACKER_TAG, Menus.OnTrackerMenu)
-        Menu.ModifyMenu(Menus.QUEST_LOG_TAG, Menus.OnQuestLogMenu)
-
-        Menus.questMenus = true
         Menu.ModifyMenu(Menus.TRACKING_TAG, Menus.OnTrackingMenu)
     end
 
 
 
-
-
     FGPS.Events:Register("DESTINATION_SET", function(_, _, askedBy)
         if askedBy ~= "navigator" then Menus.nearestPick = nil end
-        Menus.noPlaceSaid = nil
     end, self)
     FGPS.Events:Register("NAV_CANCELLED", function(_, reason)
         if not NAVIGATOR_ENDS[reason] then Menus.nearestPick = nil end
@@ -633,6 +462,14 @@ function Menus:Init()
         if pick and pick.previewed and new == "active" and old == "previewing"
             and FGPS.Navigator:GetRoute() == pick.previewed then
             Menus.nearestPick = nil
+        end
+    end, self)
+    FGPS.Events:Register("MAP_SHOWN", function()
+        if not Menus.awaitingMapShownTaint then return end
+        Menus.awaitingMapShownTaint = nil
+        if not (FGPS.IsOwnerInstall and FGPS.IsOwnerInstall()) then return end
+        if type(Menus.showOnMapTaint) == "table" then
+            Menus.showOnMapTaint.atNextMapShown = readMapIdTaint()
         end
     end, self)
     local RouteBlock = FGPS.UI.RouteBlock

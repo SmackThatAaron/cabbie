@@ -18,6 +18,7 @@
 
 
 
+
 local ADDON_NAME, FGPS = ...
 
 local L = FGPS.L
@@ -104,6 +105,7 @@ local MapPlaces = {
 
 
 
+
     CATEGORIES = {
         { key = "towns", types = { 1, 5 }, hostTypes = { [5] = true }, default = true,
           textures = { [1] = MEDIA .. "place_town", [5] = MEDIA .. "place_city" },
@@ -141,6 +143,11 @@ local MapPlaces = {
           default = false,
           label = "Show stable masters on the world map",
           tooltip = "Stable masters of the zone you are looking at get a small icon on the world map. Left-click one to route there." },
+
+
+        { key = "dummies", types = { 22 }, texture = MEDIA .. "place_trainer", default = false,
+          label = "Show training dummies on the world map",
+          tooltip = "Training dummies of the zone you are looking at get a small icon on the world map. Left-click one to route there." },
         { key = "docks", types = { 14 }, skip = isLiftLanding, texture = MEDIA .. "place_boat", texturePick = dockTexture,
           default = false,
           label = "Show docks and zeppelin towers on the world map",
@@ -434,45 +441,9 @@ end
 
 
 
-local REPLACE_POPUP = "CABBIE_REPLACE_ROUTE"
 
-local function ensureReplacePopup()
-    if type(StaticPopupDialogs) ~= "table" then return false end
-    if StaticPopupDialogs[REPLACE_POPUP] then return true end
-    StaticPopupDialogs[REPLACE_POPUP] = {
-        text = "%s",
-        button1 = L["Replace"],
-        button2 = L["Keep Going"],
-        button3 = L["Add as a Stop"],
-        timeout = 0,
-        whileDead = 1,
-        hideOnEscape = 1,
-        preferredIndex = 3,
-        OnAccept = function(self)
-            local dest = self.data
-            local WorldMap = FGPS.UI.WorldMap
-            if dest and WorldMap and WorldMap.GoTo then WorldMap.GoTo(dest, { start = true, quiet = true }) end
-        end,
-        OnCancel = function() end,
-        OnAlt = function(self)
-            local dest = self.data
-            local WorldMap = FGPS.UI.WorldMap
-            if dest and WorldMap and WorldMap.GoTo then WorldMap.GoTo(dest, { addStop = true, start = false }) end
-        end,
-    }
-    return true
-end
 
-local function askBeforeReplace(dest)
-    if not ensureReplacePopup() or type(StaticPopup_Show) ~= "function" then
-        local WorldMap = FGPS.UI.WorldMap
-        if WorldMap and WorldMap.GoTo then WorldMap.GoTo(dest, { start = true, quiet = true }) end
-        return
-    end
-    local name = (dest and dest.name) or L["that place"]
-    local dialog = StaticPopup_Show(REPLACE_POPUP, (L["Replace the route to %s?"]):format(name))
-    if type(dialog) == "table" then dialog.data = dest end
-end
+
 
 local function onClick(icon, button)
     local index = icon.poiIndex
@@ -493,10 +464,10 @@ local function onClick(icon, button)
         local Guide = FGPS.UI.Guide
         if not goNow then
             if Guide and Guide.Say then
-                Guide.Say((L["That map position cannot be used as a destination%s"]):format("."), WorldMap.GO_REFUSED_SECONDS)
+                Guide.Say((L["I can't take you to that spot%s"]):format("."), WorldMap.GO_REFUSED_SECONDS)
             end
         elseif Guide and Guide.Say then
-            Guide.Say(L["That spot cannot be reached"], WorldMap.GO_REFUSED_SECONDS)
+            Guide.Say(L["I can't find a way to that spot"], WorldMap.GO_REFUSED_SECONDS)
         end
         return
     end
@@ -508,10 +479,6 @@ local function onClick(icon, button)
     local Search = FGPS.UI.Search
     if Search and Search.addStopMode == true then
         WorldMap.GoTo(dest, { addStop = true, start = false })
-        return
-    end
-    if Search and Search.JourneyRunning and Search.JourneyRunning() then
-        askBeforeReplace(dest)
         return
     end
     WorldMap.GoTo(dest, { start = true, quiet = true })

@@ -1,7 +1,7 @@
 -- Cabbie/UI/Go.lua
--- The one way the new entry points start a route: a Shift-click on the map, "Guide Me" on a
--- quest, and a typed place all end in Go.Start, which begins guidance at once. There is no
--- preview step and no chat line; the Route block shows where the route leads.
+-- The one way the new entry points start a route: a Shift-click on the map, a row of the search
+-- list and a typed place all end in Go.Start, which begins guidance at once. There is no preview
+-- step and no chat line; the Route block shows where the route leads.
 local ADDON_NAME, FGPS = ...
 
 local L = FGPS.L
@@ -31,7 +31,7 @@ local FIRST = { "town", "capital" }
 function Go.Start(dest)
     local Navigator = FGPS.Navigator
     if type(dest) ~= "table" or not (Navigator and Navigator.SetDestination) then return false end
-    -- A "Nearest" search of the search window that is still running routes to several candidates
+    -- A Nearest search of the Places page that is still running routes to several candidates
     -- one after the other, and the route asked for now would wait behind them (as Search.GoTo).
     local Search = FGPS.UI.Search
     if Search and Search.CancelServiceSearch then Search:CancelServiceSearch(true) end
@@ -106,6 +106,18 @@ local function bestMatch(text)
     return best.dest or best, best.label
 end
 
+-- Nothing matched the typed name. A class or trade trainer none of whose kind is known says how to
+-- find one, as the Places page does (UI/Search.lua); any other text says that no place matches.
+local function noMatch(text)
+    local Search = FGPS.UI.Search
+    local hint = Search and Search.TrainerHint and Search.TrainerHint(text)
+    if hint then
+        FGPS:Print("%s", hint)
+    else
+        FGPS:Print(L["No place matches '%s'."], text)
+    end
+end
+
 -- Starts the route to a typed place: two numbers (with or without a zone name) or a name. The
 -- search list ranks the matches; the best one starts, or the line opens when two are equally good.
 -- Chat is used only when nothing can be started and nothing opens.
@@ -124,8 +136,8 @@ function Go.FromText(text)
         FGPS:Print("%s", problem)
         return false
     end
-    -- A name: the best row of the search list, which holds places, services and quests in one
-    -- order (UI/SearchRows.lua). Two rows that are equally good start nothing: the line opens
+    -- A name: the best row of the search list, which holds places and services in one order
+    -- (UI/SearchRows.lua). Two rows that are equally good start nothing: the line opens
     -- with the text filled in and shows them. One letter starts its best row all the same: the
     -- line searches from Rows.MIN_LETTERS letters on and would show the guide instead.
     if Rows and Rows.For and Rows.Tied and Rows.Start then
@@ -133,13 +145,13 @@ function Go.FromText(text)
         local listed = #text >= (Rows.MIN_LETTERS or 1)
         if listed and Rows.Tied(rows, service) and Line and Line.Open and Line.Open(text) then return false end
         if rows[1] then return Rows.Start(rows[1]) end
-        FGPS:Print(L["No place matches '%s'."], text)
+        noMatch(text)
         return false
     end
     -- Without the list (its file failed to load): the best place, as before.
     local match = bestMatch(text)
     if not match then
-        FGPS:Print(L["No place matches '%s'."], text)
+        noMatch(text)
         return false
     end
     return Go.Start(match)

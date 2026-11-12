@@ -26,6 +26,7 @@ local Util = FGPS.Util
 local type, ipairs, pairs, tostring, tonumber, sqrt = type, ipairs, pairs, tostring, tonumber, math.sqrt
 
 local Cues = {
+    route = nil,
     currentStep = nil,
     announced = {},
     lastPlayed = nil,
@@ -221,6 +222,13 @@ local function stepIndex(step)
     return step.index or step.legIndex or 0
 end
 
+local function activeRoute()
+    if type(Cues.route) == "table" then return Cues.route end
+    local Nav = FGPS.Navigator
+    local r = Nav and Nav.GetRoute and Nav:GetRoute() or nil
+    return type(r) == "table" and r or nil
+end
+
 local function distanceToStep(step, progress)
     if type(progress) ~= "table" then return nil end
     local pos = progress.pos
@@ -230,6 +238,17 @@ local function distanceToStep(step, progress)
         return sqrt(dx * dx + dy * dy)
     end
     return tonumber(progress.distToNext)
+end
+
+local function stepDistance(step, progress, route, lookedAhead)
+    local Guide = FGPS.UI and FGPS.UI.Guide
+    if route and Guide and Guide.YardsToStep
+        and (type(progress) ~= "table" or progress.positionAvailable ~= false) then
+        local yards = Guide.YardsToStep(route, progress, step)
+        if type(yards) == "number" or lookedAhead then return yards end
+    end
+    if lookedAhead then return nil end
+    return distanceToStep(step, progress)
 end
 
 
@@ -243,9 +262,15 @@ function Cues.CueFor(step)
 end
 
 local function resetJourneyState()
+    Cues.route = nil
     Cues.announced = {}
     Cues.currentStep = nil
     Cues.suppressedStep = nil
+end
+
+local function onRoute(_, route)
+    resetJourneyState()
+    Cues.route = type(route) == "table" and route or nil
 end
 
 
@@ -273,17 +298,29 @@ local function onProgress(_, progress)
     local step = progress.currentStep or Cues.currentStep
     if type(step) ~= "table" then return end
     Cues.currentStep = step
+    local route = activeRoute()
+    local lookedAhead = false
+    if QUIET_KINDS[step.kind] then
+
+
+        local Guide = FGPS.UI and FGPS.UI.Guide
+        if not (route and Guide and Guide.MarkedStep) then return end
+        local from = progress.currentStep == step and progress or { currentStep = step }
+        step = Guide.MarkedStep(route, from)
+        if type(step) ~= "table" then return end
+        lookedAhead = true
+    end
     local cue = Cues.CueFor(step)
 
 
-    if cue ~= "turn" and cue ~= "transport" then return end
+    if cue ~= "turn" and (lookedAhead or cue ~= "transport") then return end
 
 
     if RIDE_END_KINDS[step.kind] then return end
     local index = stepIndex(step)
     if Cues.announced[index] then return end
     if cue == "turn" then
-        local dist = distanceToStep(step, progress)
+        local dist = stepDistance(step, progress, route, lookedAhead)
         if not dist or dist > Cues.TURN_YARDS then return end
     end
     if Cues:Play(cue, { step = index }) then
@@ -291,10 +328,8 @@ local function onProgress(_, progress)
     end
 end
 
-
-
-local function onArrived(_, stopIndex, isFinal, stayEnded)
-    if not stayEnded then Cues:Play("arrival") end
+local function onArrived(_, stopIndex, isFinal)
+    Cues:Play("arrival")
     if isFinal ~= false then resetJourneyState() end
 end
 
@@ -369,8 +404,8 @@ function Cues:Init()
         local Events = FGPS.Events
         Events:Register("NAV_INSTRUCTION", onInstruction, self)
         Events:Register("ROUTE_PROGRESS", onProgress, self)
-        Events:Register("ROUTE_STARTED", resetJourneyState, self)
-        Events:Register("ROUTE_UPDATED", resetJourneyState, self)
+        Events:Register("ROUTE_STARTED", onRoute, self)
+        Events:Register("ROUTE_UPDATED", onRoute, self)
         Events:Register("NAV_CANCELLED", resetJourneyState, self)
         Events:Register("NAV_ARRIVED", onArrived, self)
         Events:Register("COMBAT_STATE", onCombat, self)

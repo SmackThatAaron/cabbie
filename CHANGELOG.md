@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.6.0 (2026-11-12)
+
+Restart the game completely after updating (a `/reload` will not load new files).
+
+- **Navigation only + Questie support:** Built-in quest pages and pins are removed so Cabbie stays focused on routing. With Questie installed, search any quest name or Ctrl-click a quest in your log or tracker to route to its next step.
+- **Enemy town avoidance:** Routes now go around the other faction's guarded towns and outposts by default (toggle in Settings > Cabbie > Advanced).
+- **Trainers, services & training dummies:** Finds Forever's new trainers and services via QuestieDB, city guard directions, or trainers you visit, plus searchable training dummies.
+- **Updated world & dungeon routes:** Updated flights, transports, and road paths for WoW Forever (including Thoradin's Wall, Silverpine trails, Bloodvenom Post, Blackwing Lair, Naxxramas' Frostwyrm Lair, Scholomance, and Maraudon), plus cleaner floor detection in multi-level cities.
+- **Map clicks & pins:** Clicking a new spot on the world map or dropping a map pin routes there right away; Shift + Right-click removes the nearest stop.
+- **UI & arrow polish:** Your Route now lives at the top of the Places page, minimap markers use round parchment-and-ink icons, Large text size updates right away, corpse runs sit on the Places page without death popups, and the game's extra screen-edge arrow is hidden while Cabbie's turn arrow is active.
+
 ## 1.4.0 (2026-11-04)
 
 - Cabbie is now for WoW Forever only; Classic Era is no longer supported. Extract the zip into the `Interface/AddOns` folder of your WoW Forever install and restart the game after updating: a /reload does not pick up new add-on folders.

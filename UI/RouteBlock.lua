@@ -70,7 +70,7 @@ end
 
 
 local function fontString(parent, role, oneLine)
-    local text = parent:CreateFontString(nil, "OVERLAY", FGPS.UI.Look.Font(role))
+    local text = FGPS.UI.Look.FontString(parent, "OVERLAY", role)
     if text.SetJustifyH then text:SetJustifyH("LEFT") end
     if text.SetWordWrap then text:SetWordWrap(not oneLine) end
     if oneLine and text.SetMaxLines then text:SetMaxLines(1) end
@@ -217,6 +217,7 @@ local function paint(model)
     local frame = RouteBlock.frame
     if not frame then return end
     if not (type(model) == "table" and model.visible and enabled()) then
+        RouteBlock.lastModel = nil
         if RouteBlock.remeasure then
             RouteBlock.remeasure:Cancel()
             RouteBlock.remeasure = nil
@@ -224,6 +225,7 @@ local function paint(model)
         frame:Hide()
         return
     end
+    RouteBlock.lastModel = model
     local Look = FGPS.UI.Look
 
 
@@ -238,9 +240,7 @@ local function paint(model)
         if savedPlace() then fitWidth(frame) else RouteBlock.Place() end
     end
     Look.SetLine(frame.HeaderText, headerText(model.header), Look.Color("header"))
-
-
-    local changed = Look.SetLine(frame.Title, model.title or "", Look.Color(model.unknownQuest and "grey" or "title"))
+    local changed = Look.SetLine(frame.Title, model.title or "", Look.Color("title"))
     local rows = model.rows or NO_ROWS
     for i, row in ipairs(frame.Rows) do
         local entry = rows[i]
@@ -289,7 +289,9 @@ local function paint(model)
         if clickable then frame.Body:Show() else frame.Body:Hide() end
     end
     if changed or not RouteBlock.measured then
-        local height = RouteBlock.HEADER_HEIGHT + 9 + frame.Title:GetStringHeight()
+        local headerHeight = RouteBlock.HEADER_HEIGHT + Look.TextSizeDelta()
+        frame.Header:SetHeight(headerHeight)
+        local height = headerHeight + 9 + frame.Title:GetStringHeight()
         for i, row in ipairs(frame.Rows) do
             if rows[i] then height = height + RouteBlock.LINE_GAP + row:GetStringHeight() end
         end
@@ -439,7 +441,16 @@ function RouteBlock:Init()
         repaint()
     end, self)
     Events:Register("SETTINGS_CHANGED", function(_, key)
-        if key == "*" or key == "routeBlock.enabled" or key == "combatMode" then repaint() end
+        if key == "textSize" or key == "*" then RouteBlock.measured = false end
+        if key == "textSize" then
+            if RouteBlock.frame and RouteBlock.frame:IsShown() and RouteBlock.lastModel then
+                RouteBlock.Paint(RouteBlock.lastModel)
+            else
+                repaint()
+            end
+        elseif key == "*" or key == "routeBlock.enabled" or key == "combatMode" then
+            repaint()
+        end
     end, self)
 
 

@@ -11,7 +11,6 @@ local ADDON_NAME, FGPS = ...
 local L = FGPS.L
 local Util = FGPS.Util
 local type, format, abs, max, pi, huge = type, string.format, math.abs, math.max, math.pi, math.huge
-local tonumber = tonumber
 
 local Guide = {
     model = nil,
@@ -19,8 +18,8 @@ local Guide = {
     progress = nil,
     navState = "idle",
     destName = nil,
-    dest = nil,
-
+    destPlace = nil,
+    destStops = nil,
     notice = nil,
 
     noticeTimer = nil,
@@ -86,6 +85,8 @@ local GLYPH = {
     enter = "ahead", level = "ahead",
 
     hazard = "ahead",
+
+    guarded = "ahead", guarded_round = "ahead",
     board = "board", fly = "board", hearth = "board", cast = "board",
     arrive = "arrive", stop_arrive = "arrive",
 }
@@ -125,6 +126,7 @@ end
 
 
 
+
 local function stepWords(step, landmarkOf)
     if type(step) ~= "table" then return nil end
     local text, short = step.shortText, true
@@ -132,7 +134,7 @@ local function stepWords(step, landmarkOf)
     if type(text) ~= "string" or text == "" then return nil end
 
     if isTurn(step.kind) and not step.toward and type(step.landmark) == "string" and step.landmark ~= "" then
-        text = format(L["%s at %s"], text, landmarkOf and landmarkOf(step.landmark) or step.landmark)
+        text = format(L["%s at %s"], text, landmarkOf and landmarkOf(step.landmark) or step.landmarkSaid or step.landmark)
     end
 
 
@@ -168,9 +170,21 @@ end
 
 
 
+
+
 local function guessedOf(step)
     local yards = step.guessedYards
     return type(yards) == "number" and yards or 0
+end
+
+
+
+
+
+local function rideUnmeasured(route, step)
+    local legs = route.legs
+    local leg = type(legs) == "table" and type(step.legIndex) == "number" and legs[step.legIndex] or nil
+    return type(leg) == "table" and leg.kind ~= "walk" and leg.unverified == true
 end
 
 
@@ -216,7 +230,8 @@ local function eachLine(route, progress, visit)
     if not first then
         local text = Guide.RowText(current)
         if text then
-            local open = guessedOf(current) >= least and guessedAhead(route, progress, current) > 0
+            local open = (guessedOf(current) >= least and guessedAhead(route, progress, current) > 0)
+                or rideUnmeasured(route, current)
             visit(current, current.index or 1, text, true, open or nil)
         end
         return
@@ -232,6 +247,7 @@ local function eachLine(route, progress, visit)
         if text then
             local open = onTheWay >= least
             if open and isFirst then open = guessedAhead(route, progress, current) + behindCurrent > 0 end
+            open = open or rideUnmeasured(route, step)
             if visit(step, step.index or i, text, isFirst, open or nil) then return end
             lastKind, isFirst, onTheWay, behindCurrent = kind, false, 0, 0
         end
@@ -296,6 +312,7 @@ local function markedStep(route, progress)
     end
     return GLYPH[step.kind] and step or nil
 end
+Guide.MarkedStep = markedStep
 
 function Guide.CalloutFor(route, progress, speed)
     local step = markedStep(route, progress)
@@ -388,10 +405,11 @@ end
 
 
 
-local function liveLine(route, progress)
+
+local function liveLine(route, progress, open)
     local yards = Guide.YardsToStep(route, progress, markedStep(route, progress))
     if type(yards) ~= "number" then yards = progress.remainingYards end
-    return { glyph = "ahead", yards = yards, key = "live" }
+    return { glyph = "ahead", yards = yards, key = "live", open = open or nil }
 end
 
 
@@ -452,7 +470,6 @@ end
 
 
 
-
 function Guide.AtStop(route, progress)
     local index = type(progress) == "table" and progress.arrivedStopIndex or nil
     local stops = type(route) == "table" and route.stops or nil
@@ -463,7 +480,7 @@ function Guide.AtStop(route, progress)
     local pos, Coords, Nav = progress and progress.pos, FGPS.Coords, FGPS.Navigator
     if type(at) ~= "table" or type(pos) ~= "table" or (leg.toInst or leg.inst) ~= pos.inst then return false end
     if not (Coords and Coords.Distance and Nav and Nav.ArriveRadius) then return false end
-    local radius = Nav:ArriveRadius(index >= #stops, stop.dest)
+    local radius = Nav:ArriveRadius(index >= #stops)
     local yards = Coords.Distance(pos.x, pos.y, at.x, at.y)
     return type(radius) == "number" and type(yards) == "number" and yards <= radius
 end
@@ -486,57 +503,22 @@ function Guide.DestName(route)
 end
 
 
-local function placeOf(dest)
-    if type(dest) ~= "table" then return nil end
-    return { name = dest.name, kind = dest.kind, questID = dest.questID }
+
+local function spokenName(dest, stops)
+    local D = FGPS.Destinations
+    local said = D and D.SpokenName and D.SpokenName(dest, stops) or nil
+    if type(said) == "string" and said ~= "" then return said end
+    return dest.name
 end
 
 
 
-
-
-
-
-
-
-
-
-local function magicEscaped(text) return (text:gsub("[%^%$%(%)%%%.%[%]%*%+%-%?]", "%%%0")) end
-
-
-local standIn = { source = nil, pattern = false }
-local function standInPattern()
-    local source = L["Quest %d"]
-    if standIn.source ~= source then
-        standIn.source, standIn.pattern = source, false
-        local before, after
-        if type(source) == "string" then before, after = source:match("^(.-)%%d(.*)$") end
-        if before then
-            local edge = (after == "" or after:find("%w$")) and "%f[%W]" or ""
-            standIn.pattern = "^" .. magicEscaped(before) .. "(%d+)" .. magicEscaped(after) .. edge
-        end
-    end
-    return standIn.pattern or nil
-end
-function Guide.UnknownQuest(name, questID, title)
-    if type(name) ~= "string" then return name, nil end
-    local pattern = standInPattern()
-    if not pattern then return name, nil end
-    local first, last, digits = name:find(pattern)
-    if not first then return name, nil end
-    local number = tonumber(digits)
-    if questID ~= nil and tonumber(questID) ~= number then return name, nil end
-    if questID ~= nil and type(title) == "string" and title ~= "" then return title .. name:sub(last + 1), nil end
-    return L["Unknown quest"] .. name:sub(last + 1), number
-end
-
-
-local function knownTitle(questID)
-    local QuestPanel = FGPS.UI.QuestPanel
-    if not (QuestPanel and QuestPanel.TitleFor) then return nil end
-    local ok, title, known = pcall(QuestPanel.TitleFor, questID)
-    if ok and known == true and type(title) == "string" and title ~= "" then return title end
-    return nil
+local function nameSaid(name, route, place, placeStops)
+    if name == nil then return nil end
+    local last = lastDest(route)
+    if last and last.name == name then return spokenName(last, route.stops) end
+    if type(place) == "table" and place.name == name then return spokenName(place, placeStops) end
+    return name
 end
 
 
@@ -590,11 +572,42 @@ local function roomsAhead(route, progress)
     return out
 end
 
+
+
+
+local function emptyRoomsText(route, progress)
+    local legs = type(route.legs) == "table" and route.legs or {}
+    local at = type(progress.legIndex) == "number" and progress.legIndex or nil
+    local leg = at and legs[at] or nil
+    if type(leg) == "table" then
+        if leg.kind == "portal" then
+            for _, step in ipairs(type(route.steps) == "table" and route.steps or {}) do
+                if step.legIndex == at and type(step.text) == "string" and step.text ~= "" then
+                    return step.text
+                end
+            end
+            if leg.toInst ~= nil and leg.toInst ~= leg.inst then return L["Follow the way out"] end
+        elseif leg.kind == "walk" then
+            for i = at + 1, #legs do
+                local nextLeg = legs[i]
+                if type(nextLeg) == "table" and nextLeg.kind ~= "walk" then
+                    if nextLeg.kind == "portal" and nextLeg.toInst ~= nil and nextLeg.toInst ~= leg.inst then
+                        return L["Follow the way out"]
+                    end
+                    break
+                end
+            end
+        end
+    end
+    return L["Follow the way in"]
+end
+
 local function pausedText(reason)
     local key = type(reason) == "string" and PAUSE_SENTENCE[reason] or nil
-    if key then return format(L.ARROW_PAUSED_REASON, L[key]) end
-    return L.NAV_STATE_PAUSED
+    if key then return format(L.ARROW_PAUSED_REASON, L[key]), true end
+    return L.NAV_STATE_PAUSED, false
 end
+
 
 
 
@@ -612,25 +625,9 @@ function Guide.Build(input)
     if newPlace and input.computing and state ~= "paused" then journey = false end
     local name = input.destName or Guide.DestName(route)
     if newPlace and journey and state ~= "paused" then name = routeName end
-    if name then
 
 
-
-
-
-
-        local dest = lastDest(route)
-        if not (dest and dest.name == name) then dest = input.dest end
-        if not (type(dest) == "table" and dest.name == name) then dest = nil end
-        local shown, unknown = name, nil
-        if dest and dest.kind == "quest" then
-            shown, unknown = Guide.UnknownQuest(name, dest.questID)
-
-            local title = unknown and dest.questID ~= nil and knownTitle(dest.questID) or nil
-            if title then shown, unknown = Guide.UnknownQuest(name, dest.questID, title) end
-        end
-        model.title, model.unknownQuest = format(L["To %s"], shown), unknown
-    end
+    if name then model.title = format(L["To %s"], nameSaid(name, route, input.dest, input.destStops)) end
 
     if journey then
         model.visible = true
@@ -638,23 +635,25 @@ function Guide.Build(input)
 
         if input.noFlights then model.noFlights, model.noFlightsIn = true, input.noFlightsIn end
         local noPosition = type(progress) == "table" and progress.positionAvailable == false
-
-
-        local staying = input.staying == true and state ~= "paused" and not noPosition
-        if type(progress) == "table" and not staying and not (newPlace and state == "paused") then
+        if type(progress) == "table" and not (newPlace and state == "paused") then
             model.header.seconds = progress.remainingSeconds
             model.header.yards = progress.remainingYards
         end
         if state == "paused" then
-            model.rows = { { key = "paused", text = pausedText(input.pauseReason), current = false, grey = true } }
+            local text, hasReason = pausedText(input.pauseReason)
+            model.rows = { { key = "paused", text = text, current = false, grey = true } }
+            if hasReason then
+                model.callout = { key = "paused", text = text, glyph = false }
+            end
         elseif noPosition and state == "active" and type(progress.inside) == "table" then
 
 
 
             local rooms = roomsAhead(route, progress)
             if #rooms == 0 then
-                model.rows = { { key = "rooms", text = L["Follow the way in"], current = true } }
-                model.callout = { key = "rooms", text = L["Follow the way in"], glyph = false }
+                local line = emptyRoomsText(route, progress)
+                model.rows = { { key = "rooms", text = line, current = true } }
+                model.callout = { key = "rooms", text = line, glyph = false }
             else
 
 
@@ -670,13 +669,10 @@ function Guide.Build(input)
         elseif noPosition then
 
 
-            model.rows = { { key = "noposition", text = L["No position here"], current = false, grey = true } }
-        elseif staying then
-
-
-
-            model.rows = { { key = "staying", text = L["You are there. The route moves on when this part of the quest is done."],
-                             current = false, grey = true } }
+            model.rows = { { key = "noposition", text = L["I can't tell where you are"], current = false, grey = true } }
+            if state == "active" then
+                model.callout = { key = "lost", text = L["I can't tell where you are"], glyph = false }
+            end
         else
             model.rows = Guide.Rows(route, progress)
             local status = type(progress) == "table" and progress.statusText or nil
@@ -698,7 +694,7 @@ function Guide.Build(input)
                 if input.facing and (line or input.moving) then
                     local aimX, aimY, aimInst = Guide.Aim(route, progress, input.speed)
                     if aimX then
-                        line = line or liveLine(route, progress)
+                        line = line or liveLine(route, progress, model.rows[1] and model.rows[1].open)
                         line.live, line.aimX, line.aimY, line.aimInst = true, aimX, aimY, aimInst
                     end
                 end
@@ -807,32 +803,6 @@ local function flightsLeftOut()
 end
 
 
-
-
-
-
-
-
-function Guide.Staying(route, progress)
-    if type(progress) ~= "table" or not progress.parked then return false end
-    local stops = type(route) == "table" and route.stops or nil
-    local stop = type(stops) == "table" and stops[#stops] or nil
-    local Quests = FGPS.Quests
-    if type(stop) ~= "table" or not (Quests and Quests.StaysAt) then return false end
-    if not progress.holdYards and not Guide.AtStop(route, progress) then return false end
-    local ok, yards = pcall(Quests.StaysAt, stop.dest or stop)
-
-
-    if ok then
-        Guide.stayingError = nil
-    elseif Guide.stayingError ~= tostring(yards) then
-        Guide.stayingError = tostring(yards)
-        if FGPS.Log then FGPS.Log:Error("Guide: the quest module could not say whether the route stays: %s", Guide.stayingError) end
-    end
-    return ok and yards ~= nil
-end
-
-
 local function forgetStopped()
     local timer = Guide.stoppedTimer
     if timer and timer.Cancel then timer:Cancel() end
@@ -908,9 +878,9 @@ function Guide.Refresh()
     local model = Guide.Build({
         state = Guide.navState, route = Guide.route, progress = Guide.progress, speed = speed,
         moving = moving, facing = facing,
-        computing = computing(), destName = Guide.destName, dest = Guide.dest, notice = notice,
+        computing = computing(), destName = Guide.destName, dest = Guide.destPlace, destStops = Guide.destStops, notice = notice,
         pauseReason = nav and nav.pauseReason or nil, wrongWay = Guide.wrongWay, stopped = Guide.stopped ~= nil,
-        noFlights = Guide.noFlights, noFlightsIn = Guide.noFlightsIn, staying = Guide.Staying(Guide.route, Guide.progress),
+        noFlights = Guide.noFlights, noFlightsIn = Guide.noFlightsIn,
     })
     local layoutChanged = Guide.LayoutDiffers(Guide.model, model)
     Guide.model = model
@@ -988,7 +958,6 @@ end
 
 
 
-
 function Guide.Say(text, holdSeconds, glyph)
     if not say(text, holdSeconds, glyph, true) then return end
     local DB = FGPS.DB
@@ -997,8 +966,6 @@ function Guide.Say(text, holdSeconds, glyph)
         UIErrorsFrame:AddMessage(text, 1, 0.1, 0.1)
     end
 end
-
-
 
 
 
@@ -1085,14 +1052,33 @@ end
 
 
 
-local function sayFailure(err, own)
-    local text
+local function failureText(err)
     if type(err) == "table" and err.code == "NO_ORIGIN" then
-        text = L["No position here"]
-    else
-        text = format(L["No way found to %s"], Guide.destName or L["that place"])
+        return L["I can't tell where you are"]
     end
+    return format(L["I can't find a way to %s"],
+                  nameSaid(Guide.destName, Guide.route, Guide.destPlace, Guide.destStops) or L["that place"])
+end
+
+local function sayFailure(err, own)
+    local text = failureText(err)
     if own then say(text, Guide.HOLD_FAILED) else Guide.Say(text, Guide.HOLD_FAILED) end
+end
+
+
+
+local NO_WAY_CODES = { UNREACHABLE = true, NO_PATH = true, NO_DATA = true }
+
+local function askNoWay(err)
+    if type(err) ~= "table" or err.replacedJourney ~= true or not NO_WAY_CODES[err.code] then return end
+    local Question = FGPS.UI and FGPS.UI.Question
+    if not (Question and Question.Ask) then return end
+    local text = type(err.message) == "string" and err.message ~= "" and err.message or failureText(err)
+    Question.Ask({
+        id = "no_way",
+        text = text,
+        buttons = { { label = L["OK"] } },
+    })
 end
 
 
@@ -1136,7 +1122,12 @@ function Guide:Init()
 
     Events:Register("DESTINATION_SET", function(_, dest)
         Guide.destName = type(dest) == "table" and dest.name or nil
-        Guide.dest = placeOf(dest)
+        local nav = FGPS.Navigator
+        Guide.destPlace = type(dest) == "table" and dest or nil
+        Guide.destStops = Guide.destPlace and nav and nav.GetStops and nav:GetStops() or nil
+        if FGPS.UI and FGPS.UI.Question and FGPS.UI.Question.Close then
+            FGPS.UI.Question.Close("no_way")
+        end
 
 
         forgetStopped()
@@ -1169,7 +1160,10 @@ function Guide:Init()
     local function onRoute(_, route)
         Guide.route = route
         local named = Guide.DestName(route)
-        if named then Guide.destName, Guide.dest = named, placeOf(lastDest(route)) end
+        if named then
+            Guide.destName = named
+            Guide.destPlace, Guide.destStops = lastDest(route), route.stops
+        end
         local nav = FGPS.Navigator
         local progress = nav and nav.GetProgress and nav:GetProgress() or nil
         if progress then Guide.progress = progress end
@@ -1193,11 +1187,18 @@ function Guide:Init()
 
 
 
+
+
+
+
     Events:Register("NAV_INSTRUCTION", function(_, step)
         if type(step) == "table" and step.kind == "depart" then
             local text = Guide.RowText(step)
-            if text and Guide.notice ~= nil and Guide.notice == Guide.atStop then
+            local notice = Guide.notice
+            if text and notice ~= nil and notice == Guide.atStop then
                 Guide.waiting = { text = text, glyph = GLYPH[step.kind], untilTime = now() + Guide.HOLD_DEPART }
+            elseif text and notice ~= nil and notice.answer == true and askedByTheNavigator() then
+                Guide.waiting = { text = text, glyph = GLYPH[step.kind], untilTime = notice.untilTime + Guide.HOLD_DEPART }
             else
                 if say(text, Guide.HOLD_DEPART, GLYPH[step.kind]) then
                     Guide.notice.depart = true
@@ -1210,18 +1211,20 @@ function Guide:Init()
 
 
 
+
     Events:Register("NAV_ARRIVED", function(_, stopIndex, isFinal)
-        if isFinal == false then
-            local stops = type(Guide.route) == "table" and Guide.route.stops or nil
+        local stops = type(Guide.route) == "table" and Guide.route.stops or nil
+        if isFinal == false or (type(stops) == "table" and type(stopIndex) == "number" and stopIndex > 0 and stopIndex < #stops) then
             local stop = type(stops) == "table" and stops[stopIndex] or nil
             local dest = type(stop) == "table" and (stop.dest or stop) or nil
-            local name = type(dest) == "table" and type(dest.name) == "string" and dest.name ~= "" and dest.name or nil
-            if say(format(L.ARROW_ARRIVED, name or L["that place"]), Guide.HOLD_ARRIVED, "arrive") then
+            local name = type(dest) == "table" and type(dest.name) == "string" and dest.name ~= "" and spokenName(dest, stops) or nil
+            if say(format(L.ARROW_ARRIVED, name or L["that place"]), Guide.HOLD_ARRIVED, "arrive") and isFinal == false then
                 Guide.atStop = Guide.notice
             end
             return
         end
-        say(format(L.ARROW_ARRIVED, Guide.destName or L["that place"]), Guide.HOLD_ARRIVED, "arrive")
+        local name = nameSaid(Guide.destName, Guide.route, Guide.destPlace, Guide.destStops)
+        say(format(L.ARROW_ARRIVED, name or L["that place"]), Guide.HOLD_ARRIVED, "arrive")
     end, self)
 
     Events:Register("NAV_RECALC_START", function()
@@ -1233,6 +1236,7 @@ function Guide:Init()
     Events:Register("NAV_RECALC_DONE", function(_, route, err)
         if failed(route, err) then
             sayFailure(err, askedByTheNavigator())
+            askNoWay(err)
             return
         end
 

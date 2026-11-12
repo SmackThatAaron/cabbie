@@ -132,6 +132,7 @@ local function afterResume(task, ok, ...)
     Scheduler.current = nil
     local spent = debugprofilestop() - task.sliceStart
     task.elapsedMs = task.elapsedMs + spent
+    if spent > task.maxSliceMs then task.maxSliceMs = spent end
     task.slices = task.slices + 1
     Scheduler.stats.sliceMs = Scheduler.stats.sliceMs + spent
     Scheduler.stats.slices = Scheduler.stats.slices + 1
@@ -225,6 +226,7 @@ function Scheduler:Run(fn, opts, ...)
         started = false,
         done = false,
         elapsedMs = 0,
+        maxSliceMs = 0,
         slices = 0,
         queuedAt = debugprofilestop(),
     }

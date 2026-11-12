@@ -1,22 +1,24 @@
 -- Cabbie/UI/Skins.lua
--- The visual preset. One skin, "minimal" (an unobtrusive flat look), is the only preset; a saved
--- name of one that is gone (modern, classic) loads as it (Core/DB.lua). Windows that wear the
--- game's own look (UI/Look.lua) keep it whatever the skin. A skin is a plain table read by
--- UI/Frames.lua and the HUD modules:
+-- The one look (D8). Cabbie has no skins to choose from any more: "modern" and "classic" went on
+-- 2026-10-20 and "minimal" with Task 29. Skins.Current() is one table, built from the game's look
+-- as UI/Look.lua gives it (its colour roles, its plain ground and the colours and fonts of the flat
+-- widgets, Look.FLAT), with the colour scheme's meaning colours laid over it. It is read by
+-- UI/Frames.lua and by the modules that colour a word or a mark by what it means:
 --
---   { name, label, font, titleFont, fontSize, smallFontSize, largeFontSize, titleFontSize,
---     colors = { bg, border, text, textDim, title, accent, routeVerified, routeUnverified,
---                routeTransport, button, buttonHover, buttonBorder, selection, highlight, editBox, titleBar },
---     backdrop, buttonBackdrop, panelAlpha, titleHeight, inset, closeButtonTemplate }
+--   { name = "tome", colorScheme, font, titleFont, fontSize, smallFontSize, largeFontSize, titleFontSize,
+--     colors = { bg, border, text, textDim, title, accent, mapAccent, routeVerified,
+--                routeUnverified, routeTransport, button, buttonHover, buttonBorder, selection,
+--                highlight, editBox, titleBar },
+--     backdrop, buttonBackdrop, panelAlpha, titleHeight, inset, titleBarStyle, sliderStyle }
 --
--- Skins.Apply(name) re-skins every frame registered with UI/Frames.lua and never touches the
--- destination, routing preferences or custom positions; only Skins.Apply(name, { resetLayout = true })
--- re-applies the default positions through UI/Positions.lua.
+-- Skins.Refresh() builds it again and re-skins every frame registered with UI/Frames.lua; it never
+-- touches the destination, the routing preferences or a position. settings.preset stays in a save
+-- and is read by nothing (Core/DB.lua).
 local ADDON_NAME, FGPS = ...
 
 local L = FGPS.L
 local Util = FGPS.Util
-local type, pairs, ipairs, tostring = type, pairs, ipairs, tostring
+local type, pairs, ipairs = type, pairs, ipairs
 
 -------------------------------------------------------------------------------
 -- Settings schema contributed by UI modules
@@ -37,87 +39,39 @@ function FGPS.UI.AddSettingDefault(key, value)
 end
 
 local Skins = {
-    presets = {},
-    order = { "minimal" },
-    current = nil,          -- resolved copy of the active preset
-    currentName = nil,
-    applying = false,       -- re-entrancy guard for the SETTINGS_CHANGED bridge
+    current = nil,          -- the look as last built, until the next Refresh
     initialised = false,
 }
 FGPS.UI.Skins = Skins
 
-Skins.DEFAULT = "minimal"
+Skins.NAME = "tome"
 Skins.WHITE = "Interface\\Buttons\\WHITE8x8"
 
-local FONT_NORMAL = "Fonts\\FRIZQT__.TTF"
-
 -- FRIZQT__ has no Cyrillic, Hangul or Han glyphs. The client names the text font of its own locale
--- in STANDARD_TEXT_FONT (FRIZQT__ again on the Latin clients), so a preset that asks for FRIZQT__
--- gets that one instead, read when the skin is resolved.
+-- in STANDARD_TEXT_FONT (FRIZQT__ again on the Latin clients), so the look takes that one when the
+-- client names one, read each time the look is built.
 local function localeFont(path)
-    if path ~= FONT_NORMAL then return path end
     if type(STANDARD_TEXT_FONT) == "string" and STANDARD_TEXT_FONT ~= "" then return STANDARD_TEXT_FONT end
     return path
 end
 
 -------------------------------------------------------------------------------
--- Preset definitions
--------------------------------------------------------------------------------
-Skins.presets.minimal = {
-    name = "minimal",
-    label = L["Minimal"],
-    font = FONT_NORMAL,
-    titleFont = FONT_NORMAL,
-    fontSize = 12,
-    smallFontSize = 10,
-    largeFontSize = 16,
-    titleFontSize = 12,
-    colors = {
-        bg = { 0.05, 0.05, 0.06, 0.82 },
-        border = { 0.28, 0.28, 0.31, 0.9 },
-        text = { 0.93, 0.93, 0.93, 1 },
-        textDim = { 0.66, 0.66, 0.68, 1 },
-        title = { 0.93, 0.93, 0.93, 1 },
-        accent = { 0.31, 0.76, 0.97, 1 },
-        routeVerified = { 0.31, 0.76, 0.97, 1 },
-        routeUnverified = { 1.0, 0.64, 0.22, 1 },
-        routeTransport = { 0.80, 0.65, 1.00, 0.9 },
-        button = { 0.13, 0.13, 0.15, 1 },
-        buttonHover = { 0.20, 0.20, 0.23, 1 },
-        buttonBorder = { 0.32, 0.32, 0.35, 1 },
-        selection = { 0.31, 0.76, 0.97, 0.25 },
-        highlight = { 1, 1, 1, 0.07 },
-        editBox = { 0.02, 0.02, 0.03, 0.9 },
-        titleBar = { 0.10, 0.10, 0.12, 1 },
-    },
-    backdrop = { bgFile = Skins.WHITE, edgeFile = Skins.WHITE, edgeSize = 1,
-                 insets = { left = 1, right = 1, top = 1, bottom = 1 } },
-    buttonBackdrop = { bgFile = Skins.WHITE, edgeFile = Skins.WHITE, edgeSize = 1,
-                       insets = { left = 1, right = 1, top = 1, bottom = 1 } },
-    closeButtonTemplate = nil,
-    panelAlpha = 0.9,
-    titleHeight = 20,
-    inset = 8,
-    titleBarStyle = "flat",     -- "flat" draws a tinted strip; "none" relies on the border texture
-    sliderStyle = "flat",       -- "flat" thin track and accent thumb; "blizzard" default slider art
-}
-
--------------------------------------------------------------------------------
 -- Colour schemes (accessibility)
 -------------------------------------------------------------------------------
--- A preset chooses colours for looks; a colour scheme replaces the few colours that carry MEANING
--- (verified route, unverified route, transport, accent) with a set that stays distinguishable for
--- the common forms of colour blindness. The values are the blue / vermillion / reddish-purple /
--- sky-blue of the Okabe-Ito qualitative palette, which was designed so that no pair collapses
--- under deuteranopia, protanopia or tritanopia and every pair also differs in lightness, so the
--- lines stay apart in greyscale too.
+-- The look has its own colours ("Standard Colours"); a colour scheme replaces the few colours that
+-- carry MEANING (verified route, unverified route, transport, accent) with a set that stays
+-- distinguishable for the common forms of colour blindness. The values are the blue / vermillion /
+-- reddish-purple / sky-blue of the Okabe-Ito qualitative palette, which was designed so that no
+-- pair collapses under deuteranopia, protanopia or tritanopia and every pair also differs in
+-- lightness, so the lines stay apart in greyscale too. The key of the standard colours stays
+-- "preset", as saves hold it.
 --
 -- Colour is never the only cue in any case: the world map draws unverified stretches dashed, the
 -- minimap draws them as larger hollow dots, the arrow shows a ring, the preview says how many
 -- yards are estimated and the service list carries a "(straight line)" flag. The scheme is here so
 -- that the colours agree with those cues instead of fighting them.
 Skins.COLOR_SCHEMES = {
-    preset = { label = L["Preset colours"] },
+    preset = { label = L["Standard Colours"] },
     colorblind = {
         label = L["Colour-blind friendly"],
         colors = {
@@ -158,111 +112,87 @@ function Skins.ColorSchemeList()
     return out
 end
 
--- Overwrites the meaning-carrying colours of a resolved skin with the active scheme's.
+-- Overwrites the meaning-carrying colours of a built look with the active scheme's.
 local function applyColorScheme(skin)
+    skin.colorScheme = Skins.ColorSchemeName()
     local scheme = Skins.ColorScheme()
     if not scheme or type(scheme.colors) ~= "table" then return skin end
     for key, color in pairs(scheme.colors) do
         skin.colors[key] = Util.ShallowCopy(color)
     end
     skin.colors.selection = { scheme.colors.accent[1], scheme.colors.accent[2], scheme.colors.accent[3], 0.30 }
-    skin.colorScheme = Skins.ColorSchemeName()
+    skin.colors.mapAccent = Util.ShallowCopy(scheme.colors.accent)
     return skin
 end
 
 -------------------------------------------------------------------------------
--- Resolution
+-- The one look
 -------------------------------------------------------------------------------
-function Skins.IsValid(name)
-    return type(name) == "string" and Skins.presets[name] ~= nil
+local function copy(c)
+    return { c[1], c[2], c[3], c[4] or 1 }
 end
 
-function Skins.List()
-    local out = {}
-    for _, name in ipairs(Skins.order) do
-        out[#out + 1] = { name = name, label = Skins.presets[name].label }
-    end
-    return out
+local function role(name, alpha)
+    local r, g, b = FGPS.UI.Look.Color(name)
+    return { r, g, b, alpha or 1 }
 end
 
--- Returns a fresh resolved copy of a preset (colour scheme applied); callers may keep it
--- without affecting the preset definition. Unknown names resolve to the default preset.
-function Skins.Get(name)
-    if not Skins.IsValid(name) then name = Skins.DEFAULT end
-    local skin = Util.DeepCopy(Skins.presets[name])
-    skin.font, skin.titleFont = localeFont(skin.font), localeFont(skin.titleFont)
-    skin.colorScheme = Skins.DEFAULT_COLOR_SCHEME
-    return applyColorScheme(skin)
+local function backdrop()
+    return { bgFile = Skins.WHITE, edgeFile = Skins.WHITE, edgeSize = 1, insets = { left = 1, right = 1, top = 1, bottom = 1 } }
 end
 
+-- Builds the look afresh from Look: the game's white, grey and gold for the words, its plain dark
+-- ground and gold edge for a window, gilt for the accent, the flat widgets' own shades and fonts
+-- (with mapAccent, the map marks' blue), and over them the colour scheme, whose accent is the map
+-- marks' accent too. Every call gives a new table.
+local function build()
+    local Look = FGPS.UI.Look
+    local flat = Look.FLAT
+    local colors = {
+        bg = copy(Look.GROUND_FILL),
+        border = copy(Look.GROUND_EDGE),
+        text = role("name"),
+        textDim = role("grey"),
+        title = role("header"),
+        accent = role("gilt"),
+        selection = role("gilt", flat.selectionAlpha),
+    }
+    for key, c in pairs(flat.colors) do colors[key] = copy(c) end
+    local font = localeFont(flat.font)
+    return applyColorScheme({
+        name = Skins.NAME,
+        font = font,
+        titleFont = font,
+        fontSize = flat.fontSize,
+        smallFontSize = flat.smallFontSize,
+        largeFontSize = flat.largeFontSize,
+        titleFontSize = flat.titleFontSize,
+        colors = colors,
+        backdrop = backdrop(),
+        buttonBackdrop = backdrop(),
+        panelAlpha = 0.9,
+        titleHeight = 20,
+        inset = 8,
+        titleBarStyle = "flat",     -- "flat" draws a tinted strip; "none" relies on the border texture
+        sliderStyle = "flat",       -- "flat" thin track and accent thumb; "blizzard" default slider art
+    })
+end
+
+-- The look in use, built the first time it is asked for.
 function Skins.Current()
-    if not Skins.current then
-        Skins.current = Skins.Get(Skins.CurrentName())
-        Skins.currentName = Skins.current.name
-    end
+    if not Skins.current then Skins.current = build() end
     return Skins.current
 end
 
--- The configured preset name (settings.preset), validated.
-function Skins.CurrentName()
-    if Skins.currentName then return Skins.currentName end
-    local db = FGPS.DB
-    local name = db and db.settings and db.settings.preset
-    if Skins.IsValid(name) then return name end
-    return Skins.DEFAULT
-end
-
--------------------------------------------------------------------------------
--- Application
--------------------------------------------------------------------------------
--- Applies a preset: stores it in settings, rebuilds the resolved skin, re-skins every registered
--- frame and fires PRESET_CHANGED then UI_PRESET_APPLIED. Destination, routing preferences and
--- custom positions are untouched; opts.resetLayout = true additionally restores default positions.
-function Skins.Apply(name, opts)
-    if not Skins.IsValid(name) then
-        if FGPS.Log then FGPS.Log:Warn("Unknown UI preset '%s'; using '%s'", tostring(name), Skins.DEFAULT) end
-        name = Skins.DEFAULT
-    end
-    if Skins.applying then return Skins.current end
-    Skins.applying = true
-
-    local db = FGPS.DB
-    if db and db.settings and db.settings.preset ~= name and db.Set then
-        -- DB:Set fires SETTINGS_CHANGED("preset"); the re-entrancy guard above swallows the echo.
-        db:Set("preset", name)
-    end
-
-    Skins.currentName = name
-    Skins.current = Skins.Get(name)
-    local skin = Skins.current
-
-    if FGPS.Events then FGPS.Events:Fire("PRESET_CHANGED", name) end
-
-    local frames = FGPS.UI.Frames
-    if frames and frames.ApplyAll then
-        local ok, err = pcall(frames.ApplyAll, skin)
-        if not ok and FGPS.Log then FGPS.Log:Error("Re-skinning frames failed: %s", tostring(err)) end
-    end
-
-    if opts and opts.resetLayout then
-        local positions = FGPS.UI.Positions
-        if positions and positions.ResetAll then
-            local ok, err = pcall(positions.ResetAll)
-            if not ok and FGPS.Log then FGPS.Log:Error("Resetting positions failed: %s", tostring(err)) end
-        end
-    end
-
-    Skins.applying = false
-    if FGPS.Events then FGPS.Events:Fire("UI_PRESET_APPLIED", name) end
-    return skin
-end
-
--- Re-resolves the current skin (for example after the colour scheme or the text size changed) and
--- re-skins registered frames without changing the preset.
+-- Builds the look again (after the colour scheme or the text size changed, or a reset), re-skins
+-- every registered frame and tells the UI with UI_PRESET_APPLIED("tome").
 function Skins.Refresh()
-    Skins.current = Skins.Get(Skins.CurrentName())
+    Skins.current = build()
+    local look = FGPS.UI.Look
+    if look and look.RefreshFonts then look.RefreshFonts() end
     local frames = FGPS.UI.Frames
     if frames and frames.ApplyAll then pcall(frames.ApplyAll, Skins.current) end
+    -- The event keeps its old name; its payload is always "tome", the one look's name.
     if FGPS.Events then FGPS.Events:Fire("UI_PRESET_APPLIED", Skins.current.name) end
     return Skins.current
 end
@@ -285,30 +215,16 @@ end
 -------------------------------------------------------------------------------
 -- Init
 -------------------------------------------------------------------------------
-local function onSettingsChanged(_, key, value)
-    if Skins.applying then return end
-    if key == "preset" then
-        if Skins.IsValid(value) and value ~= Skins.currentName then Skins.Apply(value) end
-    elseif key == "*" then
-        Skins.currentName = nil
-        local name = Skins.CurrentName()
-        if name ~= (Skins.current and Skins.current.name) then
-            Skins.Apply(name)
-        else
-            -- Apply remembers the name it shows; Refresh does not, so keep it here, or the same
-            -- preset chosen again would be taken for a change.
-            Skins.currentName = name
-            Skins.Refresh()
-        end
-    elseif key == "accessibility.colorScheme" or key == "textSize" then
+-- A reset of every setting ("*") may change the colour scheme, or the text size UI/Frames.lua
+-- reads on its skin pass.
+local function onSettingsChanged(_, key)
+    if key == "*" or key == "accessibility.colorScheme" or key == "textSize" then
         Skins.Refresh()
     end
 end
 
 function Skins:Init()
-    Skins.currentName = nil
-    Skins.current = Skins.Get(Skins.CurrentName())
-    Skins.currentName = Skins.current.name
+    Skins.current = build()
     if not Skins.initialised and FGPS.Events then
         FGPS.Events:Register("SETTINGS_CHANGED", onSettingsChanged, Skins)
         Skins.initialised = true

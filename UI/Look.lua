@@ -67,6 +67,7 @@ local FONTS = {
     pageBody = { "QuestFont", "GameFontNormal" },
     pageSub = { "QuestFontNormalSmall", "GameFontNormalSmall", "GameFontNormal" },
     marginNote = { "ItemTextFontNormal", "QuestFont", "GameFontNormal" },
+
     giltHead = { "QuestFont_Super_Huge", "Fancy22Font", "GameFontNormalLarge", "GameFontNormal" },
     scroll = { "QuestTitleFont", "GameFontNormalLarge", "GameFontNormal" },
     mapLabel = { "GameFontNormalOutline", "GameFontNormal" },
@@ -78,6 +79,113 @@ function Look.Font(role)
         if type(_G[names[i]]) == "table" then return names[i] end
     end
     return "GameFontNormal"
+end
+
+
+
+local FONT_SPECS = {
+    header = { 14, "" },
+    title = { 12, "" },
+    line = { 12, "" },
+    callout = { 16, "OUTLINE" },
+    listTitle = { 12, "" },
+    row = { 12, "" },
+    rowSmall = { 10, "" },
+    input = { 12, "" },
+    hint = { 10, "" },
+    panelTitle = { 16, "" },
+    setting = { 14, "" },
+    pageHeading = { 16, "" },
+    pageBody = { 13, "" },
+    pageSub = { 10, "" },
+    marginNote = { 13, "" },
+    giltHead = { 22, "" },
+    scroll = { 16, "" },
+    mapLabel = { 12, "OUTLINE" },
+}
+
+local DEFAULT_FONT_PATH = "Fonts\\FRIZQT__.TTF"
+local sizedLines = setmetatable({}, { __mode = "k" })
+
+
+function Look.TextSizeDelta()
+    local s = FGPS.DB and FGPS.DB.settings
+    return (s and s.textSize == "large") and 2 or 0
+end
+
+
+function Look.PlaceRowHeight()
+    return Look.TOKENS.rowPlace + Look.TextSizeDelta()
+end
+
+local function localeFontPath()
+    if type(STANDARD_TEXT_FONT) == "string" and STANDARD_TEXT_FONT ~= "" then return STANDARD_TEXT_FONT end
+    return DEFAULT_FONT_PATH
+end
+
+local function fontSpecOf(role, name)
+    local font = type(name) == "string" and _G[name] or nil
+    if type(font) == "table" and type(font.GetFont) == "function" then
+        local ok, path, size, flags = pcall(font.GetFont, font)
+        if ok and type(path) == "string" and path ~= "" and type(size) == "number" and size > 0 then
+            return path, size, type(flags) == "string" and flags or ""
+        end
+    end
+    local spec = FONT_SPECS[role] or FONT_SPECS.line
+    return localeFontPath(), spec[1], spec[2]
+end
+
+local function applyFontShadow(line, name)
+    local font = type(name) == "string" and _G[name] or nil
+    if type(font) ~= "table" or type(font.GetShadowColor) ~= "function" or type(font.GetShadowOffset) ~= "function" then
+        return
+    end
+    local okColor, r, g, b, a = pcall(font.GetShadowColor, font)
+    local okOff, x, y = pcall(font.GetShadowOffset, font)
+    if not (okColor and okOff) then return end
+    if type(r) ~= "number" or type(g) ~= "number" or type(b) ~= "number" or type(x) ~= "number" or type(y) ~= "number" then
+        return
+    end
+    if line.SetShadowColor then line:SetShadowColor(r, g, b, type(a) == "number" and a or 1) end
+    if line.SetShadowOffset then line:SetShadowOffset(x, y) end
+end
+
+local function applyFontSize(line, role, name)
+    if type(line) ~= "table" or type(line.SetFont) ~= "function" then return end
+    local path, baseSize, flags = fontSpecOf(role, name)
+    line:SetFont(path, baseSize + Look.TextSizeDelta(), flags)
+    applyFontShadow(line, name)
+end
+
+
+
+function Look.ApplyFont(line, role, setObject)
+    if type(line) ~= "table" then return line end
+    role = role or "line"
+    local name = Look.Font(role)
+    if setObject and type(line.SetFontObject) == "function" then
+        line:SetFontObject(name)
+    end
+    sizedLines[line] = role
+    applyFontSize(line, role, name)
+    return line
+end
+
+
+function Look.FontString(parent, layer, role)
+    role = role or "line"
+    local name = Look.Font(role)
+    local line = parent:CreateFontString(nil, layer or "OVERLAY", name)
+    sizedLines[line] = role
+    applyFontSize(line, role, name)
+    return line
+end
+
+
+function Look.RefreshFonts()
+    for line, role in pairs(sizedLines) do
+        applyFontSize(line, role, Look.Font(role))
+    end
 end
 
 
@@ -144,6 +252,27 @@ end
 
 
 
+
+
+
+function Look.RouteColor(name)
+    local Skins = FGPS.UI.Skins
+    if type(Skins) == "table" and type(Skins.ColorScheme) == "function" then
+        local ok, scheme = pcall(Skins.ColorScheme)
+        local colors = ok and type(scheme) == "table" and scheme.colors or nil
+        local c = type(colors) == "table" and colors[name] or nil
+        if type(c) == "table" then
+            local r, g, b, a = c[1] or c.r, c[2] or c.g, c[3] or c.b, c[4] or c.a
+            if type(r) == "number" and type(g) == "number" and type(b) == "number" then return r, g, b, a or 1 end
+        end
+    end
+    local r, g, b = Look.Color("route")
+    return r, g, b, nil
+end
+
+
+
+
 local function linear(c)
     if c <= 0.04045 then return c / 12.92 end
     return ((c + 0.055) / 1.055) ^ 2.4
@@ -169,88 +298,6 @@ end
 function Look.Tint(text, role)
     local r, g, b = Look.Color(role)
     return format("|cff%02x%02x%02x%s|r", floor(r * 255 + 0.5), floor(g * 255 + 0.5), floor(b * 255 + 0.5), text)
-end
-
-
-
-
-
-
-Look.DIFFICULTY = {
-    impossible = { 1, 0.1, 0.1 }, verydifficult = { 1, 0.5, 0.25 }, difficult = { 1, 1, 0 },
-    standard = { 0.25, 0.75, 0.25 }, trivial = { 0.5, 0.5, 0.5 },
-}
-
-
-Look.GREEN_RANGE = 8
-
-local function playerLevel()
-    if type(UnitLevel) ~= "function" then return nil end
-    local ok, level = pcall(UnitLevel, "player")
-    return ok and tonumber(level) or nil
-end
-
-local function greenRange()
-    if type(UnitQuestTrivialLevelRange) == "function" then
-        local ok, range = pcall(UnitQuestTrivialLevelRange, "player")
-        if ok and type(range) == "number" and not (issecretvalue and issecretvalue(range)) then return range end
-    end
-    return Look.GREEN_RANGE
-end
-
-
-
-
-
-
-local function foreverQuestColor(questID)
-    if type(questID) ~= "number" or type(GetDifficultyColor) ~= "function" or type(C_PlayerInfo) ~= "table"
-        or type(C_PlayerInfo.GetContentDifficultyQuestForPlayer) ~= "function" then
-        return nil
-    end
-    if type(GetCVarBool) == "function" then
-        local ok, on = pcall(GetCVarBool, "showQuestDifficultyColor")
-        if ok and not on then return Look.Color("ink") end
-    end
-    local ok, difficulty = pcall(C_PlayerInfo.GetContentDifficultyQuestForPlayer, questID)
-    if not ok or difficulty == nil then return nil end
-    local okColor, color = pcall(GetDifficultyColor, difficulty)
-    if not okColor then return nil end
-    return rgb(color)
-end
-
-function Look.QuestColor(level, questID)
-    local r, g, b = foreverQuestColor(questID)
-    if r then return r, g, b end
-    level = tonumber(level)
-    if not level or level <= 0 then return Look.Color("title") end
-    if type(GetQuestDifficultyColor) == "function" then
-        local ok, color = pcall(GetQuestDifficultyColor, level)
-        if ok then
-            local r, g, b = rgb(color)
-            if r then return r, g, b end
-        end
-    end
-    local own = playerLevel()
-    if not own then return unpack(Look.DIFFICULTY.difficult) end
-    local above = level - own
-    local step
-    if above >= 5 then step = "impossible"
-    elseif above >= 3 then step = "verydifficult"
-    elseif above >= -2 then step = "difficult"
-    elseif -above <= greenRange() then step = "standard"
-    else step = "trivial" end
-    return unpack(Look.DIFFICULTY[step])
-end
-
-
-
-
-function Look.QuestTitle(title, level, elite)
-    title = title == nil and "" or tostring(title)
-    level = tonumber(level)
-    if not level or level ~= level or level <= 0 or level == huge then return title end
-    return "[" .. level .. (elite and "+" or "") .. "] " .. title
 end
 
 
@@ -373,9 +420,6 @@ local ICONS = {
     trainer = { atlas = { "Class" }, file = "Interface\\GossipFrame\\TrainerGossipIcon" },
     stable = { atlas = { "StableMaster" }, file = "Interface\\Minimap\\Tracking\\StableMaster" },
     auction = { atlas = { "Auctioneer" }, file = "Interface\\Minimap\\Tracking\\Auctioneer" },
-    quest = { atlas = {}, file = "Interface\\GossipFrame\\IncompleteQuestIcon" },
-    questReady = { atlas = { "QuestTurnin" }, file = "Interface\\GossipFrame\\ActiveQuestIcon" },
-    pickup = { atlas = { "QuestNormal" }, file = "Interface\\GossipFrame\\AvailableQuestIcon" },
     search = { atlas = { "common-search-magnifyingglass" }, file = "Interface\\Common\\UI-Searchbox-Icon" },
     map = { atlas = { "Waypoint-MapPin-Untracked", "Waypoint-MapPin-Tracked" } },
     route = { atlas = { "Navigation-Tracked-Arrow", "poi-traveldirections-arrow" } },
@@ -441,6 +485,37 @@ Look.DIALOG_FILL = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark"
 Look.DIALOG_EDGE = "Interface\\DialogFrame\\UI-DialogBox-Border"
 Look.GROUND_FILL = { 0.05, 0.05, 0.07, 0.94 }
 Look.GROUND_EDGE = { 0.75, 0.61, 0, 0.9 }
+
+
+
+
+
+
+
+
+
+
+
+Look.FLAT = {
+    font = "Fonts\\FRIZQT__.TTF",
+    fontSize = 12,
+    smallFontSize = 10,
+    largeFontSize = 16,
+    titleFontSize = 12,
+    selectionAlpha = 0.25,
+    colors = {
+        routeVerified = { 0.31, 0.76, 0.97, 1 },
+        routeUnverified = { 1.0, 0.64, 0.22, 1 },
+        routeTransport = { 0.80, 0.65, 1.00, 0.9 },
+        mapAccent = { 0.31, 0.76, 0.97, 1 },
+        button = { 0.13, 0.13, 0.15, 1 },
+        buttonHover = { 0.20, 0.20, 0.23, 1 },
+        buttonBorder = { 0.32, 0.32, 0.35, 1 },
+        highlight = { 1, 1, 1, 0.07 },
+        editBox = { 0.02, 0.02, 0.03, 0.9 },
+        titleBar = { 0.10, 0.10, 0.12, 1 },
+    },
+}
 
 
 
@@ -554,7 +629,6 @@ Look.CLOSE_FILES = {
     down = "Interface\\Buttons\\UI-Panel-MinimizeButton-Down",
     highlight = "Interface\\Buttons\\UI-Panel-MinimizeButton-Highlight",
 }
-Look.KNOB_FILE = "Interface\\Buttons\\UI-ScrollBar-Knob"
 
 local function fromTemplate(frameType, parent, template)
     if not Look.HasTemplate(template) then return nil end
@@ -615,46 +689,6 @@ end
 
 
 
-Look.GEAR_FILES = { "Interface\\Buttons\\UI-OptionsButton", "Interface\\Icons\\INV_Misc_Gear_01" }
-function Look.SettingsButton(parent, onClick)
-    local button, how = CreateFrame("Button", nil, parent), "glyph"
-    button:SetSize(22, 22)
-    button:EnableMouse(true)
-    for _, file in ipairs(Look.GEAR_FILES) do
-        if Look.HasFile(file) then
-            how = file
-            if button.SetNormalTexture then button:SetNormalTexture(file) end
-            if button.SetHighlightTexture then button:SetHighlightTexture(file, "ADD") end
-            break
-        end
-    end
-    if how == "glyph" then
-        if button.SetNormalFontObject then button:SetNormalFontObject(Look.Font("listTitle")) end
-        button:SetText("S")
-    end
-    if button.RegisterForClicks then button:RegisterForClicks("LeftButtonUp") end
-    if onClick then button:SetScript("OnClick", onClick) end
-    button.fgpsLook = how
-    return button, how
-end
-
-
-
-function Look.ScrollKnob(texture)
-    if not texture then return false end
-    if texture.SetVertexColor then texture:SetVertexColor(1, 1, 1, 1) end
-    if Look.HasFile(Look.KNOB_FILE) then
-        texture:SetTexture(Look.KNOB_FILE)
-        if texture.SetTexCoord then texture:SetTexCoord(0.2, 0.8, 0.25, 0.75) end
-        return "file"
-    end
-    local r, g, b = Look.Color("match")
-    texture:SetColorTexture(r, g, b, 0.8)
-    return "plain"
-end
-
-
-
 
 
 
@@ -664,13 +698,14 @@ function Look.EditBox(parent, templates)
             local box = fromTemplate("EditBox", parent, template)
             if box then
                 box:SetAutoFocus(false)
+                Look.ApplyFont(box, "input")
                 return box, template
             end
         end
     end
     local box = Look.CreateGround("EditBox", parent, 12)
     box:SetAutoFocus(false)
-    box:SetFontObject(Look.Font("input"))
+    Look.ApplyFont(box, "input", true)
     if box.SetTextInsets then box:SetTextInsets(8, 8, 0, 0) end
     return box, false
 end
@@ -689,8 +724,10 @@ function Look.SearchBox(parent, opts)
     if box.SetMaxLetters then box:SetMaxLetters(opts.maxLetters or 80) end
     box.Placeholder = box.Instructions
     if not box.Placeholder then
-        box.Placeholder = box:CreateFontString(nil, "OVERLAY", Look.Font("hint"))
+        box.Placeholder = Look.FontString(box, "OVERLAY", "hint")
         box.Placeholder:SetPoint("LEFT", box, "LEFT", 8, 0)
+    else
+        Look.ApplyFont(box.Placeholder, "hint")
     end
     box.Placeholder:SetText(opts.placeholder or "")
     local function call(fn, ...)
@@ -718,32 +755,6 @@ function Look.SearchBox(parent, opts)
         clear:HookScript("OnClick", function() call(opts.onChanged, box, "", true) end)
     end
     return box
-end
-
-
-
-
-Look.TAB_DIM = 0.45
-function Look.Tab(parent, text, width, height)
-    local button, how = Look.Button(parent, text, width, height)
-    local mark = button:CreateTexture(nil, "OVERLAY")
-    mark:SetPoint("TOPLEFT", button, "TOPLEFT", 4, -3)
-    mark:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -4, 3)
-    Look.Highlight(mark)
-    mark:Hide()
-    button.fgpsMark = mark
-    return button, how
-end
-
-
-
-function Look.SelectTab(tabs, chosen)
-    if type(tabs) ~= "table" then return end
-    for key, button in pairs(tabs) do
-        local on = key == chosen
-        if button.SetAlpha then button:SetAlpha(on and 1 or Look.TAB_DIM) end
-        if button.fgpsMark then button.fgpsMark:SetShown(on) end
-    end
 end
 
 
@@ -791,7 +802,7 @@ local function dressWindowNow(window)
         bar:SetHeight(Look.WINDOW_TITLE_HEIGHT)
     end
     if window.Title then
-        window.Title:SetFontObject(look.Font("listTitle"))
+        look.ApplyFont(window.Title, "listTitle", true)
         window.Title:SetTextColor(look.Color("header"))
     end
     if window.Close then window.Close:Hide() end
@@ -838,39 +849,6 @@ end
 
 
 
-local function dressListNow(list)
-    local bar = list.Bar
-    if bar then
-        if bar.Track then bar.Track:SetColorTexture(0, 0, 0, 0.35) end
-        if bar.fgpsThumb then Look.ScrollKnob(bar.fgpsThumb) end
-    end
-    if list.Empty then
-        list.Empty:SetFontObject(Look.Font("hint"))
-        list.Empty:SetTextColor(Look.Color("grey"))
-    end
-end
-
-
-
-
-
-function Look.DressList(list)
-    if type(list) ~= "table" then return end
-    dressListNow(list)
-    local F = FGPS.UI.Frames
-    if F and F.Register and not list.fgpsDressed then
-        list.fgpsDressed = true
-        local skinPass = list.fgpsApplySkin
-        F.Register(list, function(l, skin)
-            if skinPass then skinPass(l, skin) end
-            dressListNow(l)
-            if l.Refresh then l:Refresh() end
-        end)
-    end
-end
-
-
-
 
 Look.CHECK_TEMPLATE = "UICheckButtonTemplate"
 Look.CHECK_FILES = {
@@ -889,8 +867,10 @@ function Look.CheckButton(parent, text)
     button:SetSize(24, 24)
     local label = button.Text or button.text
     if not label then
-        label = button:CreateFontString(nil, "OVERLAY", Look.Font("listTitle"))
+        label = Look.FontString(button, "OVERLAY", "listTitle")
         label:SetPoint("LEFT", button, "RIGHT", 2, 1)
+    else
+        Look.ApplyFont(label, "listTitle")
     end
     label:SetText(text or "")
     button.Label = label
@@ -1134,8 +1114,7 @@ function Look.NoteClientAnswers()
     local kinds = {}
     for kind in pairs(ICONS) do kinds[#kinds + 1] = kind end
     table.sort(kinds)
-    local paths = { Look.DIALOG_FILL, Look.DIALOG_EDGE, Look.HIGHLIGHT_FILE, Look.KNOB_FILE, Look.CLOSE_FILES.up }
-    for _, path in ipairs(Look.GEAR_FILES) do paths[#paths + 1] = path end
+    local paths = { Look.DIALOG_FILL, Look.DIALOG_EDGE, Look.HIGHLIGHT_FILE, Look.CLOSE_FILES.up }
     for _, kind in ipairs(kinds) do
         if ICONS[kind].file then paths[#paths + 1] = ICONS[kind].file end
     end
@@ -1162,30 +1141,24 @@ end
 Look.TOME_PROBES = {
     templates = { "PortraitFrameTemplate", "ButtonFrameTemplate", "LargeSideTabButtonTemplate", "UIPanelButtonTemplate",
                   "UIPanelCloseButton", "SearchBoxTemplate", "DialogBorderTemplate", "EditModeSystemSelectionTemplate" },
-    atlases = { "QuestBG-Parchment", "questlog-frame", "questlog-frame-filigree", "_UI-Taxi-Line-horizontal", "QuestNormal",
-                "QuestTurnin", "SideInProgressquesticon", "Waypoint-MapPin-Tracked" },
+    atlases = { "QuestBG-Parchment", "questlog-frame", "questlog-frame-filigree", "_UI-Taxi-Line-horizontal",
+                "Waypoint-MapPin-Tracked" },
     files = {
         "Interface\\QuestFrame\\UI-HorizontalBreak", "Interface\\QuestFrame\\UI-QuestLogTitleHighlight",
         "Interface\\QuestFrame\\UI-Quest-BulletPoint",
-        "Interface\\GossipFrame\\AvailableQuestIcon", "Interface\\GossipFrame\\ActiveQuestIcon",
-        "Interface\\GossipFrame\\IncompleteQuestIcon",
         "Interface\\Minimap\\POIIcons",
         "Interface\\TaxiFrame\\UI-Taxi-Icon-White", "Interface\\TaxiFrame\\UI-Taxi-Icon-Green",
         "Interface\\Minimap\\Tracking\\Innkeeper", "Interface\\Minimap\\Tracking\\FlightMaster",
         "Interface\\Minimap\\Tracking\\Banker", "Interface\\Minimap\\Tracking\\Mailbox",
         "Interface\\Minimap\\Tracking\\Repair", "Interface\\Minimap\\Tracking\\Auctioneer",
         "Interface\\Minimap\\Tracking\\StableMaster", "Interface\\Minimap\\Tracking\\Class",
-        "Interface\\Common\\RingBorder",
-        "Interface\\Buttons\\UI-PlusButton-Up", "Interface\\Buttons\\UI-MinusButton-Up",
-        "Interface\\TargetingFrame\\UI-StatusBar",
         "Interface\\Icons\\INV_Misc_Map_01",
     },
 
     sounds = { "IG_QUEST_LOG_OPEN", "IG_QUEST_LOG_CLOSE", "IG_ABILITY_PAGE_TURN", "IG_QUEST_LIST_SELECT" },
 
-    globals = { "QuestTextContrast", "PixelUtil", "AddonCompartmentFrame", "MenuUtil", "GetDifficultyColor",
-                "C_PlayerInfo.GetContentDifficultyQuestForPlayer", "GameTooltip_SetTitle", "GameTooltip_AddColoredLine",
-                "GameTooltip_AddInstructionLine", "GetCVarBool" },
+    globals = { "QuestTextContrast", "PixelUtil", "AddonCompartmentFrame", "MenuUtil", "GameTooltip_SetTitle",
+                "GameTooltip_AddColoredLine", "GameTooltip_AddInstructionLine" },
 }
 
 local function hasAtlas(name)
@@ -1473,7 +1446,7 @@ local function plainTitle(win)
     band:SetPoint("TOPLEFT", win, "TOPLEFT", tokens.pad, -Look.WINDOW_TITLE_TOP)
     band:SetPoint("TOPRIGHT", close, "TOPLEFT", -tokens.gap, -(Look.WINDOW_TITLE_TOP - tokens.gap))
     band:SetHeight(Look.WINDOW_TITLE_HEIGHT)
-    local text = band:CreateFontString(nil, "OVERLAY", Look.Font("pageHeading"))
+    local text = Look.FontString(band, "OVERLAY", "pageHeading")
     text:SetPoint("LEFT", band, "LEFT", 0, 0)
     text:SetPoint("RIGHT", band, "RIGHT", 0, 0)
     text:SetJustifyH("LEFT")
@@ -1595,7 +1568,7 @@ local function makeFooter(win, sheet)
     pixelPoint(rule, "BOTTOMLEFT", footer, "TOPLEFT", 0, tokens.gap)
     pixelPoint(rule, "BOTTOMRIGHT", footer, "TOPRIGHT", 0, tokens.gap)
     pixelHeight(rule, 1)
-    local note = footer:CreateFontString(nil, "OVERLAY", Look.Font("pageSub"))
+    local note = Look.FontString(footer, "OVERLAY", "pageSub")
     note:SetJustifyH("LEFT")
     if note.SetWordWrap then note:SetWordWrap(false) end
     note:SetTextColor(r, g, b)
@@ -1643,6 +1616,9 @@ end
 
 
 
+
+
+
 local function fadeOut(self)
     if not self:IsShown() then return false end
     local out = self._fadeOut
@@ -1650,6 +1626,8 @@ local function fadeOut(self)
     if self._fadeIn and self._fadeIn:IsPlaying() then self._fadeIn:Stop() end
     self.fgpsClosing = true
     Look.PlaySound("IG_QUEST_LOG_CLOSE")
+    local Frames = FGPS.UI.Frames
+    if Frames and Frames.ReleaseKeyboard then Frames.ReleaseKeyboard(self) end
     if out then out:Play() else self:Hide() end
     return true
 end
@@ -1734,6 +1712,9 @@ function Look.Window(spec)
         end
         liftSheet(win, sheet)
         setPortrait(win, spec.portrait or Look.TOME_PORTRAIT)
+        if win.TitleContainer and win.TitleContainer.TitleText then
+            Look.ApplyFont(win.TitleContainer.TitleText, "listTitle")
+        end
         if win.CloseButton and win.CloseButton.SetScript then
             win.CloseButton:SetScript("OnClick", function() closeByHand(win) end)
         end
@@ -1793,5 +1774,8 @@ if FGPS.Events then
     FGPS.Events:Register("ADDON_READY", function()
         Look.NoteClientAnswers()
         Look.NoteTomeAnswers()
+    end, Look)
+    FGPS.Events:Register("SETTINGS_CHANGED", function(_, key)
+        if key == "textSize" or key == "*" then Look.RefreshFonts() end
     end, Look)
 end

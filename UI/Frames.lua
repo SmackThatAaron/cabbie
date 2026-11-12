@@ -921,6 +921,12 @@ function Frames.CreateScrollList(parent, rowHeight, renderFn, opts)
     function list:SetOnClick(fn) self.onClick = fn end
     function list:SetEmptyText(text) self.emptyText = text self.Empty:SetText(text or "") self:Refresh() end
     function list:VisibleCount() return listVisibleCount(self) end
+    function list:SetRowHeight(h)
+        if type(h) ~= "number" or h ~= h or h <= 0 or self.rowHeight == h then return end
+        self.rowHeight = h
+        for _, row in ipairs(self.rows) do row:SetHeight(h) end
+        self:Refresh()
+    end
 
     Frames.Register(list, applyListSkin)
     list:Refresh()
@@ -1001,6 +1007,8 @@ local function releaseKeyboard(frame)
     return false
 end
 
+Frames.ReleaseKeyboard = releaseKeyboard
+
 local function windowKeyboard(win, enabled)
     if not win.EnableKeyboard then return end
     if enabled and win.fgpsEscape and not (InCombatLockdown and InCombatLockdown()) then
@@ -1017,11 +1025,9 @@ end
 
 
 
+
+
 Frames.DEFAULT_OFFSETS = {
-    search = { fx = -0.30, fy = 0.08 },
-    preview = { fx = 0.30, fy = 0.08 },
-    itinerary = { fx = -0.30, fy = -0.28 },
-    favorites = { fx = 0.30, fy = -0.28 },
     setup = { fx = 0.0, fy = 0.12 },
     tome = { fx = 0.0, fy = 0.0 },
 }
@@ -1263,7 +1269,7 @@ local function onCombatState(_, inCombat)
 
 
             releaseKeyboard(win)
-        elseif win:IsVisible() then
+        elseif win:IsVisible() and win.fgpsEscape then
             windowKeyboard(win, true)
         end
     end
@@ -1272,6 +1278,11 @@ end
 function Frames:Init()
     if not Frames.initialised and FGPS.Events then
         FGPS.Events:Register("COMBAT_STATE", onCombatState, Frames)
+
+
+        FGPS.Events:Register("WORLD_ENTERED", function()
+            if not (InCombatLockdown and InCombatLockdown()) then onCombatState(nil, false) end
+        end, Frames)
         Frames.initialised = true
     end
     Frames.ApplyAll(Frames.Skin())

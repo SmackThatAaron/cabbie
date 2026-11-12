@@ -68,25 +68,6 @@ local function orderedKeys()
     return keys
 end
 
-
-
-local function isAvailable(key)
-    local page = Tome.pages[key]
-    if not page then return false end
-    if page.available == nil then return true end
-    local ok, yes = pcall(page.available)
-    if not ok then return true end
-    return yes and true or false
-end
-
-local function availableKeys()
-    local keys = {}
-    for _, key in ipairs(orderedKeys()) do
-        if isAvailable(key) then keys[#keys + 1] = key end
-    end
-    return keys
-end
-
 local openPage
 
 local function onTabMouseUp(tab, button, upInside)
@@ -145,13 +126,12 @@ end
 
 
 
-
 local function layoutTabs()
     local win = Tome.window
     if not win then return end
     local current = Tome:Current()
     local listed, previous = {}, nil
-    for index, key in ipairs(availableKeys()) do
+    for index, key in ipairs(orderedKeys()) do
         local tab = tabFor(key)
         if tab then
             local page = Tome.pages[key]
@@ -196,9 +176,9 @@ end
 
 
 local function defaultPage()
-    if Tome.lastPage and isAvailable(Tome.lastPage) then return Tome.lastPage end
-    if isAvailable(Tome.DEFAULT_PAGE) then return Tome.DEFAULT_PAGE end
-    return availableKeys()[1]
+    if Tome.lastPage and Tome.pages[Tome.lastPage] then return Tome.lastPage end
+    if Tome.pages[Tome.DEFAULT_PAGE] then return Tome.DEFAULT_PAGE end
+    return orderedKeys()[1]
 end
 
 local function showPage(key, opts)
@@ -236,7 +216,6 @@ function Tome.RegisterPage(key, page)
     if type(page.order) ~= "number" or type(page.build) ~= "function" then return false end
     if page.show ~= nil and type(page.show) ~= "function" then return false end
     if page.footer ~= nil and type(page.footer) ~= "function" then return false end
-    if page.available ~= nil and type(page.available) ~= "function" then return false end
     local onWindow = key == Tome:Current()
     Tome.pages[key] = page
     if Tome.window then layoutTabs() end
@@ -263,20 +242,8 @@ end
 
 function Tome:Open(key, opts)
     if key == nil then key = defaultPage() end
-    if key == nil or not self.pages[key] or not isAvailable(key) then return false end
+    if key == nil or not self.pages[key] then return false end
     return openPage(key, opts, false)
-end
-
-
-
-function Tome.RefreshPages()
-    if not Tome.window then return end
-    layoutTabs()
-    local current = Tome:Current()
-    if current and not isAvailable(current) then
-        local key = defaultPage()
-        if key then openPage(key, nil, false) else Tome:Close() end
-    end
 end
 
 

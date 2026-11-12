@@ -47,6 +47,7 @@ local Voice = {
     voices = nil,
     recentKeys = {},
     announced = {},
+    route = nil,
     currentStep = nil,
     lastProgress = nil,
     lastStepText = nil,
@@ -58,6 +59,7 @@ local Voice = {
     clipChannel = nil,
     state = "disabled",
     stats = nil,
+    ttsStatus = nil,
     skippedKeys = {},
     failedClips = {},
 }
@@ -69,11 +71,13 @@ FGPS.UI.Voice = Voice
 function Voice:ResetStats()
     self.stats = { spoken = 0, dropped = 0, deduped = 0, expired = 0, clipsPlayed = 0, clipsFailed = 0,
                    clipsConfirmed = 0, clipsNotPlaying = 0, lastFailedClip = nil, lastFailure = nil, skipped = {} }
+    self.ttsStatus = nil
     self.skippedKeys, self.failedClips = {}, {}
 end
 Voice:ResetStats()
 
 Voice.PRIORITY_ADVANCE, Voice.PRIORITY_TURN, Voice.PRIORITY_ALERT = 1, 2, 3
+Voice.TTS_STATUS_MAX = 16
 local QUEUE_CAP = 4
 local DEFAULT_TTL = 8
 local WATCHDOG_SECONDS = 6
@@ -343,6 +347,45 @@ local function findKey(queue, key)
     return nil
 end
 
+
+
+
+local function noteTtsUpdate(entry, status)
+    if not (FGPS.IsOwnerInstall and FGPS:IsOwnerInstall()) then return end
+    local key = (issecretvalue and issecretvalue(status)) and "secret" or tostring(status):sub(1, 64)
+    local records = Voice.ttsStatus
+    if not records then
+        records = {}
+        Voice.ttsStatus = records
+    end
+    local bucket = records[key]
+    if not bucket then
+        if Util.Count(records) >= Voice.TTS_STATUS_MAX then return end
+        bucket = { updates = 0, started = 0, finished = 0, failed = 0, timeout = 0 }
+        records[key] = bucket
+    end
+    bucket.updates = bucket.updates + 1
+    entry.ttsStatusKey = key
+    if entry.started then
+        bucket.started = bucket.started + 1
+        entry.ttsStartedCounted = true
+    end
+end
+
+local function noteTtsOutcome(entry, field)
+    local key = entry and entry.ttsStatusKey
+    if not (key and FGPS.IsOwnerInstall and FGPS:IsOwnerInstall()) then return end
+    local bucket = Voice.ttsStatus and Voice.ttsStatus[key]
+    if not bucket then return end
+    if field == "started" then
+        if entry.ttsStartedCounted then return end
+        entry.ttsStartedCounted = true
+    else
+        entry.ttsStatusKey = nil
+    end
+    bucket[field] = bucket[field] + 1
+end
+
 local function stopWatchdog()
     if Voice.watchdog then
         Voice.watchdog:Cancel()
@@ -357,6 +400,7 @@ local function startWatchdog(seconds)
         Voice.watchdog = C_Timer.NewTimer(budget, function()
             Voice.watchdog = nil
             if Voice.current then
+                noteTtsOutcome(Voice.current, "timeout")
                 FGPS.Log:Debug("Voice watchdog: no playback finished event after %d s", budget)
                 Voice:OnUtteranceEnded()
             end
@@ -753,6 +797,13 @@ local function stepKey(step, stage)
     return format("step:%s:%s", tostring(step.index or step.legIndex or "?"), stage)
 end
 
+local function activeRoute()
+    if type(Voice.route) == "table" then return Voice.route end
+    local Nav = FGPS.Navigator
+    local r = Nav and Nav.GetRoute and Nav:GetRoute() or nil
+    return type(r) == "table" and r or nil
+end
+
 local function distanceToStep(step, progress)
     if type(progress) ~= "table" then return nil end
     local pos = progress.pos
@@ -762,6 +813,17 @@ local function distanceToStep(step, progress)
         return sqrt(dx * dx + dy * dy)
     end
     return tonumber(progress.distToNext)
+end
+
+local function stepDistance(step, progress, route, lookedAhead)
+    local Guide = FGPS.UI and FGPS.UI.Guide
+    if route and Guide and Guide.YardsToStep
+        and (type(progress) ~= "table" or progress.positionAvailable ~= false) then
+        local yards = Guide.YardsToStep(route, progress, step)
+        if type(yards) == "number" or lookedAhead then return yards end
+    end
+    if lookedAhead then return nil end
+    return distanceToStep(step, progress)
 end
 
 local function advanceDistance()
@@ -789,13 +851,26 @@ function Voice:EvaluateStep(progress)
     if type(progress) == "table" and progress.state == "paused" then return end
     local step = self.currentStep or (type(progress) == "table" and progress.currentStep) or nil
     if type(step) ~= "table" or not self:IsEnabled() then return end
+    local route = activeRoute()
+    local lookedAhead = false
     local kind = step.kind or "turn"
-    if IMMEDIATE_KINDS[kind] or ARRIVAL_KINDS[kind] then return end
     local verbosity = self:GetVerbosity()
-    if DETAILED_KINDS[kind] and verbosity ~= "detailed" then return end
+    if DETAILED_KINDS[kind] and verbosity ~= "detailed" then
+
+
+        local Guide = FGPS.UI and FGPS.UI.Guide
+        if not (route and Guide and Guide.MarkedStep) then return end
+        local from = type(progress) == "table" and progress.currentStep == step and progress or { currentStep = step }
+        step = Guide.MarkedStep(route, from)
+        if type(step) ~= "table" then return end
+        lookedAhead = true
+        kind = step.kind or "turn"
+        if DETAILED_KINDS[kind] then return end
+    end
+    if IMMEDIATE_KINDS[kind] or ARRIVAL_KINDS[kind] then return end
     local text = stepText(step)
     if not text then return end
-    local dist = distanceToStep(step, progress)
+    local dist = stepDistance(step, progress, route, lookedAhead)
     if not dist then return end
     local rec = announcedFor(step)
     if dist <= TURN_YARDS then
@@ -839,7 +914,7 @@ local function onInstruction(_, step, isNew)
             if Voice:Speak(fullText(step, text), { priority = Voice.PRIORITY_TURN, key = stepKey(step, "reannounce"), isStep = true,
                                                    clips = fullClips(step) }) then
 
-                local dist = distanceToStep(step, Voice.lastProgress)
+                local dist = stepDistance(step, Voice.lastProgress, activeRoute(), false)
                 if dist and dist <= TURN_YARDS then
                     local rec = announcedFor(step)
                     rec.turn, rec.advance = true, true
@@ -890,6 +965,7 @@ end
 
 local function resetJourneyState()
     Voice.announced = {}
+    Voice.route = nil
     Voice.currentStep = nil
     Voice.lastProgress = nil
     Voice.recentKeys = {}
@@ -902,9 +978,11 @@ end
 
 local function onRouteStarted(_, route)
     resetJourneyState()
+    Voice.route = type(route) == "table" and route or nil
 end
 
 local function onRouteUpdated(_, route, reason)
+    Voice.route = type(route) == "table" and route or nil
     Voice.announced = {}
     Voice.currentStep = nil
     Voice.recentKeys = {}
@@ -924,41 +1002,17 @@ local function onCancelled(_, reason)
     end
 end
 
-
-
-
-
-local function isLastStop(stopIndex)
-    local Navigator = FGPS.Navigator
-    local route = Navigator and Navigator.GetRoute and Navigator:GetRoute() or nil
-    if type(route) ~= "table" then return false end
-    local stops = route.stops
-    if type(stops) ~= "table" then return true end
-    local i = tonumber(stopIndex)
-    return i ~= nil and i >= #stops
-end
-
-
-
-
-
-
-local function onArrived(_, stopIndex, isFinal, stayEnded)
-    if stayEnded then
-        Voice.announced = {}
-        Voice.currentStep = nil
-        return
-    end
-    local onTheWay = isFinal == false and not isLastStop(stopIndex)
+local function onArrived(_, stopIndex, isFinal)
     local text
-    if onTheWay then
+    if isFinal == false then
         text = format(L["Arrived at stop %d."], tonumber(stopIndex) or 0)
     else
         text = L["You have arrived at your destination."]
     end
     Voice:Speak(text, { priority = Voice.PRIORITY_ALERT, key = "arrived:" .. tostring(stopIndex or "final"),
-                        clips = { onTheWay and "stop_reached" or "arrived" } })
+                        clips = { isFinal == false and "stop_reached" or "arrived" } })
     if isFinal ~= false then
+        Voice.route = nil
         Voice.announced = {}
         Voice.currentStep = nil
     end
@@ -1024,6 +1078,7 @@ local function onTtsEvent(event, arg1, arg2)
 
         if type(arg2) == "number" and current.utteranceID == nil then
             current.utteranceID = arg2
+            noteTtsUpdate(current, arg1)
         end
         return
     end
@@ -1033,8 +1088,10 @@ local function onTtsEvent(event, arg1, arg2)
     end
     if event == "VOICE_CHAT_TTS_PLAYBACK_STARTED" then
         current.started = true
+        noteTtsOutcome(current, "started")
         startWatchdog(WATCHDOG_STARTED_SECONDS)
     elseif event == "VOICE_CHAT_TTS_PLAYBACK_FINISHED" or event == "VOICE_CHAT_TTS_PLAYBACK_FAILED" then
+        noteTtsOutcome(current, event == "VOICE_CHAT_TTS_PLAYBACK_FAILED" and "failed" or "finished")
         if event == "VOICE_CHAT_TTS_PLAYBACK_FAILED" then
             FGPS.Log:Warn("Text-to-speech playback failed (status %s)", tostring(arg2))
         end

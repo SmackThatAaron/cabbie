@@ -1,9 +1,9 @@
 ## Interface: 16001
 ## Title: Cabbie
-## Notes: Turn-by-turn directions beside your quest list, quest routes and Optimized Leveling.
+## Notes: Turn-by-turn directions to any place by the fastest practical route.
 ## Author: Cabbie contributors
-## Version: 1.4.0
-## SavedVariables: CabbieDB, CabbieQuests
+## Version: 1.6.0
+## SavedVariables: CabbieDB
 ## SavedVariablesPerCharacter: CabbieCharDB
 ## X-License: GPL-3.0-or-later
 ## X-Category: Map & Minimap
@@ -49,18 +49,10 @@ Data\POI.lua
 Data\Taxi.lua
 Data\Transports.lua
 Data\Interiors.lua
-Data\Danger.lua
 Data\Links.lua
 Data\Water.lua
 Data\Chokepoints.lua
-Data\Quests.lua
-Data\QuestGivers.lua
-Data\QuestAreas_0.lua
-Data\QuestAreas_1.lua
-Data\QuestAreas_X.lua
-Data\QuestIndex.lua
-Data\QuestsForever.lua
-Data\Leveling.lua
+Data\Guarded.lua
 
 Nav\Coords.lua
 Nav\Graph.lua
@@ -72,18 +64,15 @@ Nav\Instructions.lua
 Nav\Personal.lua
 Nav\Transport.lua
 Nav\Destinations.lua
-Nav\Quests.lua
-Nav\QuestData.lua
-Nav\Leveling.lua
-Nav\LevelingAuto.lua
-Nav\QuestBatch.lua
 Nav\Services.lua
+Nav\QuestSearch.lua
 Nav\Social.lua
 Nav\Calibrate.lua
 Nav\Inside.lua
 Nav\Navigator.lua
 
 UI\Look.lua
+UI\Question.lua
 UI\Guide.lua
 UI\RouteBlock.lua
 UI\Callout.lua
@@ -100,10 +89,6 @@ UI\WorldMap.lua
 UI\MapPlaces.lua
 UI\Minimap.lua
 UI\Launcher.lua
-UI\QuestMap.lua
-UI\QuestMarks.lua
-UI\QuestPanel.lua
-UI\LevelingMarks.lua
 UI\Search.lua
 UI\Preview.lua
 UI\Favorites.lua
@@ -115,5 +100,6 @@ UI\Setup.lua
 UI\Cues.lua
 UI\Bindings.lua
 UI\Compat.lua
+UI\QuestClicks.lua
 
 Core\Boot.lua

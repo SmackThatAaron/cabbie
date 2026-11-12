@@ -36,6 +36,10 @@
 
 
 
+
+
+
+
 local ADDON_NAME, FGPS = ...
 
 local L = FGPS.L
@@ -62,13 +66,15 @@ local InWorldPin = {
         questMomentAt = nil,
         ignore = 0,
         unavailableMaps = {},
-
         focusQuest = nil,
         ownQuest = nil,
-        quietUntil = nil,
-        quietAt = nil,
-        selected = nil,
-        selectTimer = nil,
+        lastCallAt = nil,
+        lastCallWhat = nil,
+        stopped = false,
+        placeAskedAt = nil,
+        carriedQuest = nil,
+        savedAt = nil,
+        arrowHidden = false,
     },
 }
 FGPS.UI.InWorldPin = InWorldPin
@@ -84,8 +90,12 @@ InWorldPin.NOTICE_HOLD = 6
 
 
 
+InWorldPin.BLOCKED_WINDOW = 3
+
+
+
+
 InWorldPin.QUEST_QUIET = 0.5
-InWorldPin.WORLD_QUIET = 5
 
 
 
@@ -94,15 +104,8 @@ local function now()
     return GetTime and GetTime() or 0
 end
 
-
-
-
-
-local function quietFor(seconds)
-    local st = InWorldPin.state
-    st.quietAt = now()
-    local untilTime = st.quietAt + seconds
-    if not st.quietUntil or untilTime > st.quietUntil then st.quietUntil = untilTime end
+local function inFight()
+    return InCombatLockdown ~= nil and InCombatLockdown() == true
 end
 
 
@@ -126,7 +129,7 @@ local function apiAvailable()
 end
 
 function InWorldPin.IsEnabled()
-    return settingsEnabled() and apiAvailable()
+    return not InWorldPin.state.stopped and settingsEnabled() and apiAvailable()
 end
 
 function InWorldPin.IsActive()
@@ -465,6 +468,8 @@ end
 
 
 function InWorldPin.SaveCurrent()
+    local carried = InWorldPin.state.carriedQuest
+    InWorldPin.state.carriedQuest = nil
 
 
     local record = InWorldPin.Record()
@@ -488,15 +493,20 @@ function InWorldPin.SaveCurrent()
         local ok, tracking = pcall(C_SuperTrack.IsSuperTrackingUserWaypoint)
         saved.trackingWaypoint = ok and tracking == true
     end
-    InWorldPin.state.saved = saved
+
+    if carried and not saved.questID then saved.questID, saved.questTaken = carried, true end
+    InWorldPin.state.saved, InWorldPin.state.savedAt = saved, now()
     return saved
 end
 
 
 
 
-local function withIgnoredEvents(fn, ...)
+
+local function withIgnoredEvents(what, fn, ...)
     local st = InWorldPin.state
+    if st.stopped then return false end
+    st.lastCallAt, st.lastCallWhat = now(), what
     st.ignore = st.ignore + 1
     local ok, a, b = pcall(fn, ...)
     st.ignore = st.ignore - 1
@@ -508,36 +518,34 @@ end
 
 
 
-
-
-
-
-function InWorldPin.FocusQuest(questID)
-    if type(questID) ~= "number" or questID <= 0 then return false end
-    if type(C_SuperTrack) ~= "table" or type(C_SuperTrack.SetSuperTrackedQuestID) ~= "function" then return false end
-    local st = InWorldPin.state
-    if st.set and st.saved and not st.backedOff then
-        st.saved.questID, st.saved.trackingWaypoint = questID, false
-        return true
+local function questShownOverPin()
+    if not focusedQuest() or type(C_SuperTrack.GetHighestPrioritySuperTrackingType) ~= "function"
+        or not (Enum and Enum.SuperTrackingType) then
+        return false
     end
-    st.ownQuest = questID
-    local ok = withIgnoredEvents(C_SuperTrack.SetSuperTrackedQuestID, questID)
-
-
-    if ok and type(C_SuperTrack.IsSuperTrackingUserWaypoint) == "function"
-        and type(C_SuperTrack.SetSuperTrackedUserWaypoint) == "function" then
-        local asked, tracking = pcall(C_SuperTrack.IsSuperTrackingUserWaypoint)
-        if asked and tracking == true then withIgnoredEvents(C_SuperTrack.SetSuperTrackedUserWaypoint, false) end
-    end
-    return ok
+    local ok, kind = pcall(C_SuperTrack.GetHighestPrioritySuperTrackingType)
+    return ok and kind == Enum.SuperTrackingType.Quest
 end
+
+
+
+
+
 
 function InWorldPin.Place(uiMapID, mx, my)
     local placed = false
-    withIgnoredEvents(function()
+    local st = InWorldPin.state
+    withIgnoredEvents("placing the pin", function()
+        local had = focusedQuest()
         local wasSet = C_Map.SetUserWaypoint(makePoint(uiMapID, mx, my))
         placed = wasSet ~= false
-        if placed then C_SuperTrack.SetSuperTrackedUserWaypoint(true) end
+        if placed then
+            C_SuperTrack.SetSuperTrackedUserWaypoint(true)
+            if questShownOverPin() and type(C_SuperTrack.SetSuperTrackedQuestID) == "function" then
+                C_SuperTrack.SetSuperTrackedQuestID(0)
+            end
+            if had and focusedQuest() ~= had and st.saved then st.saved.questID, st.saved.questTaken = had, true end
+        end
     end)
     if placed then remember(uiMapID, mx, my) end
     return placed
@@ -548,13 +556,12 @@ end
 local function clearIfOurs(ours)
     if not ours or not apiAvailable() or type(C_Map.ClearUserWaypoint) ~= "function" then return false end
     if not waypointMatches(currentWaypoint(), ours) then return false end
-    withIgnoredEvents(function()
+    withIgnoredEvents("clearing the pin", function()
 
         local okTracking, tracking = pcall(C_SuperTrack.IsSuperTrackingUserWaypoint or function() return false end)
         if okTracking and tracking == true then C_SuperTrack.SetSuperTrackedUserWaypoint(false) end
         C_Map.ClearUserWaypoint()
     end)
-    quietFor(InWorldPin.QUEST_QUIET)
     return true
 end
 
@@ -576,7 +583,7 @@ end
 
 local function giveBack(saved)
     local st = InWorldPin.state
-    withIgnoredEvents(function()
+    withIgnoredEvents("giving back the player's tracking", function()
         if saved.waypoint and saved.waypoint.uiMapID then
             C_Map.SetUserWaypoint(makePoint(saved.waypoint.uiMapID, saved.waypoint.x, saved.waypoint.y))
             C_SuperTrack.SetSuperTrackedUserWaypoint(saved.trackingWaypoint and true or false)
@@ -584,8 +591,11 @@ local function giveBack(saved)
             C_SuperTrack.SetSuperTrackedUserWaypoint(false)
             if type(C_Map.ClearUserWaypoint) == "function" then C_Map.ClearUserWaypoint() end
         end
-        if saved.questID and not saved.trackingWaypoint and type(C_SuperTrack.SetSuperTrackedQuestID) == "function"
-            and stillInLog(saved.questID) then
+
+
+        if saved.questID and (saved.questTaken or not saved.trackingWaypoint)
+            and type(C_SuperTrack.SetSuperTrackedQuestID) == "function" and stillInLog(saved.questID) then
+
 
             st.ownQuest = saved.questID
             C_SuperTrack.SetSuperTrackedQuestID(saved.questID)
@@ -642,9 +652,60 @@ end
 
 
 
+
+
+
+
+
+
+
+
+local function turnArrowOn()
+    local db = FGPS.DB
+    return not (db and db.Get) or db:Get("callout.enabled") ~= false
+end
+
+local function corpseShown()
+    if type(C_SuperTrack.GetHighestPrioritySuperTrackingType) ~= "function" or not (Enum and Enum.SuperTrackingType) then
+        return false
+    end
+    local ok, kind = pcall(C_SuperTrack.GetHighestPrioritySuperTrackingType)
+    return ok and kind == Enum.SuperTrackingType.Corpse
+end
+
+local function syncGameArrow()
+    local st = InWorldPin.state
+    local frame = SuperTrackedFrame
+    local arrow = type(frame) == "table" and frame.Arrow or nil
+    if type(arrow) ~= "table" or type(arrow.SetAlpha) ~= "function" then return end
+
+
+    local hide = st.set and not st.backedOff and not st.stopped and not st.inCombat
+        and turnArrowOn() and not corpseShown()
+    if hide and not st.arrowHidden then
+        arrow:SetAlpha(0)
+        st.arrowHidden = true
+    elseif not hide and st.arrowHidden then
+        arrow:SetAlpha(1)
+        st.arrowHidden = false
+    end
+end
+
+
+
+
 function InWorldPin.BackOff(reason)
     local st = InWorldPin.state
     if st.backedOff then return end
+    if st.stopped then
+
+
+
+        local record = InWorldPin.Record()
+        if record then record.saved = nil end
+        st.saved = nil
+        return
+    end
 
 
 
@@ -654,15 +715,16 @@ function InWorldPin.BackOff(reason)
     if clearIfOurs(st.target) then
         local own = st.saved and st.saved.waypoint
         if own and own.uiMapID and own.x and own.y then
-            withIgnoredEvents(C_Map.SetUserWaypoint, makePoint(own.uiMapID, own.x, own.y))
+            withIgnoredEvents("putting back the player's pin", C_Map.SetUserWaypoint, makePoint(own.uiMapID, own.x, own.y))
         end
     end
     forget()
     st.backedOff = true
     st.set = false
-    st.saved = nil
+    st.saved, st.carriedQuest = nil, nil
     st.target, st.targetKey, st.lastSet = nil, nil, nil
     st.suppressed, st.pinClearedInFight = false, nil
+    syncGameArrow()
     if not st.noticeGiven then
         st.noticeGiven = true
         local Guide = FGPS.UI.Guide
@@ -676,21 +738,29 @@ end
 
 function InWorldPin.Restore(reason)
     local st = InWorldPin.state
+    if st.stopped then return end
     local saved = st.saved
     if st.set and saved and not st.backedOff and apiAvailable() then
         giveBack(saved)
         forget()
-        quietFor(InWorldPin.QUEST_QUIET)
         if FGPS.Log then FGPS.Log:Debug("In-world pin restored previous tracking (%s)", tostring(reason)) end
     end
     st.set = false
-    st.saved = nil
+    st.saved, st.carriedQuest = nil, nil
     st.target, st.targetKey, st.lastSet = nil, nil, nil
     st.suppressed, st.pinClearedInFight = false, nil
+    syncGameArrow()
 end
 
 
+local update
 function InWorldPin.Update(force)
+    local placed = update(force)
+    syncGameArrow()
+    return placed
+end
+
+update = function(force)
     local st = InWorldPin.state
     if not InWorldPin.IsEnabled() then return false end
     if st.backedOff or st.suppressed or not st.route or not st.progress then return false end
@@ -746,6 +816,16 @@ function InWorldPin.Update(force)
         return false
     end
     st.unavailableMaps[uiMapID] = nil
+
+
+    if st.set and st.target and st.target.uiMapID == uiMapID
+        and abs(mx - st.target.x) <= InWorldPin.MATCH_EPSILON
+        and abs(my - st.target.y) <= InWorldPin.MATCH_EPSILON
+        and InWorldPin.IsOurTrackingIntact() then
+        st.targetKey = key
+        st.lastSet = t
+        return false
+    end
     if not st.set then InWorldPin.SaveCurrent() end
     local placed = InWorldPin.Place(uiMapID, mx, my)
     if placed then
@@ -767,8 +847,9 @@ end
 local function progressOf(route)
     local Navigator = FGPS.Navigator
     local st = InWorldPin.state
-    if Navigator and Navigator.route == route and type(Navigator.progress) == "table" then
-        st.progress = Navigator.progress
+    local current = Navigator and Navigator.GetProgress and Navigator:GetProgress()
+    if Navigator and Navigator.GetRoute and Navigator:GetRoute() == route and type(current) == "table" then
+        st.progress = current
     end
 end
 
@@ -832,8 +913,7 @@ local function onCombatState(_, inCombat)
 
 
             st.questAtRelease, st.fightMoveAt = focusedQuest(), nil
-            withIgnoredEvents(C_SuperTrack.SetSuperTrackedUserWaypoint, false)
-            quietFor(InWorldPin.QUEST_QUIET)
+            withIgnoredEvents("releasing the focus for a fight", C_SuperTrack.SetSuperTrackedUserWaypoint, false)
         end
     elseif st.suppressed then
         st.suppressed = false
@@ -854,6 +934,7 @@ local function onCombatState(_, inCombat)
             InWorldPin.Update(true)
         end
     end
+    syncGameArrow()
 end
 
 
@@ -866,92 +947,6 @@ end
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-local function inFight()
-    return InCombatLockdown ~= nil and InCombatLockdown() == true
-end
-
-
-
-
-local function followsSelection()
-    local Quests, Navigator = FGPS.Quests, FGPS.Navigator
-    if not (Quests and Quests.FollowsMine and Quests.IsQuestRoute and Navigator and Navigator.HasAnythingSet) then return false end
-    if not Quests.FollowsMine() then return false end
-    return not Navigator:HasAnythingSet() or Quests.IsQuestRoute()
-end
-
-
-
-
-local ANSWER_WORDS = { followed = "already followed", noplace = "refused, no place known" }
-
-local function logDecision(selected, answer, why, wasSet, fight)
-    local words = answer == "started" and (wasSet and "replaced the route" or "started")
-        or ANSWER_WORDS[answer] or ("refused, " .. (why or "nothing to start"))
-    local quietAt = InWorldPin.state.quietAt
-    local since = quietAt and format("%.1f s since the last quiet mark", selected.at - quietAt) or "no quiet mark yet"
-    FGPS.Log:Info("Quest selection %d: %s; %s; %s.", selected.questID, words, since, fight and "in a fight" or "not in a fight")
-end
-
-
-
-
-function InWorldPin.DecideSelection()
-    local st = InWorldPin.state
-    local selected = st.selected
-    st.selected, st.selectTimer = nil, nil
-    if not selected then return nil end
-    local answer, why
-    local fight = inFight()
-    local Navigator, logging = FGPS.Navigator, FGPS.Log ~= nil and FGPS.Log.Info ~= nil
-    local wasSet = logging and Navigator ~= nil and Navigator.HasAnythingSet ~= nil and Navigator:HasAnythingSet()
-    if focusedQuest() ~= selected.questID then
-        why = "the focus moved on"
-    elseif st.quietUntil and selected.at <= st.quietUntil then
-        why = "the game's own moment"
-    elseif fight then
-        why = "in a fight"
-    else
-        local Menus = FGPS.UI.Menus
-        if Menus and Menus.QuestSelected then
-            local ok, what = pcall(Menus.QuestSelected, selected.questID)
-            if ok then
-                answer = what
-            else
-                why = "an error"
-                if FGPS.Log then FGPS.Log:Error("The selected quest could not be followed: %s", tostring(what)) end
-            end
-        end
-    end
-    if logging then logDecision(selected, answer, why, wasSet, fight) end
-    if answer == "started" or answer == "followed" then
-
-        if st.set and st.saved and not st.backedOff then st.saved.questID, st.saved.trackingWaypoint = selected.questID, false end
-        return answer
-    end
-
-
-    if st.set and not st.backedOff and not InWorldPin.IsOurTrackingIntact() then
-        if answer == "noplace" then st.noticeGiven = true end
-        InWorldPin.BackOff("user")
-    end
-    return answer
-end
 
 local function onSuperTrackingChanged()
     local st = InWorldPin.state
@@ -971,31 +966,94 @@ local function onSuperTrackingChanged()
             st.fightMoveAt = t
         end
     end
-    local own = st.ignore > 0 or (quest ~= nil and quest == st.ownQuest)
     if quest ~= st.ownQuest then st.ownQuest = nil end
-    if quest and quest ~= before and not own and followsSelection() then
-        st.selected = { questID = quest, at = now() }
-        if not (C_Timer and C_Timer.NewTimer) then
-            InWorldPin.DecideSelection()
-        elseif not st.selectTimer then
-            st.selectTimer = C_Timer.NewTimer(0, InWorldPin.DecideSelection)
-        end
-        return
-    end
-
-
-
-    if st.selected then return end
+    syncGameArrow()
     if st.ignore > 0 or not st.set or st.backedOff then return end
     if InWorldPin.IsOurTrackingIntact() then return end
+    if st.placeAskedAt ~= nil and st.placeAskedAt == now() then
+
+
+
+        if st.saved and st.savedAt == now() and type(C_SuperTrack.IsSuperTrackingUserWaypoint) == "function" then
+            local ok, tracking = pcall(C_SuperTrack.IsSuperTrackingUserWaypoint)
+            st.saved.trackingWaypoint = ok and tracking == true
+        end
+        InWorldPin.Update(true)
+        return
+    end
     InWorldPin.BackOff("user")
+end
+
+
+
+local function onDestinationSet(_, _, askedBy)
+    if askedBy == "player" then InWorldPin.state.placeAskedAt = now() end
+end
+
+
+
+
+
+
+
+
+local function pinKey(point)
+    local px, py = pointXY(point)
+    return tostring(point.uiMapID) .. ":" .. tostring(px) .. ":" .. tostring(py)
+end
+
+local function pinToFollow()
+    local st = InWorldPin.state
+    local db = FGPS.DB
+    if st.ignore > 0 or not st.worldEntered or not (db and db.settings and db.settings.goToMapPin ~= false) then
+        return nil
+    end
+    local point = currentWaypoint()
+    if point == nil then
+        st.pinFollowed = nil
+        return nil
+    end
+    local key = pinKey(point)
+    if key == st.pinFollowed or waypointMatches(point, InWorldPin.Record()) then return nil end
+    local Compat = FGPS.UI.Compat
+    if not (Compat and Compat.FromUserWaypoint) then return nil end
+    local ok, dest = pcall(Compat.FromUserWaypoint)
+    if not ok or type(dest) ~= "table" then return nil end
+    st.pinFollowed = key
+    return dest
+end
+
+
+
+
+
+
+local function letGoForThePin()
+    local st = InWorldPin.state
+    forget()
+    local saved = st.saved
+    st.carriedQuest = saved and (saved.questTaken or not saved.trackingWaypoint) and saved.questID or nil
+    st.set, st.saved, st.backedOff = false, nil, false
+    st.target, st.targetKey, st.lastSet = nil, nil, nil
+    st.suppressed, st.pinClearedInFight = false, nil
+    syncGameArrow()
+end
+
+local function onUserWaypointUpdated()
+    local dest = pinToFollow()
+    local Go = FGPS.UI.Go
+    if dest and Go and Go.Start then
+        letGoForThePin()
+        Go.Start(dest)
+        return
+    end
+    onSuperTrackingChanged()
 end
 
 
 
 
 local function noteQuestMoment()
-    quietFor(InWorldPin.QUEST_QUIET)
     local st = InWorldPin.state
     st.questMomentAt = now()
     if st.suppressed and st.fightMoveAt == st.questMomentAt then st.questAtRelease = focusedQuest() end
@@ -1010,7 +1068,26 @@ local function onSettingsChanged(_, key, value)
         end
     elseif key == "combatMode" and InWorldPin.state.inCombat then
         onCombatState(nil, true)
+    else
+        syncGameArrow()
     end
+end
+
+
+
+
+local function onActionBlocked(_, addon, func)
+    local st = InWorldPin.state
+    if addon ~= ADDON_NAME or st.stopped or not st.lastCallAt then return end
+    local since = now() - st.lastCallAt
+    if since > InWorldPin.BLOCKED_WINDOW then return end
+    st.stopped = true
+    syncGameArrow()
+    if FGPS.Log then
+        FGPS.Log:Warn("In-world marker stopped for this session: the client blocked %s %.2f s after the marker's last change (%s)",
+            tostring(func), since, tostring(st.lastCallWhat))
+    end
+    FGPS:Print(L["The game blocked an action right after Cabbie changed its in-world marker, so Cabbie has stopped the marker until you reload or log in again. The arrow and the map lines carry on; a marker Cabbie had already placed stays on the map until you remove it or reload."])
 end
 
 
@@ -1029,8 +1106,11 @@ function InWorldPin:Init()
         E:Register("NAV_CANCELLED", onNavCancelled, InWorldPin)
         E:Register("COMBAT_STATE", onCombatState, InWorldPin)
         E:Register("SETTINGS_CHANGED", onSettingsChanged, InWorldPin)
+        E:Register("DESTINATION_SET", onDestinationSet, InWorldPin)
         E:RegisterWoW("SUPER_TRACKING_CHANGED", onSuperTrackingChanged, InWorldPin)
-        E:RegisterWoW("USER_WAYPOINT_UPDATED", onSuperTrackingChanged, InWorldPin)
+        E:RegisterWoW("USER_WAYPOINT_UPDATED", onUserWaypointUpdated, InWorldPin)
+        E:RegisterWoW("ADDON_ACTION_FORBIDDEN", onActionBlocked, InWorldPin)
+        E:RegisterWoW("ADDON_ACTION_BLOCKED", onActionBlocked, InWorldPin)
 
 
 
@@ -1040,7 +1120,7 @@ function InWorldPin:Init()
             local st = InWorldPin.state
             if questID ~= nil and questID == st.ownQuest and focusedQuest() == questID then
                 st.ownQuest = nil
-                withIgnoredEvents(C_SuperTrack.SetSuperTrackedQuestID, 0)
+                withIgnoredEvents("taking back a quest's focus", C_SuperTrack.SetSuperTrackedQuestID, 0)
             end
         end
         E:RegisterWoW("QUEST_ACCEPTED", noteQuestMoment, InWorldPin)
@@ -1048,8 +1128,15 @@ function InWorldPin:Init()
         E:RegisterWoW("QUEST_REMOVED", questLeft, InWorldPin)
 
         E:Register("WORLD_ENTERED", function()
-            quietFor(InWorldPin.WORLD_QUIET)
             InWorldPin.ClearLeftover(true)
+
+
+            local st = InWorldPin.state
+            if not st.worldEntered then
+                st.worldEntered = true
+                local point = currentWaypoint()
+                st.pinFollowed = point and pinKey(point) or nil
+            end
 
 
 

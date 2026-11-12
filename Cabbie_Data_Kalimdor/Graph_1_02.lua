@@ -11,7 +11,6 @@ local ADDON_NAME, FGPS = ...
 
 
 
-
 FGPS.Data = FGPS.Data or {}
 
 FGPS.Data.graphs = FGPS.Data.graphs or {}

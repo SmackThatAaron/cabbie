@@ -32,10 +32,12 @@ local ADDON_NAME, FGPS = ...
 
 local Access = {
     RIDING_SKILL_LINES = { 762, 3011 },
+    TAXI_MAP_OPENS_MAX = 10,
     dirty = true,
     current = nil,
     building = false,
     taxiScanned = false,
+    taxiMapOpens = {},
 }
 FGPS.Access = Access
 
@@ -230,7 +232,9 @@ function Access:RefreshFromTaxiMap()
     if not char then return 0 end
     local confirmed, confirmedInst = char.taxiConfirmed, char.taxiConfirmedInst
     local changed, lost = 0, nil
-    local mapID = GetTaxiMapID and plain(GetTaxiMapID()) or nil
+    local okMap, rawMapID
+    if type(GetTaxiMapID) == "function" then okMap, rawMapID = pcall(GetTaxiMapID) end
+    local mapID = okMap and plain(rawMapID) or nil
     if mapID and C_TaxiMap and C_TaxiMap.GetAllTaxiNodes then
         local ok, nodes = pcall(C_TaxiMap.GetAllTaxiNodes, mapID)
         if ok and type(nodes) == "table" then
@@ -425,7 +429,8 @@ local function mountState(routing, reuse)
         hasMount = speed > 0
     else
         local indoors = IsIndoors and IsIndoors() or false
-        hasMount = speed > 0 and (usable or (collected and indoors))
+        local instanced = FGPS.Coords and FGPS.Coords.IsInstanced and (FGPS.Coords.IsInstanced()) or false
+        hasMount = speed > 0 and (usable or (collected and (indoors or instanced)))
     end
     local assume = routing and routing.assumeMount or "auto"
     if assume == "none" then
@@ -440,10 +445,8 @@ end
 
 
 
+
 local function canMountHere()
-    local instanced, instanceType = false, "none"
-    if FGPS.Coords and FGPS.Coords.IsInstanced then instanced, instanceType = FGPS.Coords.IsInstanced() end
-    if instanced and instanceType ~= "none" and instanceType ~= "pvp" then return false end
     return true
 end
 
@@ -487,7 +490,7 @@ local function hearthFallback()
             end
         end
         if not found then return nil end
-        at = { inst = poi.inst[found], x = poi.x[found], y = poi.y[found], map = poi.map[found] }
+        at = { inst = poi.inst[found], x = poi.x[found], y = poi.y[found], map = poi.map[found], poiIndex = found }
     end
     local remaining = 0
     if C_Container.GetItemCooldown then
@@ -495,7 +498,7 @@ local function hearthFallback()
         if okCd then remaining = cooldownRemaining(start, duration) end
     end
     return { itemID = itemID, ready = remaining <= 0, cdRemaining = remaining, bindName = bindName,
-             inst = at.inst, x = at.x, y = at.y, map = at.map,
+             inst = at.inst, x = at.x, y = at.y, map = at.map, poiIndex = at.poiIndex,
              castSeconds = Const.HEARTH_CAST_SECONDS, name = bindName }
 end
 
@@ -513,7 +516,7 @@ local function personalOptions()
                         kind = opt.kind, id = opt.id, itemID = opt.kind == "hearth" and opt.id or nil,
                         spellID = opt.kind == "spell" and opt.id or nil, name = opt.name,
                         bindName = opt.kind == "hearth" and (opt.placeName or opt.bindName) or nil,
-                        inst = opt.inst, x = opt.x, y = opt.y, map = opt.map, ready = opt.ready ~= false,
+                        inst = opt.inst, x = opt.x, y = opt.y, map = opt.map, poiIndex = opt.poiIndex, ready = opt.ready ~= false,
                         cdRemaining = tonumber(opt.cdRemaining) or 0, castSeconds = tonumber(opt.castSeconds) or Const.HEARTH_CAST_SECONDS,
                     }
                     if opt.kind == "hearth" then
@@ -612,9 +615,8 @@ local function build(cooldownsOnly)
         allowUnverified = routing.allowUnverified ~= false,
         preferRoads = routing.preferRoads == true,
         roadShortcuts = routing.roadShortcuts == true,
-        avoidDanger = routing.avoidDanger == true,
-        dangerMargin = tonumber(routing.dangerMargin) or 3,
         assumeMount = routing.assumeMount or "auto",
+        avoidGuarded = routing.avoidGuarded ~= false,
         createdAt = GetTime and GetTime() or 0,
     }
 
@@ -626,8 +628,9 @@ local function build(cooldownsOnly)
     access.hash = Util.Hash({
         f = factionMask, lvl = access.level, taxi = taxiIDs, ms = mountSpeed, hm = hasMount, cm = canMount,
         tr = transports, h = teleportDigest(hearth), sp = spellDigest,
-        au = access.allowUnverified, pr = access.preferRoads, rs = access.roadShortcuts, ad = access.avoidDanger, dm = access.dangerMargin,
+        au = access.allowUnverified, pr = access.preferRoads, rs = access.roadShortcuts,
         own = char and char.taxiOwner or characterKey(), dead = dead or nil,
+        ag = access.avoidGuarded,
     })
 
 
@@ -659,12 +662,12 @@ local function fallbackSnapshot(err)
         faction = faction, factionMask = factionMask, level = 60, knownTaxi = {}, mountSpeed = 0, hasMount = false, canMount = true,
         transports = transports, hearth = nil, spells = {},
         allowUnverified = routing.allowUnverified ~= false, preferRoads = routing.preferRoads == true,
-        roadShortcuts = routing.roadShortcuts == true, avoidDanger = routing.avoidDanger == true,
-        dangerMargin = tonumber(routing.dangerMargin) or 3,
+        roadShortcuts = routing.roadShortcuts == true,
+        avoidGuarded = routing.avoidGuarded ~= false,
         degraded = tostring(err),
     }
     access.hash = Util.Hash({ "fallback", f = factionMask, tr = transports, au = access.allowUnverified, pr = access.preferRoads,
-                              rs = access.roadShortcuts, ad = access.avoidDanger, dm = access.dangerMargin })
+                              rs = access.roadShortcuts, ag = access.avoidGuarded })
     return access
 end
 
@@ -749,6 +752,47 @@ local INVALIDATE_EVENTS = {
 
 local COOLDOWN_EVENTS = { "BAG_UPDATE_COOLDOWN", "SPELL_UPDATE_COOLDOWN" }
 
+local function scalar(v)
+    v = plain(v)
+    local t = type(v)
+    if t == "number" or t == "string" or t == "boolean" then return v end
+    return nil
+end
+
+
+
+local function noteTaxiMapOpen(system)
+    if not (FGPS.IsOwnerInstall and FGPS.IsOwnerInstall()) then return end
+    local mapOk, mapID, allNodes, numSlots
+    if type(GetTaxiMapID) == "function" then
+        local ok, id = pcall(GetTaxiMapID)
+        mapOk = ok and true or false
+        if ok then mapID = scalar(id) end
+    end
+    if mapID and C_TaxiMap and type(C_TaxiMap.GetAllTaxiNodes) == "function" then
+        local ok, nodes = pcall(C_TaxiMap.GetAllTaxiNodes, mapID)
+        if ok and type(nodes) == "table" then allNodes = #nodes end
+    end
+    if type(NumTaxiNodes) == "function" then
+        local ok, n = pcall(NumTaxiNodes)
+        n = ok and plain(n) or nil
+        if type(n) == "number" then numSlots = n end
+    end
+    local opens = Access.taxiMapOpens
+    if type(opens) ~= "table" then
+        opens = {}
+        Access.taxiMapOpens = opens
+    end
+    opens[#opens + 1] = {
+        system = scalar(system),
+        taxiMapIDOk = mapOk,
+        taxiMapID = mapID,
+        allTaxiNodes = allNodes,
+        numTaxiNodes = numSlots,
+    }
+    while #opens > Access.TAXI_MAP_OPENS_MAX do table.remove(opens, 1) end
+end
+
 function Access:Init()
     if self.initialized then return end
     self.initialized = true
@@ -781,7 +825,10 @@ function Access:Init()
         end
     end
     Events:RegisterWoW("TAXI_NODE_STATUS_CHANGED", function() readAgain(Access.RefreshKnownTaxi, nil) end, self)
-    Events:RegisterWoW("TAXIMAP_OPENED", function() readAgain(Access.RefreshFromTaxiMap) end, self)
+    Events:RegisterWoW("TAXIMAP_OPENED", function(_, system)
+        noteTaxiMapOpen(system)
+        readAgain(Access.RefreshFromTaxiMap)
+    end, self)
     Events:Register("SETTINGS_CHANGED", function(_, key)
         if type(key) ~= "string" then return end
         if key == "*" or key:sub(1, 10) == "transports" or key:sub(1, 7) == "routing" then Access.dirty = true end

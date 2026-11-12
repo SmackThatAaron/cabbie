@@ -22,8 +22,6 @@
 
 
 
-
-
 local ADDON_NAME, FGPS = ...
 
 local L = FGPS.L
@@ -46,7 +44,7 @@ local TYPE_NAMES = {
     [1] = "town", [2] = "landmark", [3] = "dungeon", [4] = "raid", [5] = "capital", [6] = "flightmaster",
     [7] = "inn", [8] = "vendor", [9] = "repair", [10] = "mailbox", [11] = "bank", [12] = "auction",
     [13] = "trainer", [14] = "dock", [15] = "tram", [16] = "graveyard", [17] = "portal", [18] = "zone",
-    [19] = "battleground", [20] = "stable", [21] = "subzone",
+    [19] = "battleground", [20] = "stable", [21] = "subzone", [22] = "dummy",
 }
 local TYPE_CODES = {}
 for code, name in pairs(TYPE_NAMES) do TYPE_CODES[name] = code end
@@ -58,19 +56,21 @@ local TYPE_LABELS = {
     flightmaster = "Flight master", inn = "Inn", vendor = "Vendor", repair = "Repair", mailbox = "Mailbox",
     bank = "Bank", auction = "Auction house", trainer = "Trainer", dock = "Dock", tram = "Tram", graveyard = "Graveyard",
     portal = "Portal", zone = "Zone", battleground = "Battleground", stable = "Stable master", subzone = "Area",
-    taxi = "Flight master", quest = "Quest", coord = "Coordinates", custom = "Custom", service = "Service",
-    room = "Room", boss = "Boss", lift = "Elevator",
+    dummy = "Training dummy", taxi = "Flight master", coord = "Coordinates", custom = "Custom", service = "Service",
+    room = "Room", boss = "Boss", lift = "Elevator", questplace = "Quest place",
 }
 
 
 local TYPE_PRIORITY = {
     capital = 1, town = 2, zone = 3, taxi = 4, flightmaster = 4, inn = 5, dungeon = 6, raid = 6, landmark = 7,
     dock = 8, tram = 8, portal = 9, bank = 10, auction = 10, mailbox = 11, repair = 12, vendor = 13, trainer = 13,
-    stable = 14, graveyard = 15, battleground = 16, subzone = 17, service = 5, coord = 20, custom = 20, quest = 20,
+    stable = 14, dummy = 14, graveyard = 15, battleground = 16, subzone = 17, service = 5, coord = 20, custom = 20,
     room = 18, boss = 18,
 }
 
 local SCORE_EXACT, SCORE_PREFIX, SCORE_WORD, SCORE_SUBSTRING, SCORE_ZONE = 100, 80, 60, 40, 30
+
+
 
 
 
@@ -88,6 +88,8 @@ local KIND_WORDS = {
     trainer = "trainer", vendor = "vendor",
     inn = "inn", innkeeper = "inn",
     stable = "stable", ["stable master"] = "stable",
+    mailbox = "mailbox", mail = "mailbox",
+    dummy = "dummy", ["training dummy"] = "dummy", ["target dummy"] = "dummy",
 }
 
 
@@ -608,7 +610,7 @@ end
 
 
 
-local index = { static = nil, learned = nil, learnedCount = -1,
+local index = { static = nil, learned = nil, learnedCount = -1, questieRev = nil,
                 srcPoi = nil, srcPoiCount = nil, srcMaps = nil, srcTaxi = nil, srcInteriors = nil,
                 srcInside = nil, srcLinks = nil, srcLocale = nil }
 
@@ -772,13 +774,30 @@ local function buildLearned()
                 fac = nil
             end
             if fac then
-                addEntry(list, { kind = "service", ref = i, name = s.name, inst = s.inst, x = s.x, y = s.y, map = s.map,
+
+                local name = Services and Services.EntryName and Services.EntryName(s) or s.name
+                addEntry(list, { kind = "service", ref = i, name = name, inst = s.inst, x = s.x, y = s.y, map = s.map,
                                  type = s.kind or "service", code = TYPE_CODES[s.kind or ""] or 0, fac = fac,
                                  zoneName = s.zoneName or (s.map and mapName(s.map)) or nil, learned = s })
             end
         end
     end
+
+
+    local questie = Services and Services.QuestieRows and Services.QuestieRows() or {}
+    for _, s in ipairs(questie) do
+        addEntry(list, { kind = "service", name = Services.EntryName(s), inst = s.inst, x = s.x, y = s.y, map = s.map,
+                         type = s.kind, code = TYPE_CODES[s.kind] or 0, fac = s.fac or 0,
+                         zoneName = s.map and mapName(s.map) or nil, learned = s })
+    end
     return list
+end
+
+local function questieRev()
+    local Services = FGPS.ServiceSearch
+    if not (Services and Services.QuestieRows) then return 0 end
+    local _, rev = Services.QuestieRows()
+    return rev
 end
 
 function Destinations.InvalidateIndex(learnedOnly)
@@ -798,10 +817,10 @@ local function ensureIndex()
         index.srcPoi, index.srcPoiCount, index.srcMaps, index.srcTaxi = P, P and P.n, all, taxi
         index.srcInteriors, index.srcInside, index.srcLinks, index.srcLocale = interiors, inside, links, locale
     end
-    local learned = learnedServices()
-    if not index.learned or index.learnedCount ~= #learned then
+    local learned, rev = learnedServices(), questieRev()
+    if not index.learned or index.learnedCount ~= #learned or index.questieRev ~= rev then
         index.learned = buildLearned()
-        index.learnedCount = #learned
+        index.learnedCount, index.questieRev = #learned, rev
     end
     return index.static, index.learned
 end
@@ -824,8 +843,11 @@ local function destFromEntry(e)
                  dungeon = e.dungeon, zoneName = e.dungeon }
     end
     local s = e.learned or {}
+    local Services = FGPS.ServiceSearch
     local dest = { kind = "service", name = e.name, inst = e.inst, x = e.x, y = e.y, map = e.map, mx = s.mx, my = s.my,
-                   type = e.type, serviceKind = e.type, zoneName = e.zoneName, faction = e.fac ~= 0 and e.fac or nil, learned = true }
+                   type = e.type, serviceKind = e.type, zoneName = e.zoneName, faction = e.fac ~= 0 and e.fac or nil, learned = true,
+                   questie = s.source == "questie" or nil,
+                   place = Services and Services.EntryPlace and Services.EntryPlace(s) or nil }
     return finishDest(dest)
 end
 
@@ -1038,6 +1060,17 @@ function Destinations.Search(text, opts)
         end
     end
     for i = 1, #out do out[i].x, out[i].y, out[i].side = nil, nil, nil end
+
+
+    local QuestSearch = FGPS.QuestSearch
+    if QuestSearch and QuestSearch.Search and (not types or types.questplace) and (not kinds or kinds.quest) then
+        local ok, rows = pcall(QuestSearch.Search, text)
+        if ok and type(rows) == "table" then
+            for i = 1, #rows do out[#out + 1] = rows[i] end
+        elseif not ok then
+            FGPS.Log:Error("The quest search failed: %s", tostring(rows))
+        end
+    end
     return out
 end
 
@@ -1066,6 +1099,10 @@ end
 
 
 
+
+
+
+
 function Destinations.Browse(opts)
     opts = opts or {}
     local limit = opts.limit or 25
@@ -1073,7 +1110,7 @@ function Destinations.Browse(opts)
     if not types then return {} end
     local playerCode = opts.faction == "Alliance" and 1 or opts.faction == "Horde" and 2 or Destinations.PlayerFactionCode()
     local pos = Destinations.PlayerPos()
-    local static = ensureIndex()
+    local static, learned = ensureIndex()
     local hits = {}
     local function consider(e, typeName, fac, inst, x, y)
         local side = otherSide(fac, playerCode)
@@ -1092,6 +1129,10 @@ function Destinations.Browse(opts)
     for i = 1, #extra do
         local e = extra[i]
         if types[e.type] then consider(e, e.type, e.fac, e.inst, e.x, e.y) end
+    end
+    for i = 1, #learned do
+        local e = learned[i]
+        if types[e.type] and not otherSide(e.fac, playerCode) then consider(e, e.type, e.fac, e.inst, e.x, e.y) end
     end
     table.sort(hits, function(a, b)
         if a.dist ~= b.dist then return a.dist < b.dist end
@@ -1123,10 +1164,8 @@ end
 
 
 local PLAIN_FIELDS = { "kind", "inst", "x", "y", "map", "mx", "my", "name", "zoneName", "type", "typeCode", "poiIndex",
-                       "poiKey", "dataVersion", "questID", "taxiNodeID", "reachable", "adjustedYards", "faction", "serviceKind", "uiMapID",
-                       "originalX", "originalY", "complete", "source", "learned",
-                        "questTarget", "questChosen", "objectiveIndex", "areaIndex", "areaRadius", "finishedCount",
-                       "z", "dungeon" }
+                       "poiKey", "dataVersion", "taxiNodeID", "reachable", "adjustedYards", "faction", "serviceKind", "uiMapID",
+                       "originalX", "originalY", "learned", "z", "dungeon" }
 
 
 
@@ -1146,26 +1185,13 @@ function Destinations.Plain(dest)
     if type(dest.interior) == "table" then
         out.interior = { inst = dest.interior.inst, x = dest.interior.x, y = dest.interior.y, map = dest.interior.map }
     end
+    if type(dest.place) == "table" then
+        local indoor, name = dest.place.indoor, dest.place.name
+        if type(indoor) ~= "boolean" then indoor = nil end
+        if type(name) ~= "string" then name = nil end
+        if indoor ~= nil or name then out.place = { indoor = indoor, name = name } end
+    end
     return out
-end
-
-
-
-local function questStage(dest)
-    return dest.questTarget or "client"
-end
-
-
-
-
-
-
-local function sameQuestStop(a, b)
-    if a.questID ~= b.questID then return false end
-    local stage = questStage(a)
-    if stage ~= questStage(b) then return false end
-    if stage == "objective" and a.areaIndex and b.areaIndex then return a.areaIndex == b.areaIndex end
-    return true
 end
 
 
@@ -1185,10 +1211,57 @@ function Destinations.Equal(a, b)
         if a.name == nil or b.name == nil or a.name == b.name then return true end
 
     end
-    if a.questID and b.questID then return sameQuestStop(a, b) end
     if a.taxiNodeID and b.taxiNodeID then return a.taxiNodeID == b.taxiNodeID end
     if a.inst ~= b.inst or not a.x or not b.x or not a.y or not b.y then return false end
     return dist(a.x, a.y, b.x, b.y) <= Destinations.EQUAL_YARDS
+end
+
+
+
+
+
+
+
+local PERSON_SRC = "^cmangos:creature:"
+local QUESTIE_MARK = L["from Questie"]:gsub("%p", "%%%0")
+local QUESTIE_TITLE, QUESTIE_PLAIN = "^(.+) %([^()]+, " .. QUESTIE_MARK .. "%)$", "^(.+) %(" .. QUESTIE_MARK .. "%)$"
+
+local function personName(dest)
+    local name = dest.name
+    if type(name) ~= "string" then return nil end
+    local key = dest.poiKey
+    if dest.poiIndex and type(key) == "string" and key:find(PERSON_SRC) then
+        local P = poi()
+        if not (P and P.name[dest.poiIndex] == name and poiKeyOf(dest.poiIndex) == key) then return nil end
+        return (name:match("^(.+) %([^()]+%)$"))
+    end
+    if dest.kind == "service" and dest.learned then
+        local bare = name:match(QUESTIE_TITLE) or name:match(QUESTIE_PLAIN)
+        if bare or (dest.serviceKind or dest.type) ~= "trainer" then return bare end
+        return (name:match("^(.+) %([^()]+ Trainer%)$"))
+    end
+    return nil
+end
+
+
+
+
+
+function Destinations.SpokenName(dest, stops)
+    if type(dest) ~= "table" or type(dest.name) ~= "string" then return nil end
+    local bare = personName(dest)
+    if not bare then return dest.name end
+    if type(stops) == "table" then
+        local key = lower(bare)
+        for _, stop in ipairs(stops) do
+            local other = type(stop) == "table" and (stop.dest or stop) or nil
+            if type(other) == "table" and type(other.name) == "string" and other.name ~= dest.name
+                and lower(personName(other) or other.name) == key then
+                return dest.name
+            end
+        end
+    end
+    return bare
 end
 
 function Destinations.Describe(dest)
@@ -1290,6 +1363,27 @@ local function savedEntryBroken(saved)
     return type(saved) == "table" and (spotBroken(saved) or spotBroken(saved.entrance) or spotBroken(saved.interior))
 end
 
+
+
+
+local function refreshSavedReachability(saved)
+    if type(saved) ~= "table" then return end
+    if saved.reachable ~= false and saved.reachable ~= "adjusted" then return end
+    if type(saved.originalX) == "number" and type(saved.originalY) == "number" then
+        saved.x, saved.y = saved.originalX, saved.originalY
+        if saved.map then
+            local map, mx, my = worldToMap(saved.inst, saved.x, saved.y, saved.map)
+            if map then saved.map, saved.mx, saved.my = map, mx, my end
+        end
+    end
+    saved.reachable, saved.reachableNote = nil, nil
+    saved.adjustedYards, saved.originalX, saved.originalY = nil, nil, nil
+    local Graph = FGPS.Graph
+    if Graph and (not Graph.IsLoaded or Graph:IsLoaded(saved.inst)) then
+        Destinations.ApplyReachability(saved)
+    end
+end
+
 local function accountList(key)
     local DB = FGPS.DB
     if not DB or not DB.account then return {} end
@@ -1307,7 +1401,10 @@ local function accountList(key)
         checked[list] = true
     end
     if rekeyed[list] ~= poi() then
-        for i = 1, #list do Destinations.Rekey(list[i]) end
+        for i = 1, #list do
+            Destinations.Rekey(list[i])
+            refreshSavedReachability(list[i])
+        end
         rekeyed[list] = poi()
     end
     return list

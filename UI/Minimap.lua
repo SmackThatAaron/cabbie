@@ -7,6 +7,8 @@
 
 
 
+
+
 local ADDON_NAME, FGPS = ...
 
 local L = FGPS.L
@@ -46,19 +48,6 @@ local function now()
     return GetTime and GetTime() or 0
 end
 
-local function skinColor(name, dr, dg, db, da)
-    local Skins = FGPS.UI.Skins
-    if Skins and Skins.Current then
-        local ok, skin = pcall(Skins.Current)
-        local c = ok and type(skin) == "table" and type(skin.colors) == "table" and skin.colors[name] or nil
-        if type(c) == "table" then
-            local r, g, b, a = c[1] or c.r, c[2] or c.g, c[3] or c.b, c[4] or c.a
-            if r and g and b then return r, g, b, a or 1 end
-        end
-    end
-    return dr, dg, db, da
-end
-
 local function viewRadius()
     if C_Minimap and C_Minimap.GetViewRadius then
         local ok, r = pcall(C_Minimap.GetViewRadius)
@@ -91,29 +80,6 @@ end
 
 
 
-local function makeIcon(size, r, g, b, a, withBorder)
-    local parent = _G and _G.Minimap or UIParent
-    local icon = CreateFrame("Frame", nil, parent)
-    icon:SetSize(size, size)
-    icon:EnableMouse(false)
-    icon.border = icon:CreateTexture(nil, "BACKGROUND")
-    icon.border:SetAllPoints(icon)
-    icon.border:SetTexture("Interface\\Buttons\\WHITE8X8")
-    icon.border:SetVertexColor(0, 0, 0, withBorder and 0.8 or 0)
-    icon.fill = icon:CreateTexture(nil, "ARTWORK")
-    icon.fill:SetTexture("Interface\\Buttons\\WHITE8X8")
-    icon.fill:SetVertexColor(r, g, b, a)
-    if withBorder then
-        icon.fill:SetPoint("TOPLEFT", icon, "TOPLEFT", 1, -1)
-        icon.fill:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT", -1, 1)
-    else
-        icon.fill:SetAllPoints(icon)
-    end
-    icon:Hide()
-    return icon
-end
-
-
 
 
 
@@ -123,6 +89,10 @@ end
 
 local DOT_SIZE = 5
 local DOT_SIZE_UNVERIFIED = 8
+local NEXT_PIN_SIZE = 9
+local NEXT_MARK_SIZE = 4
+local DEST_PIN_SIZE = 15
+local DEST_MARK_SIZE = 10
 local HALO_GROWTH = 2
 
 
@@ -156,6 +126,56 @@ end
 
 
 
+local function makeMark(size, markTexture, markSize)
+    local parent = _G and _G.Minimap or UIParent
+    local icon = CreateFrame("Frame", nil, parent)
+    local WorldMap = FGPS.UI.WorldMap
+    local ring = WorldMap.STOP_RING
+    local ringBox = WorldMap.RING_BOX
+    icon:SetSize(size, size)
+    icon:EnableMouse(false)
+    icon.Halo = icon:CreateTexture(nil, "BACKGROUND")
+    icon.Halo:SetPoint("CENTER", icon, "CENTER", 0, 0)
+    icon.Halo:SetSize((size + HALO_GROWTH) * ringBox, (size + HALO_GROWTH) * ringBox)
+    icon.Halo:SetTexture(ring)
+    icon.Fill = icon:CreateTexture(nil, "BORDER")
+    icon.Fill:SetPoint("CENTER", icon, "CENTER", 0, 0)
+    icon.Fill:SetSize(size, size)
+    icon.Fill:SetTexture(DOT_TEXTURE)
+    icon.Ring = icon:CreateTexture(nil, "ARTWORK")
+    icon.Ring:SetPoint("CENTER", icon, "CENTER", 0, 0)
+    icon.Ring:SetSize(size * ringBox, size * ringBox)
+    icon.Ring:SetTexture(ring)
+    icon.Mark = icon:CreateTexture(nil, "OVERLAY")
+    icon.Mark:SetPoint("CENTER", icon, "CENTER", 0, 0)
+    icon.Mark:SetSize(markSize, markSize)
+    icon.Mark:SetTexture(markTexture)
+    icon:Hide()
+    return icon
+end
+
+local function tintMark(icon, vr, vg, vb, pr, pg, pb)
+    if not icon then return end
+    icon.Halo:SetVertexColor(pr, pg, pb, 1)
+    icon.Fill:SetVertexColor(pr, pg, pb, 1)
+    icon.Ring:SetVertexColor(vr, vg, vb, INK_ALPHA)
+    icon.Mark:SetVertexColor(vr, vg, vb, INK_ALPHA)
+end
+
+
+
+
+local function raiseOverDots(icon, offset)
+    if not (icon and icon.SetFrameLevel) then return end
+    local parent = icon.GetParent and icon:GetParent() or (_G and _G.Minimap)
+    local base = parent and parent.GetFrameLevel and parent:GetFrameLevel() or 1
+    icon:SetFrameLevel(base + offset)
+end
+
+
+
+
+
 local function styleDot(icon, unverified, vr, vg, vb, ur, ug, ub, pr, pg, pb)
     unverified = unverified and true or false
     icon.unverified = unverified
@@ -181,33 +201,14 @@ local function styleDot(icon, unverified, vr, vg, vb, ur, ug, ub, pr, pg, pb)
 end
 Minimap.StyleDot = styleDot
 
-local function rgbOf(c)
-    if type(c) ~= "table" then return nil end
-    local r, g, b = c[1] or c.r, c[2] or c.g, c[3] or c.b
-    if r and g and b then return r, g, b end
-    return nil
-end
-
-
 
 
 
 
 local function dotColors()
     local Look = FGPS.UI.Look
-    local ir, ig, ib = Look.Color("route")
-    local vr, vg, vb, ur, ug, ub = ir, ig, ib, ir, ig, ib
-    local Skins = FGPS.UI.Skins
-    if Skins and Skins.ColorScheme then
-        local ok, scheme = pcall(Skins.ColorScheme)
-        local colors = ok and type(scheme) == "table" and scheme.colors or nil
-        if type(colors) == "table" then
-            local r, g, b = rgbOf(colors.routeVerified)
-            if r then vr, vg, vb = r, g, b end
-            r, g, b = rgbOf(colors.routeUnverified)
-            if r then ur, ug, ub = r, g, b end
-        end
-    end
+    local vr, vg, vb = Look.RouteColor("routeVerified")
+    local ur, ug, ub = Look.RouteColor("routeUnverified")
     local pr, pg, pb = Look.Color("paleRing")
     return vr, vg, vb, ur, ug, ub, pr, pg, pb
 end
@@ -218,9 +219,13 @@ local function ensureIcons()
     Minimap.dotPool = CreateObjectPool(makeDot, function(_, icon)
         icon:Hide()
     end)
-    local ar, ag, ab = skinColor("accent", 0.31, 0.76, 0.97)
-    Minimap.nextPin = makeIcon(9, 1, 1, 1, 0.95, true)
-    Minimap.destPin = makeIcon(12, ar, ag, ab, 1, true)
+    local Look = FGPS.UI.Look
+    local vr, vg, vb = Look.RouteColor("routeVerified")
+    local pr, pg, pb = Look.Color("paleRing")
+    Minimap.nextPin = makeMark(NEXT_PIN_SIZE, DOT_TEXTURE, NEXT_MARK_SIZE)
+    Minimap.destPin = makeMark(DEST_PIN_SIZE, FGPS.UI.WorldMap.MAP_X, DEST_MARK_SIZE)
+    tintMark(Minimap.nextPin, vr, vg, vb, pr, pg, pb)
+    tintMark(Minimap.destPin, vr, vg, vb, pr, pg, pb)
     return true
 end
 
@@ -231,8 +236,8 @@ local function applyColors()
     for icon in Minimap.dotPool:EnumerateActive() do
         styleDot(icon, icon.unverified, vr, vg, vb, ur, ug, ub, pr, pg, pb)
     end
-    local ar, ag, ab = skinColor("accent", 0.31, 0.76, 0.97)
-    if Minimap.destPin then Minimap.destPin.fill:SetVertexColor(ar, ag, ab, 1) end
+    tintMark(Minimap.nextPin, vr, vg, vb, pr, pg, pb)
+    tintMark(Minimap.destPin, vr, vg, vb, pr, pg, pb)
 end
 
 
@@ -602,6 +607,7 @@ function Minimap:Refresh()
         local ninst, nx, ny = nextPointOf(route, self.progress, pos)
         if ninst then
             pins:AddMinimapIconWorld(REF, self.nextPin, ninst, nx, ny, false)
+            raiseOverDots(self.nextPin, 2)
             self.placedNext = true
             placed = placed + 1
         else
@@ -622,6 +628,7 @@ function Minimap:Refresh()
             pins:AddMinimapIconWorld(REF, self.destPin, dinst, dx, dy, true)
             self.placedDest = { inst = dinst, x = dx, y = dy }
         end
+        raiseOverDots(self.destPin, 3)
         placed = placed + 1
     else
         if was then pins:RemoveMinimapIcon(REF, self.destPin) end
@@ -704,6 +711,16 @@ local function needsRefresh(progress)
     return dx * dx + dy * dy >= MOVE_EPSILON_YARDS * MOVE_EPSILON_YARDS
 end
 
+
+
+
+
+local function firstOfLeg(progress)
+    local drawn = Minimap.drawn
+    return drawn ~= nil and drawn.route == Minimap.route and type(progress) == "table"
+        and progress.legIndex ~= nil and drawn.leg ~= progress.legIndex
+end
+
 local function onProgress(_, progress)
     if not Minimap.route then
         local Navigator = FGPS.Navigator
@@ -719,7 +736,11 @@ local function onProgress(_, progress)
         if Minimap.active then Minimap:Clear() end
         return
     end
-    if needsRefresh(progress) then Minimap:RequestRefresh() end
+    if firstOfLeg(progress) then
+        Minimap:Refresh()
+    elseif needsRefresh(progress) then
+        Minimap:RequestRefresh()
+    end
 end
 
 local function onArrived(_, stopIndex, isFinal)
@@ -744,15 +765,38 @@ local function onNavState(_, state)
     Minimap:Clear()
 end
 
+
+
+
+
+
+
+local function onRecalcDone(_, route, err)
+    if route ~= nil or Minimap.route == nil then return end
+    if type(err) == "table" and err.code == "CANCELLED" then return end
+    local Navigator = FGPS.Navigator
+    if not (Navigator and Navigator.GetRoute) then return end
+    local ok, held = pcall(Navigator.GetRoute, Navigator)
+    if not ok or held == Minimap.route then return end
+    local progress
+    if held and Navigator.GetProgress then
+        local okProgress, p = pcall(Navigator.GetProgress, Navigator)
+        if okProgress and type(p) == "table" then progress = p end
+    end
+    Minimap.route, Minimap.progress = held, progress
+    if held then Minimap:Refresh() else Minimap:Clear() end
+end
+
 local function onCombat(_, inCombat)
     Minimap.inCombat = inCombat and true or false
     if Minimap.route then Minimap:Refresh() end
 end
 
 local function onSettingsChanged(_, key)
+    if key == "*" then applyColors() end
     if key == "minimapLine" or key == "combatMode" or key == "*" or key == "perf.guidanceEnabled" then
         if Minimap.route then Minimap:Refresh() end
-    elseif key == "preset" or key == "accessibility.colorScheme" then
+    elseif key == "accessibility.colorScheme" then
         applyColors()
     end
 end
@@ -773,6 +817,7 @@ function Minimap:Init()
         Events:Register("ROUTE_PROGRESS", onProgress, self)
         Events:Register("NAV_ARRIVED", onArrived, self)
         Events:Register("NAV_STATE", onNavState, self)
+        Events:Register("NAV_RECALC_DONE", onRecalcDone, self)
         Events:Register("COMBAT_STATE", onCombat, self)
 
 

@@ -497,14 +497,14 @@ FGPS.Data.interiors = {
 }
 FGPS.Data.insideMaps = {
   [33] = {
-    name = "Shadowfang Keep", kind = "dungeon", build = "1.60.1.70338",
+    name = "Shadowfang Keep", kind = "dungeon", build = "1.60.1.70790",
     rooms = {
     },
     bosses = {
     },
   },
   [34] = {
-    name = "Stormwind Stockade", kind = "dungeon", build = "1.60.1.70338",
+    name = "Stormwind Stockade", kind = "dungeon", build = "1.60.1.70790",
     rooms = {
       { name = "Stormwind Stockade", x = 0, y = 121.9, z = -25.6 },
     },
@@ -512,7 +512,7 @@ FGPS.Data.insideMaps = {
     },
   },
   [36] = {
-    name = "Deadmines", kind = "dungeon", build = "1.60.1.70338",
+    name = "Deadmines", kind = "dungeon", build = "1.60.1.70790",
     rooms = {
       { name = "Goblin Foundry", x = -573.9, y = -210, z = 22.2 },
       { name = "Ironclad Cove", area = 1582, x = -785.1, y = -73.1, z = 17.6 },
@@ -522,7 +522,7 @@ FGPS.Data.insideMaps = {
     },
   },
   [43] = {
-    name = "Wailing Caverns", kind = "dungeon", build = "1.60.1.70338",
+    name = "Wailing Caverns", kind = "dungeon", build = "1.60.1.70790",
     rooms = {
       { name = "Crag of the Everliving", x = 0, y = -218.1, z = -105.5 },
       { name = "Dreamer's Rock", x = 240, y = 119.6, z = -96 },
@@ -534,7 +534,7 @@ FGPS.Data.insideMaps = {
     },
   },
   [47] = {
-    name = "Razorfen Kraul", kind = "dungeon", build = "1.60.1.70338",
+    name = "Razorfen Kraul", kind = "dungeon", build = "1.60.1.70790",
     rooms = {
       { name = "Razorfen Kraul", area = 491, x = 1711, y = 2114.5, z = 81.3 },
     },
@@ -542,20 +542,20 @@ FGPS.Data.insideMaps = {
     },
   },
   [48] = {
-    name = "Blackfathom Deeps", kind = "dungeon", build = "1.60.1.70338",
+    name = "Blackfathom Deeps", kind = "dungeon", build = "1.60.1.70790",
     rooms = {
       { name = "Aku'mai's Lair", x = -363.3, y = -838.7, z = -33.7 },
       { name = "Blackfathom Deeps", area = 719, x = 36.4, y = -443.9, z = -47.6 },
       { name = "Moonshrine Ruins", x = -53.3, y = -743.8, z = -30 },
       { name = "Moonshrine Sanctum", x = -151.6, y = -812.6, z = -25.8 },
       { name = "The Drowned Sacellum", x = 67.6, y = -311.9, z = -53.9 },
-      { name = "The Pool of Ask'ar", x = 200.1, y = -448.9, z = -52.7 },
+      { name = "The Pool of Ask'ar", x = 193, y = -462.2, z = -53.1 },
     },
     bosses = {
     },
   },
   [70] = {
-    name = "Uldaman", kind = "dungeon", build = "1.60.1.70338",
+    name = "Uldaman", kind = "dungeon", build = "1.60.1.70790",
     rooms = {
       { name = "Dig Three", x = 404.2, y = 0, z = -47.1 },
       { name = "Dig Two", x = 111.1, y = -338.8, z = -54.8 },
@@ -571,7 +571,7 @@ FGPS.Data.insideMaps = {
     },
   },
   [90] = {
-    name = "Gnomeregan", kind = "dungeon", build = "1.60.1.70338",
+    name = "Gnomeregan", kind = "dungeon", build = "1.60.1.70790",
     rooms = {
       { name = "Engineering Labs", x = 374, y = -832.6, z = -316.8 },
       { name = "Gnomeregan", area = 721, x = 345.7, y = -641.9, z = -255.6 },
@@ -586,7 +586,7 @@ FGPS.Data.insideMaps = {
     },
   },
   [109] = {
-    name = "Sunken Temple", kind = "dungeon", build = "1.60.1.70338",
+    name = "Sunken Temple", kind = "dungeon", build = "1.60.1.70790",
     rooms = {
       { name = "Chamber of the Dreamer", x = -22.7, y = -662.1, z = -90.8 },
       { name = "Hall of Serpents", x = 11.7, y = -495, z = -148.7 },
@@ -600,7 +600,7 @@ FGPS.Data.insideMaps = {
     },
   },
   [129] = {
-    name = "Razorfen Downs", kind = "dungeon", build = "1.60.1.70338",
+    name = "Razorfen Downs", kind = "dungeon", build = "1.60.1.70790",
     rooms = {
       { name = "Spiral of Thorns", x = 984.6, y = 2418.2, z = 49.3 },
       { name = "The Bone Pile", x = 673.9, y = 2471.2, z = 61.3 },
@@ -611,7 +611,7 @@ FGPS.Data.insideMaps = {
     },
   },
   [189] = {
-    name = "Scarlet Monastery", kind = "dungeon", build = "1.60.1.70338",
+    name = "Scarlet Monastery", kind = "dungeon", build = "1.60.1.70790",
     rooms = {
       { name = "Athenaeum", x = -418.7, y = 198.1, z = 19 },
       { name = "Chamber of Atonement", x = 1125.8, y = 1774, z = 7.6 },
@@ -631,14 +631,14 @@ FGPS.Data.insideMaps = {
     },
   },
   [209] = {
-    name = "Zul'Farrak", kind = "dungeon", build = "1.60.1.70338",
+    name = "Zul'Farrak", kind = "dungeon", build = "1.60.1.70790",
     rooms = {
     },
     bosses = {
     },
   },
   [229] = {
-    name = "Blackrock Spire", kind = "dungeon", build = "1.60.1.70338",
+    name = "Blackrock Spire", kind = "dungeon", build = "1.60.1.70790",
     rooms = {
       { name = "Blackrock Stadium", x = -408.9, y = 149.7, z = 111 },
       { name = "Chamber of Battle", x = -491.5, y = -46.3, z = 90.5 },
@@ -659,7 +659,7 @@ FGPS.Data.insideMaps = {
     },
   },
   [230] = {
-    name = "Blackrock Depths", kind = "dungeon", build = "1.60.1.70338",
+    name = "Blackrock Depths", kind = "dungeon", build = "1.60.1.70790",
     rooms = {
       { name = "Chamber of Enchantment", x = -222.5, y = 1029.5, z = -61.8 },
       { name = "Dark Iron Highway", x = 74.9, y = 651, z = -73.8 },
@@ -686,7 +686,7 @@ FGPS.Data.insideMaps = {
     },
   },
   [249] = {
-    name = "Onyxia's Lair", kind = "raid", build = "1.60.1.70338",
+    name = "Onyxia's Lair", kind = "raid", build = "1.60.1.70790",
     rooms = {
     },
     bosses = {
@@ -694,7 +694,7 @@ FGPS.Data.insideMaps = {
     },
   },
   [289] = {
-    name = "Scholomance", kind = "dungeon", build = "1.60.1.70338",
+    name = "Scholomance", kind = "dungeon", build = "1.60.1.70790",
     rooms = {
       { name = "Barov Family Vault", x = -73.5, y = 183.9, z = 71.2 },
       { name = "Chamber of Summoning", x = 66.7, y = 265.8, z = 110 },
@@ -713,7 +713,7 @@ FGPS.Data.insideMaps = {
     },
   },
   [309] = {
-    name = "Zul'Gurub", kind = "raid", build = "1.60.1.70338",
+    name = "Zul'Gurub", kind = "raid", build = "1.60.1.70790",
     rooms = {
       { name = "Altar of Hir'eek", area = 3378, x = -1440, y = -12213.3, z = 130.8 },
       { name = "Altar of the Blood God", area = 3384, x = -1620.3, y = -11785.6, z = 21.2 },
@@ -740,7 +740,7 @@ FGPS.Data.insideMaps = {
     },
   },
   [329] = {
-    name = "Stratholme", kind = "dungeon", build = "1.60.1.70338",
+    name = "Stratholme", kind = "dungeon", build = "1.60.1.70790",
     rooms = {
       { name = "Alonsus Chapel", x = -3643.8, y = 3670.9, z = 140 },
       { name = "Crusaders' Square", x = -3173.1, y = 3662.8, z = 126.7 },
@@ -760,7 +760,7 @@ FGPS.Data.insideMaps = {
     },
   },
   [349] = {
-    name = "Maraudon", kind = "dungeon", build = "1.60.1.70338",
+    name = "Maraudon", kind = "dungeon", build = "1.60.1.70790",
     rooms = {
       { name = "Earth Song Falls", x = 0, y = 359.9, z = -130.9 },
       { name = "Foulspore Cavern", x = -301.2, y = 994.8, z = -45.6 },
@@ -775,14 +775,14 @@ FGPS.Data.insideMaps = {
     },
   },
   [389] = {
-    name = "Ragefire Chasm", kind = "dungeon", build = "1.60.1.70338",
+    name = "Ragefire Chasm", kind = "dungeon", build = "1.60.1.70790",
     rooms = {
     },
     bosses = {
     },
   },
   [409] = {
-    name = "Molten Core", kind = "raid", build = "1.60.1.70338",
+    name = "Molten Core", kind = "raid", build = "1.60.1.70790",
     rooms = {
       { name = "Magmadar Cavern", x = -991.1, y = 1038.6, z = -181.6 },
       { name = "Ragnaros' Lair", x = -839, y = 823.5, z = -230 },
@@ -800,14 +800,14 @@ FGPS.Data.insideMaps = {
     },
   },
   [429] = {
-    name = "Dire Maul", kind = "dungeon", build = "1.60.1.70338",
+    name = "Dire Maul", kind = "dungeon", build = "1.60.1.70790",
     rooms = {
     },
     bosses = {
     },
   },
   [469] = {
-    name = "Blackwing Lair", kind = "raid", build = "1.60.1.70338",
+    name = "Blackwing Lair", kind = "raid", build = "1.60.1.70790",
     rooms = {
       { name = "Dragonmaw Garrison", x = -1048.9, y = -7591.1, z = 408.4 },
       { name = "Halls of Strife", x = -1009.9, y = -7622.6, z = 440.2 },
@@ -825,7 +825,7 @@ FGPS.Data.insideMaps = {
     },
   },
   [509] = {
-    name = "Ruins of Ahn'Qiraj", kind = "raid", build = "1.60.1.70338",
+    name = "Ruins of Ahn'Qiraj", kind = "raid", build = "1.60.1.70790",
     rooms = {
       { name = "General's Terrace", area = 3449, x = 1559.1, y = -9066.7, z = 22 },
       { name = "Scarab Terrace", area = 3448, x = 1475.6, y = -8622.2, z = 32 },
@@ -844,7 +844,7 @@ FGPS.Data.insideMaps = {
     },
   },
   [531] = {
-    name = "Ahn'Qiraj Temple", kind = "raid", build = "1.60.1.70338",
+    name = "Ahn'Qiraj Temple", kind = "raid", build = "1.60.1.70790",
     rooms = {
     },
     bosses = {
@@ -859,7 +859,7 @@ FGPS.Data.insideMaps = {
     },
   },
   [533] = {
-    name = "Naxxramas", kind = "raid", build = "1.60.1.70338",
+    name = "Naxxramas", kind = "raid", build = "1.60.1.70790",
     rooms = {
       { name = "Kel'Thuzad's Chamber", x = -5102.2, y = 3715.6, z = 141.5 },
       { name = "Sapphiron's Lair", x = -5244.4, y = 3502.2, z = 137.6 },
@@ -883,7 +883,7 @@ FGPS.Data.insideMaps = {
     },
   },
   [2959] = {
-    name = "City of Dalaran", kind = "dungeon", build = "1.60.1.70338",
+    name = "City of Dalaran", kind = "dungeon", build = "1.60.1.70790",
     rooms = {
       { name = "A Hero's Welcome", x = 442.1, y = 264, z = 84.1 },
       { name = "Antonidas' Antiquities", x = 138.9, y = 234.7, z = 109.2 },
@@ -935,7 +935,7 @@ FGPS.Data.insideMaps = {
     },
   },
   [2998] = {
-    name = "Excavation Site: Wetlands", kind = "dungeon", build = "1.60.1.70338",
+    name = "Excavation Site: Wetlands", kind = "dungeon", build = "1.60.1.70790",
     rooms = {
       { name = "Lost Dig Site", area = 16880, x = -1623, y = -3894.8, z = 139.4 },
       { name = "Lost Marsh", area = 16877, x = -2133.3, y = -3809.1, z = 144.6 },
@@ -946,7 +946,7 @@ FGPS.Data.insideMaps = {
     },
   },
   [2999] = {
-    name = "Ruins of Lordaeron", kind = "dungeon", build = "1.60.1.70338",
+    name = "Ruins of Lordaeron", kind = "dungeon", build = "1.60.1.70790",
     rooms = {
       { name = "King's Alley", area = 16612, x = 133.9, y = 1561.8, z = 61.7 },
       { name = "Lordaeron Graveyard", area = 16614, x = 299.8, y = 1565.5, z = 61.7 },
@@ -958,7 +958,7 @@ FGPS.Data.insideMaps = {
     },
   },
   [3065] = {
-    name = "The Hall of Thanes", kind = "dungeon", build = "1.60.1.70338",
+    name = "The Hall of Thanes", kind = "dungeon", build = "1.60.1.70790",
     rooms = {
       { name = "Anvilmar's Rest", x = 0, y = 42, z = 501.5 },
       { name = "Dark Iron Ingress", x = -157.9, y = 157.3, z = 486.1 },

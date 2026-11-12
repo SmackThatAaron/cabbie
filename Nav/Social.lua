@@ -22,6 +22,7 @@
 
 
 
+
 local ADDON_NAME, FGPS = ...
 
 local L = FGPS.L
@@ -82,11 +83,11 @@ local function mapToWorld(uiMapID, mx, my)
     return nil
 end
 
-local function worldToMap(inst, x, y)
+local function worldToMap(inst, x, y, uiMapID)
     local C = FGPS.Coords
     if C and C.WorldToMap then
-        local ok, uiMapID, mx, my = pcall(C.WorldToMap, inst, x, y)
-        if ok and uiMapID then return uiMapID, mx, my end
+        local ok, id, mx, my = pcall(C.WorldToMap, inst, x, y, uiMapID)
+        if ok and id then return id, mx, my end
     end
     return nil
 end
@@ -208,6 +209,7 @@ function Social.CorpseDestination()
         return { kind = "custom", name = L["Your corpse"], type = "corpse", inst = corpse.inst, x = corpse.x, y = corpse.y,
                  map = uiMapID, mx = mx, my = my, zoneName = zoneName(uiMapID) }, "corpse"
     end
+    if type(UnitIsGhost) == "function" and not Social.IsGhost() then return nil, "not_released" end
     local grave, graveYards = Social.NearestGraveyard()
     if not grave then return nil, "no_position" end
     if graveYards and graveYards <= Social.AT_GRAVEYARD_YARDS then return nil, "at_graveyard" end
@@ -258,14 +260,19 @@ function Social.GoToCorpse(quiet)
         if quiet then
             local Guide = FGPS.UI and FGPS.UI.Guide
             if kind ~= "not_dead" and Guide and Guide.Say then
-                Guide.Say(L["Your corpse cannot be found yet"], Social.NO_CORPSE_HOLD)
+                local line = kind == "not_released"
+                    and L["Release your spirit first, then I can take you to your body."]
+                    or L["I can't find your body yet"]
+                Guide.Say(line, Social.NO_CORPSE_HOLD)
             end
         elseif kind == "not_dead" then
-            FGPS:Print(L["You are not dead; there is no corpse to run to."])
+            FGPS:Print(L["You're alive, so there's no body to run back to."])
+        elseif kind == "not_released" then
+            FGPS:Print(L["Release your spirit first, then I can take you to your body."])
         elseif kind == "at_graveyard" then
-            FGPS:Print(L["Your corpse cannot be found yet"])
+            FGPS:Print(L["I can't find your body yet"])
         else
-            FGPS:Print(L["This client will not say where your corpse is and no graveyard is known nearby."])
+            FGPS:Print(L["The game won't say where your body is, and I don't know a graveyard nearby."])
         end
         return false, kind
     end
@@ -285,7 +292,7 @@ function Social.GoToCorpse(quiet)
     end
     Social.corpse = dest
     if kind == "graveyard" and not quiet then
-        FGPS:Print(L["The client will not say where your corpse is, so this is the nearest graveyard instead."])
+        FGPS:Print(L["The game won't say where your body is, so I'll take you to the nearest graveyard instead."])
     end
     return true, kind
 end
@@ -296,32 +303,30 @@ end
 
 
 
-local CORPSE_POPUP = "CABBIE_GO_CORPSE"
 
-local function ensureCorpsePopup()
-    if type(StaticPopupDialogs) ~= "table" then return false end
-    if StaticPopupDialogs[CORPSE_POPUP] then return true end
-    StaticPopupDialogs[CORPSE_POPUP] = {
-        text = "%s",
-        button1 = L["Go to Corpse"],
-        button2 = L["Not Now"],
-        timeout = 0,
-        whileDead = 1,
-        hideOnEscape = 1,
-        preferredIndex = 3,
-        OnAccept = function() Social.GoToCorpse(true) end,
-        OnCancel = function() end,
-    }
-    return true
-end
+
+
+
+
+
 
 
 function Social.OfferCorpseRun()
+    local settings = FGPS.DB and FGPS.DB.settings
+    if not (settings and settings.askCorpseRun == true) then return false end
     if Social.corpseOffered then return false end
     Social.corpseOffered = true
-    if not ensureCorpsePopup() or type(StaticPopup_Show) ~= "function" then return false end
-    StaticPopup_Show(CORPSE_POPUP, L["You are dead. Guide me back to my corpse?"])
-    return true
+    local Question = FGPS.UI and FGPS.UI.Question
+    if not (Question and Question.Ask) then return false end
+    return Question.Ask({
+        id = "corpse",
+        waits = true,
+        text = L["You died. Want me to take you back to your body?"],
+        buttons = {
+            { label = L["Take Me There"], answer = "taken", onClick = function() Social.GoToCorpse(true) end },
+            { label = L["No Thanks"], answer = "declined" },
+        },
+    })
 end
 
 
@@ -361,7 +366,8 @@ end
 local function aliveAgain()
     cancelLifeLook()
     Social.corpseOffered = false
-    if type(StaticPopup_Hide) == "function" then StaticPopup_Hide(CORPSE_POPUP) end
+    local Question = FGPS.UI and FGPS.UI.Question
+    if Question and Question.Close then Question.Close("corpse") end
     Social.OnAlive()
 end
 
@@ -522,6 +528,10 @@ function Social.Follow(text)
     Social.corpse = nil
     Social.following = { unit = member.unit, name = member.name, inst = member.inst, x = member.x, y = member.y, lost = 0 }
     Nav:SetDestination(followDestination(member), { start = true })
+    if not (Nav.IsJourney and Nav:IsJourney()) and Nav.inflight == nil then
+        Social.StopFollowing("no_way")
+        return false, "no_way"
+    end
     updateTicker()
     FGPS:Print(L["Following %s. Type /cabbie follow off to stop."], member.name)
     return true
@@ -542,28 +552,35 @@ end
 
 
 
-function Social.StopFollowing(reason)
-    local following = Social.following
-    Social.following = nil
-    updateTicker()
-    if not following then return false end
-    if reason == "left" then
-        tell(L["%s is no longer in your group; following stopped."], following.name)
-    elseif reason == "lost" then
-        tell(L["The client can no longer say where %s is; following stopped."], following.name)
-    elseif reason ~= "corpse" and reason ~= "quiet" then
-        FGPS:Print(L["No longer following %s."], following.name)
-    end
-    return true
-end
-
-
-
 
 local function followedStopStands(Nav, following)
     local stops = Nav.GetStops and Nav:GetStops() or {}
     local stop = stops[1]
     return #stops == 1 and type(stop) == "table" and stop.type == "player" and stop.name == following.name
+end
+
+
+
+
+function Social.StopFollowing(reason)
+    local following = Social.following
+    Social.following = nil
+    updateTicker()
+    if not following then return false end
+    if reason == "no_way" then
+        local Nav = navigator()
+        if Nav and Nav.RemoveStop and followedStopStands(Nav, following) then
+            Nav:RemoveStop(1)
+        end
+        tell(L["I can't find a way to %s, so I stopped following."], following.name)
+    elseif reason == "left" then
+        tell(L["%s is no longer in your group; following stopped."], following.name)
+    elseif reason == "lost" then
+        tell(L["The game no longer says where %s is, so I stopped following."], following.name)
+    elseif reason ~= "corpse" and reason ~= "quiet" then
+        FGPS:Print(L["No longer following %s."], following.name)
+    end
+    return true
 end
 
 
@@ -584,16 +601,22 @@ end
 
 
 
+
+
 function Social.FollowTick()
     local following = Social.following
     if not following then updateTicker() return nil end
     local Nav = navigator()
-
-
-    if not Nav or not Nav.IsJourney or not (Nav:IsJourney() or Nav.inflight ~= nil) or not followedStopStands(Nav, following) then
+    if not Nav or not Nav.IsJourney or not followedStopStands(Nav, following) then
 
 
         Social.StopFollowing("quiet")
+        return nil
+    end
+
+
+    if not Nav:IsJourney() and Nav.inflight == nil then
+        Social.StopFollowing("no_way")
         return nil
     end
     local unit = followedMemberUnit(following)
@@ -609,8 +632,15 @@ function Social.FollowTick()
         return nil
     end
     following.lost = 0
+    local threshold = Social.FOLLOW_MOVE_YARDS
+    local me = playerPos()
+    if me and me.inst == pos.inst and type(me.x) == "number" and type(me.y) == "number" then
+        local tenth = dist(me.x, me.y, pos.x, pos.y) / 10
+        if tenth > threshold then threshold = tenth end
+    end
     local moved = (pos.inst == following.inst) and dist(pos.x, pos.y, following.x, following.y) or math.huge
-    if moved < Social.FOLLOW_MOVE_YARDS then return false end
+    if moved < threshold then return false end
+    if Nav.inflight ~= nil then return false end
     following.inst, following.x, following.y = pos.inst, pos.x, pos.y
 
 
@@ -648,16 +678,25 @@ end
 
 local MAX_ID = 2147483647
 
+local function stripChatEscapes(s)
+    s = s:gsub("|c%x%x%x%x%x%x%x%x", "")
+    s = s:gsub("|cn[^:|]*:", "")
+    s = s:gsub("|H[^|]*|h", "")
+    s = s:gsub("|T[^|]*|t", "")
+    s = s:gsub("|A[^|]*|a", "")
+    s = s:gsub("|[rhn]", "")
+    return (s:gsub("|", ""))
+end
+
 
 
 
 function Social.Decode(text, name)
     if type(text) ~= "string" then return nil end
-    local pattern = "<" .. Social.PREFIX .. ":(%d+):(%-?%d+):(%-?[%d%.]+):(%-?[%d%.]+):(%d+):(%-?[%d%.]+):(%-?[%d%.]+)>"
-    local version, inst, x, y, uiMapID, mx, my = text:match(pattern)
+    local pattern = "<" .. Social.PREFIX .. ":(%d+):(%-?%d+):(%-?[%d%.]+):(%-?[%d%.]+):(%d+):%-?[%d%.]+:%-?[%d%.]+>"
+    local version, inst, x, y, uiMapID = text:match(pattern)
     if not version then return nil end
-    version, inst, x, y = tonumber(version), tonumber(inst), tonumber(x), tonumber(y)
-    uiMapID, mx, my = tonumber(uiMapID), tonumber(mx), tonumber(my)
+    version, inst, x, y, uiMapID = tonumber(version), tonumber(inst), tonumber(x), tonumber(y), tonumber(uiMapID)
     if version ~= Social.VERSION or not inst or not x or not y then return nil end
     if x ~= x or y ~= y then return nil end
 
@@ -665,9 +704,18 @@ function Social.Decode(text, name)
     if uiMapID and (uiMapID > MAX_ID or uiMapID ~= math.floor(uiMapID)) then uiMapID = 0 end
 
     if math.abs(x) > 40000 or math.abs(y) > 40000 then return nil end
-    if mx then mx = math.max(0, math.min(1, mx)) end
-    if my then my = math.max(0, math.min(1, my)) end
-    if uiMapID == 0 then uiMapID, mx, my = worldToMap(inst, x, y) end
+    local mx, my
+    local mapID, mapX, mapY
+    if uiMapID and uiMapID > 0 then
+        mapID, mapX, mapY = worldToMap(inst, x, y, uiMapID)
+    end
+    if mapID and mapX and mapY and mapX >= 0 and mapX <= 1 and mapY >= 0 and mapY <= 1 then
+        uiMapID, mx, my = mapID, mapX, mapY
+    else
+        uiMapID, mx, my = worldToMap(inst, x, y)
+        if mx then mx = math.max(0, math.min(1, mx)) end
+        if my then my = math.max(0, math.min(1, my)) end
+    end
     local zone = zoneName(uiMapID)
     local label = name
     if not label or label == "" then
@@ -675,12 +723,15 @@ function Social.Decode(text, name)
         local word = tostring(L["Cabbie:"]):gsub("(%W)", "%%%1")
         label = text:match("^%s*" .. word .. "%s*(.-)%s*<") or text:match("^%s*Cabbie:%s*(.-)%s*<")
             or text:match("(.-)%s*<" .. Social.PREFIX)
+        if type(label) == "string" and label:find("|", 1, true) then label = stripChatEscapes(label) end
 
 
         local suffix = type(label) == "string" and type(zone) == "string" and zone ~= "" and " - " .. zone
         if suffix and #label > #suffix and label:find(suffix, #label - #suffix + 1, true) then
             label = label:sub(1, #label - #suffix)
         end
+    elseif type(label) == "string" and label:find("|", 1, true) then
+        label = stripChatEscapes(label)
     end
     if type(label) ~= "string" or label == "" then label = L["a shared destination"] end
     label = cutBytes(label, 80)
@@ -731,7 +782,7 @@ function Social.Share(channel)
     end
     local text = Social.ShareText(dest)
     if not text then
-        FGPS:Print(L["This destination has no position that can be shared."])
+        FGPS:Print(L["This place has no spot I can share."])
         return false, "bad_destination"
     end
     if not channel and type(IsInGroup) == "function" and not IsInGroup() then
@@ -758,11 +809,13 @@ function Social.Share(channel)
         end
     end
     channel = channel or (unitName("raid1") and "RAID" or "PARTY")
-    if not SendChatMessage then
+    local send = (type(C_ChatInfo) == "table" and type(C_ChatInfo.SendChatMessage) == "function" and C_ChatInfo.SendChatMessage)
+        or (type(SendChatMessage) == "function" and SendChatMessage) or nil
+    if not send then
         FGPS:Print(L["This client does not let add-ons post to chat."])
         return false, "no_api"
     end
-    local ok, err = pcall(SendChatMessage, text, channel)
+    local ok, err = pcall(send, text, channel)
     if not ok then
         FGPS:Print(L["Could not post to %s chat: %s"], tostring(channel), tostring(err))
         return false, "send_failed"
@@ -794,9 +847,15 @@ function Social.OnChatMessage(text, sender)
     if type(sender) == "string" and me and ownLine(sender, me) then return nil end
     local dest = Social.Decode(text)
     if not dest then return nil end
-    Social.offer = { dest = dest, sender = sender or L["someone in your group"], at = now() }
-    FGPS:Print(L["%s is heading to %s. Type /cabbie accept to go there too, or /cabbie decline to ignore it."],
-        tostring(Social.offer.sender), describe(dest))
+    local from = sender or L["someone in your group"]
+    local pending = Social.PendingOffer()
+    local D = FGPS.Destinations
+    local same = pending and pending.sender == from and D and D.Equal and D.Equal(pending.dest, dest)
+    Social.offer = { dest = dest, sender = from, at = now() }
+    if not same then
+        FGPS:Print(L["%s is heading to %s. Type /cabbie accept to go there too, or /cabbie decline to ignore it."],
+            tostring(from), describe(dest))
+    end
     return dest
 end
 
@@ -887,6 +946,7 @@ local CHAT_EVENTS = { "CHAT_MSG_PARTY", "CHAT_MSG_PARTY_LEADER", "CHAT_MSG_RAID"
 function Social:Init()
     if self.initialised then return end
     self.initialised = true
+
 
 
     Events:RegisterWoW("PLAYER_ALIVE", function() lookAtLife(true) end, self)

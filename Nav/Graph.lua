@@ -75,6 +75,14 @@ local Graph = {
     FREE_ATTACH_MAX = 4,
     HUB_CELL = 1200,
     loaded = {},
+
+
+
+    STACKED_NAME_YARDS = 12,
+
+
+
+    stackedNames = { outdoors = 0, indoors = 0, unknown = 0 },
 }
 FGPS.Graph = Graph
 
@@ -276,6 +284,7 @@ function Graph:Reset()
         g._roomNames, g._roomLocal, g._roomKeys, g._roomLocale = nil, nil, nil, nil
         g._xsorted = nil
         g._lm, g._lmCells, g._lmRoads = nil, nil, nil
+        g._hazardNodes = nil
     end
     self.loaded = {}
     self._links = nil
@@ -351,6 +360,7 @@ end
 
 local HEIGHT_ROW, HEIGHT_BASE, HEIGHT_OFFSET = 50, 91, 2000
 local FIRST_CHAR, SKIPPED_CHAR = 35, 92
+
 
 
 local DEC2, DEC1, DEC0 = {}, {}, {}
@@ -1799,11 +1809,23 @@ local function poiAnchor(g, poiIndex)
 end
 
 
+local function onLevels(z, levels, band)
+    if z == nil then return true end
+    for i = 1, #levels do
+        local d = z - levels[i]
+        if d <= band and d >= -band then return true end
+    end
+    return false
+end
 
 
 
 
-local function placeFilter(self, g, inst, x, y, list, place, isolated, out)
+
+
+
+
+local function placeFilter(self, g, inst, x, y, list, place, isolated, out, told)
     local surf = g._surf
     if not surf then return list end
     local base = inst * KEY_BASE
@@ -1850,9 +1872,50 @@ local function placeFilter(self, g, inst, x, y, list, place, isolated, out)
         local outside = keep(function(_, idx) return not select(2, placeOf(g, idx)) end)
         return #outside > 0 and outside or list
     end
+
+
+
+
+
+
+
+
+
+
+    local function stackedByName(cands, counter)
+        local name = place.name
+        if not told or type(name) ~= "string" then return nil end
+        local stacked, carried = false, false
+        for i = 1, #cands do
+            local room, _, isStacked = placeOf(g, cands[i].key - base)
+            if isStacked then stacked = true end
+            if room == name then carried = true end
+        end
+        if not stacked then return nil end
+        local counts = self.stackedNames
+        if not carried then
+            counts.unknown = counts.unknown + 1
+            return nil
+        end
+        local levels, kept, band = {}, {}, self.STACKED_NAME_YARDS
+        for i = 1, #cands do
+            local c = cands[i]
+            if placeOf(g, c.key - base) == name then levels[#levels + 1] = c.footZ or c.footZg end
+        end
+        for i = 1, #cands do
+            local c = cands[i]
+            if placeOf(g, c.key - base) == name or onLevels(c.footZ or c.footZg, levels, band) then kept[#kept + 1] = c end
+        end
+        if #kept == #cands then return nil end
+        counts[counter] = counts[counter] + 1
+        out.placeNamed = true
+        return kept, levels
+    end
     if place.indoor then
         local indoors = keep(function(_, idx) return select(2, placeOf(g, idx)) end)
         if #indoors == 0 then
+            local named, levels = stackedByName(list, "indoors")
+            if named then return named, levels end
 
             out.placeFallback = true
             return list
@@ -1870,8 +1933,11 @@ local function placeFilter(self, g, inst, x, y, list, place, isolated, out)
         out.placeFallback = true
         return list
     end
+    local named, levels = stackedByName(outdoors, "outdoors")
+    if named then return named, levels end
     return outdoors
 end
+
 
 
 
@@ -2133,8 +2199,16 @@ function Graph:AttachCandidates(inst, x, y, opts)
             place = { indoor = indoor, name = name }
         end
     end
-    gathered = placeFilter(self, g, inst, x, y, gathered, place, isolated, out)
+    local namedLevels
+    gathered, namedLevels = placeFilter(self, g, inst, x, y, gathered, place, isolated, out, opts.place ~= nil)
     for i = 1, #gathered do out[i] = gathered[i] end
+
+
+
+
+    local function onNamedLevel(idx)
+        return namedLevels == nil or onLevels(guessOf(idx), namedLevels, self.STACKED_NAME_YARDS)
+    end
     tsort(out, byDist)
 
 
@@ -2190,7 +2264,7 @@ function Graph:AttachCandidates(inst, x, y, opts)
         for i = 1, #out do have[out[i].key] = true end
         local hits = self:Nearest(inst, x, y, self.ROAD_POINT_ATTACH_YARDS, 4, function(_, idx, graph)
             if idx >= tailFirst and idx <= n then return false end
-            return not pieceIso(idx) and not pieceSmall(idx) and floorMatches(graph, idx, posFloor)
+            return not pieceIso(idx) and not pieceSmall(idx) and floorMatches(graph, idx, posFloor) and onNamedLevel(idx)
         end)
         for i = 1, #hits do
             local hit = hits[i]
@@ -2228,7 +2302,7 @@ function Graph:AttachCandidates(inst, x, y, opts)
         if not onLargest and (stacked or not out.inSurface) then
             local surf = g._surf
             local hits = self:Nearest(inst, x, y, self.FREE_ATTACH_YARDS, self.FREE_ATTACH_MAX, function(_, idx, graph)
-                if pieceIso(idx) or pieceOff(idx) or not floorMatches(graph, idx, posFloor) then return false end
+                if pieceIso(idx) or pieceOff(idx) or not floorMatches(graph, idx, posFloor) or not onNamedLevel(idx) then return false end
                 return not (surf and idx >= surf.first and idx <= surf.last and select(2, placeOf(graph, idx)))
             end)
             for i = 1, #hits do

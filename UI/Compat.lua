@@ -148,15 +148,8 @@ local REASONS = {
     no_world = "that place has no world position",
     parse = "that is not a coordinate pair",
     bad_arguments = "the request was not understood",
-    no_api = "this game client cannot look names up",
-    disabled = "name lookups are switched off in the settings",
-    budget = "the lookups for this session are used up",
-    in_flight = "a lookup is still running",
-    combat = "not during a fight",
-    too_soon = "wait a moment before the next one",
-    no_quest = "no quest is chosen",
-    invalid = "that place cannot be saved",
-    duplicate = "it is already a favorite",
+    invalid = "that place can't be saved",
+    duplicate = "it's already there",
     full = "the favorites list is full",
     cancelled = "the search was stopped",
 }
@@ -296,7 +289,7 @@ function Compat.Accept(dest, opts)
     local Destinations = FGPS.Destinations
     local samePlace = previous ~= nil and Destinations ~= nil and Destinations.Equal ~= nil
         and Destinations.Equal(previous, dest) == true
-    if samePlace and (stopCount or 0) > 1 then
+    if samePlace and ((stopCount or 0) > 1 or previous.name == dest.name) then
 
 
 
@@ -593,12 +586,18 @@ end
 
 
 
+
 local MAX_EMOTES, MAX_WORDS = 2000, 8
 
 local function gameWordTaken(word, own)
     local key = string.upper(word)
     if type(hash_EmoteTokenList) == "table" and hash_EmoteTokenList[key] ~= nil then return true end
-    if type(hash_ChatTypeInfoList) == "table" and hash_ChatTypeInfoList[key] ~= nil then return true end
+    if type(hash_ChatTypeInfoList) == "table" then
+        local info = hash_ChatTypeInfoList[key]
+        if info ~= nil and not (own ~= nil and type(info) == "string" and type(SlashCmdList) == "table" and SlashCmdList[info] == own) then
+            return true
+        end
+    end
     if type(hash_SlashCmdList) == "table" then
         local handler = hash_SlashCmdList[key]
         if handler ~= nil and handler ~= own then return true end
@@ -683,14 +682,6 @@ function Compat.UnregisterWaySlash()
         for i = 1, #WAY_WORDS do globals["SLASH_" .. WAY_SLASH_NAME .. i] = nil end
     end
     if type(SlashCmdList) == "table" then SlashCmdList[WAY_SLASH_NAME] = nil end
-
-    local hashes = type(globals) == "table" and globals.hash_SlashCmdList
-    if type(hashes) == "table" then
-        for i = 1, #WAY_WORDS do
-            local key = string.upper(WAY_WORDS[i])
-            if hashes[key] == waySlash then hashes[key] = nil end
-        end
-    end
     Compat.waySlashRegistered = false
     return true
 end

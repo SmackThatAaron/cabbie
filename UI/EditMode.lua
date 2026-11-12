@@ -24,6 +24,8 @@
 
 
 
+
+
 local ADDON_NAME, FGPS = ...
 
 local L = FGPS.L
@@ -49,12 +51,11 @@ EditMode.NATIVE_TEMPLATE = "EditModeSystemSelectionTemplate"
 EditMode.NUDGE_STEP = 1
 EditMode.NUDGE_STEP_FAST = 10
 
-local HIGHLIGHT_COLOR = { 0.36, 0.64, 1.0, 1 }
-local SELECTED_COLOR = { 1.0, 0.82, 0.20, 1 }
 local NUDGE_KEYS = { UP = { 0, 1 }, DOWN = { 0, -1 }, LEFT = { -1, 0 }, RIGHT = { 1, 0 } }
 
 local function Positions() return FGPS.UI.Positions end
 local function Frames() return FGPS.UI.Frames end
+local function Look() return FGPS.UI.Look end
 
 local function inCombat()
     return InCombatLockdown and InCombatLockdown() or false
@@ -93,6 +94,8 @@ end
 
 local wireOverlay
 
+
+
 local function createPlainOverlay(frame)
     local o = CreateFrame("Frame", nil, frame)
     o.fgpsNative = false
@@ -113,18 +116,36 @@ local function createPlainOverlay(frame)
         end
         o.Edges[i] = edge
     end
-    o.Label = o:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    o.Label = o:CreateFontString(nil, "OVERLAY", Look().Font("rowSmall"))
     o.Label:SetPoint("CENTER", o, "CENTER", 0, 0)
-    local frames = Frames()
-    if frames then frames.SetFont(o.Label, frames.Skin(), "normal", true) end
     return o
 end
 
-local function paintPlainOverlay(overlay, color, fillAlpha, label)
-    overlay.Fill:SetColorTexture(color[1], color[2], color[3], fillAlpha)
-    for _, edge in ipairs(overlay.Edges) do edge:SetColorTexture(color[1], color[2], color[3], 1) end
+
+
+
+local SELECTED_ROLE, HIGHLIGHT_ROLE = "gilt", "name"
+
+local function paintPlainOverlay(overlay, role, fillAlpha, label)
+    local look = Look()
+    local r, g, b = look.Color(role)
+    overlay.Fill:SetColorTexture(r, g, b, fillAlpha)
+    for _, edge in ipairs(overlay.Edges) do edge:SetColorTexture(r, g, b, 1) end
     overlay.Label:SetText(label or "")
-    overlay.Label:SetTextColor(1, 1, 1, 1)
+    overlay.Label:SetTextColor(look.Color("name"))
+end
+
+
+local function noteNoSelectionTemplate()
+    Look().NoteOnce("editmode:selection", "Edit Mode: %s missing; Cabbie's plain selection box instead",
+        EditMode.NATIVE_TEMPLATE)
+end
+
+
+local function selectionTemplateBroken()
+    EditMode.templateBroken = true
+    Look().TomeLacks("template", EditMode.NATIVE_TEMPLATE)
+    noteNoSelectionTemplate()
 end
 
 
@@ -132,7 +153,7 @@ end
 local function createOverlay(entry)
     local frame = entry.frame
     local overlay
-    if not EditMode.templateBroken then
+    if not EditMode.templateBroken and Look().TomeHas("template", EditMode.NATIVE_TEMPLATE) then
         local ok, f = pcall(CreateFrame, "Frame", nil, frame, EditMode.NATIVE_TEMPLATE)
         if ok and type(f) == "table" and type(f.ShowHighlighted) == "function"
             and type(f.ShowSelected) == "function" and type(f.Hide) == "function" then
@@ -143,10 +164,12 @@ local function createOverlay(entry)
                 pcall(f.SetSystem, f, { GetSystemName = function() return entry.label end })
             end
         else
-            EditMode.templateBroken = true
             if ok and type(f) == "table" and f.Hide then pcall(f.Hide, f) end
+            selectionTemplateBroken()
             if FGPS.Log then FGPS.Log:Debug("Edit Mode selection template unavailable; using plain overlays") end
         end
+    else
+        noteNoSelectionTemplate()
     end
     if not overlay then overlay = createPlainOverlay(frame) end
     wireOverlay(entry, overlay)
@@ -155,7 +178,7 @@ end
 
 
 local function demoteOverlay(entry)
-    EditMode.templateBroken = true
+    selectionTemplateBroken()
     if entry.overlay then
         pcall(entry.overlay.Hide, entry.overlay)
         pcall(entry.overlay.EnableMouse, entry.overlay, false)
@@ -186,9 +209,9 @@ local function setOverlayState(entry, state)
         end
     end
     if state == "selected" then
-        paintPlainOverlay(overlay, SELECTED_COLOR, 0.20, entry.label)
+        paintPlainOverlay(overlay, SELECTED_ROLE, 0.20, entry.label)
     else
-        paintPlainOverlay(overlay, HIGHLIGHT_COLOR, entry.hover and 0.18 or 0.10, entry.label)
+        paintPlainOverlay(overlay, HIGHLIGHT_ROLE, entry.hover and 0.18 or 0.10, entry.label)
     end
     overlay:Show()
     if overlay.EnableMouse then pcall(overlay.EnableMouse, overlay, true) end
@@ -313,6 +336,7 @@ end
 
 
 
+
 local DIALOG_WIDTH = 390
 local DIALOG_PAD = 20
 local TITLE_TOP = 15
@@ -322,7 +346,6 @@ local LABEL_WIDTH = 100
 local CONTROL_WIDTH = 200
 local BUTTON_WIDTH, BUTTON_HEIGHT = 180, 28
 
-local function Look() return FGPS.UI.Look end
 local floor = math.floor
 
 local function safeGet(setting)
@@ -623,7 +646,11 @@ local function ensureDialog()
     if dialog.Hint.SetJustifyH then dialog.Hint:SetJustifyH("LEFT") end
     if dialog.Hint.SetWordWrap then dialog.Hint:SetWordWrap(true) end
     dialog.Hint:SetText(L["Drag to move. The arrow keys move the selection a little (with Shift, more)."])
-    dialog.Reset = look.Button(dialog, L["Reset to default"], BUTTON_WIDTH, BUTTON_HEIGHT)
+    dialog.Revert = look.Button(dialog, L["Revert Changes"], BUTTON_WIDTH, BUTTON_HEIGHT)
+    dialog.Revert:SetScript("OnClick", function()
+        if EditMode.selectedKey then EditMode.Revert(EditMode.selectedKey) end
+    end)
+    dialog.Reset = look.Button(dialog, L["Reset to Default"], BUTTON_WIDTH, BUTTON_HEIGHT)
     dialog.Reset:SetScript("OnClick", function()
         if EditMode.selectedKey then EditMode.ResetEntry(EditMode.selectedKey) end
     end)
@@ -653,6 +680,9 @@ local function buildDialog(entry)
     dialog.Hint:SetPoint("TOPRIGHT", dialog, "TOPRIGHT", -DIALOG_PAD, -y)
     dialog.Hint:SetHeight(28)
     y = y + 32
+    dialog.Revert:ClearAllPoints()
+    dialog.Revert:SetPoint("TOP", dialog, "TOP", 0, -y)
+    y = y + BUTTON_HEIGHT + Look().TOKENS.gap
     dialog.Reset:ClearAllPoints()
     dialog.Reset:SetPoint("TOP", dialog, "TOP", 0, -y)
     y = y + BUTTON_HEIGHT + DIALOG_PAD
@@ -696,6 +726,21 @@ end
 
 
 
+
+
+local function rememberSelection(entry)
+    local values = {}
+    for i, setting in ipairs(entry.settings or {}) do values[i] = safeGet(setting) end
+    local positions = Positions()
+    local record = positions and positions.Get(entry.key, EditMode.layoutName)
+    local place = false
+    if record then
+        place = {}
+        for k, v in pairs(record) do place[k] = v end
+    end
+    entry.selectedWith = { values = values, place = place, layoutName = EditMode.layoutName }
+end
+
 function EditMode.Select(key)
     local entry = EditMode.entries[key]
     if not entry or not EditMode.active then return false end
@@ -706,6 +751,7 @@ function EditMode.Select(key)
         if previous.overlay and previous.overlay.EnableKeyboard then pcall(previous.overlay.EnableKeyboard, previous.overlay, false) end
     end
     EditMode.selectedKey = key
+    rememberSelection(entry)
     ensureOverlay(entry)
     setOverlayState(entry, "selected")
     entry.frame:SetMovable(true)
@@ -754,6 +800,43 @@ function EditMode.ResetEntry(key)
     if entry.onPositionChanged then pcall(entry.onPositionChanged, entry.frame, "reset", nil) end
     if EditMode.selectedKey == key then
         buildDialog(entry)
+        updateDialogAnchor()
+    end
+    return true
+end
+
+local function samePlace(a, b)
+    return a.fx == b.fx and a.fy == b.fy and a.scale == b.scale
+end
+
+
+
+
+
+
+function EditMode.Revert(key)
+    local entry = EditMode.entries[key]
+    local before = entry and entry.selectedWith
+    if not before then return false end
+    for i, setting in ipairs(entry.settings or {}) do
+        local value = before.values[i]
+        if value ~= nil and safeGet(setting) ~= value then safeSet(setting, value, entry) end
+    end
+    local positions = Positions()
+    if positions and before.layoutName == EditMode.layoutName then
+        local now = positions.Get(key, EditMode.layoutName)
+        if before.place then
+            if not (now and samePlace(now, before.place)) and positions.Apply(entry.frame, before.place, entry.positionOpts) then
+                EditMode.SaveEntry(entry, "revert")
+            end
+        elseif now then
+            positions.Reset(key, EditMode.layoutName)
+            EditMode.ApplyEntryPosition(entry)
+            if entry.onPositionChanged then pcall(entry.onPositionChanged, entry.frame, "revert", nil) end
+        end
+    end
+    if EditMode.selectedKey == key then
+        refreshDialogValues()
         updateDialogAnchor()
     end
     return true
@@ -847,6 +930,7 @@ end
 local function exitEntry(entry)
     local frame = entry.frame
     entry.editEntered = nil
+    entry.selectedWith = nil
     if entry.dragging then EditMode.OnDragStop(entry.key) end
     frame:StopMovingOrSizing()
     frame:SetMovable(false)
@@ -987,30 +1071,33 @@ local function editorKeyDown(self, key)
     end
 end
 
-local function applyEditorBarSkin(bar, skin)
-    local frames = Frames()
-    frames.ApplyBackdrop(bar, skin.backdrop, skin.colors.bg, skin.colors.accent)
-    bar:SetAlpha(skin.panelAlpha or 1)
-end
+
+
+
+local EDITOR_EDGE = 16
 
 showEditorBar = function()
-    local frames = Frames()
-    if not frames then return end
+    local look = Look()
+    if not look then return end
     local bar = EditMode.editorBar
     if not bar then
-        bar = frames.CreateBackdropFrame("Frame", UIParent)
+        local ground
+        bar, ground = look.CreateGround("Frame", UIParent, EDITOR_EDGE)
+        bar.fgpsGround = ground
         bar:SetSize(520, 36)
         bar:SetPoint("TOP", UIParent, "TOP", 0, -40)
         bar:SetFrameStrata("DIALOG")
         bar:SetToplevel(true)
         bar:EnableMouse(true)
-        bar.Text = frames.CreateLabel(bar, L["Move Cabbie's arrow. The arrow keys move the selection a little (with Shift, more)."],
-            { kind = "small", color = "text" })
+        bar.Text = bar:CreateFontString(nil, "OVERLAY", look.Font("rowSmall"))
+        if bar.Text.SetJustifyH then bar.Text:SetJustifyH("LEFT") end
+        bar.Text:SetTextColor(look.Color("name"))
+        bar.Text:SetText(L["Move Cabbie's arrow. The arrow keys move the selection a little (with Shift, more)."])
         bar.Text:SetPoint("LEFT", bar, "LEFT", 10, 0)
-        bar.Done = frames.CreateButton(bar, L["Done"], function() EditMode.Exit() end, { width = 70, primary = true })
+        bar.Done = look.Button(bar, L["Done"], 70, 22)
+        bar.Done:SetScript("OnClick", function() EditMode.Exit() end)
         bar.Done:SetPoint("RIGHT", bar, "RIGHT", -8, 0)
         bar:SetScript("OnKeyDown", editorKeyDown)
-        frames.Register(bar, applyEditorBarSkin)
         EditMode.editorBar = bar
     end
     bar:Show()
@@ -1096,6 +1183,9 @@ function EditMode:Init()
     if FGPS.Events then
         FGPS.Events:RegisterWoW("EDIT_MODE_LAYOUTS_UPDATED", onLayoutsUpdated, EditMode)
         FGPS.Events:Register("COMBAT_STATE", onCombatState, EditMode)
+        FGPS.Events:Register("WORLD_ENTERED", function()
+            if not (InCombatLockdown and InCombatLockdown()) then onCombatState(nil, false) end
+        end, EditMode)
         FGPS.Events:Register("SETTINGS_CHANGED", function()
             refreshDialogValues()
             refreshAvailability()

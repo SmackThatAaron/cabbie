@@ -391,11 +391,16 @@ end
 
 
 
+local function plain(v)
+    if v == nil or (issecretvalue and issecretvalue(v)) then return nil end
+    return v
+end
+
 
 local function plainString(fn)
     if type(fn) ~= "function" then return nil end
     local ok, v = pcall(fn)
-    if not ok or v == nil or (issecretvalue and issecretvalue(v)) then return nil end
+    if not ok or plain(v) == nil then return nil end
     return type(v) == "string" and v ~= "" and v or nil
 end
 
@@ -515,7 +520,7 @@ end
 
 function Calibrate.OnSpellcastStart(unit, _, spellID)
     if unit ~= "player" then return nil end
-    local id = Calibrate.TELEPORT_SPELLS[tonumber(spellID) or 0]
+    local id = Calibrate.TELEPORT_SPELLS[tonumber(plain(spellID)) or 0]
     if not id then return nil end
     Calibrate.cast = { id = id, start = now() }
     return id
@@ -527,7 +532,7 @@ end
 
 function Calibrate.OnSpellcastSucceeded(unit, _, spellID)
     if unit ~= "player" then return nil end
-    local id = Calibrate.TELEPORT_SPELLS[tonumber(spellID) or 0]
+    local id = Calibrate.TELEPORT_SPELLS[tonumber(plain(spellID)) or 0]
     if not id then return nil end
     local pending = Calibrate.cast
     local t = now()
@@ -637,19 +642,33 @@ function Calibrate.ApplyToRoute(route)
 
 
 
+
     local a = type(route.assumptions) == "table" and route.assumptions or nil
     local costed = a and tonumber(a.groundSpeed)
+    local runSpeed = Const.RUN_SPEED or 7
     local conditions = a and { hasMount = a.hasMount, mountSpeed = a.mountSpeed,
-                               canMount = costed == nil or costed > (Const.RUN_SPEED or 7) } or nil
+                               canMount = costed == nil or costed > runSpeed } or nil
     local groundSpeed, groundSamples, groundState = Calibrate.GroundSpeed(conditions)
-    local groundFactor
+    local groundFactor, groundUsed
     if groundSpeed then
         local modelled = tonumber(a and a.groundSpeed) or Calibrate.ModelledGroundSpeed(conditions)
         if modelled and modelled > 0 then
             groundFactor = modelled / groundSpeed
-            used.ground = { speed = groundSpeed, samples = groundSamples, state = groundState, modelled = modelled }
+            groundUsed = { speed = groundSpeed, samples = groundSamples, state = groundState, modelled = modelled }
         end
     end
+    local footFactor, footUsed = groundFactor, groundUsed
+    if conditions and conditions.canMount then
+        local footCond = { hasMount = a.hasMount, mountSpeed = a.mountSpeed, canMount = false }
+        local fs, fn, fst = Calibrate.GroundSpeed(footCond)
+        if fs and runSpeed > 0 then
+            footFactor = runSpeed / fs
+            footUsed = { speed = fs, samples = fn, state = fst, modelled = runSpeed }
+        else
+            footFactor, footUsed = nil, nil
+        end
+    end
+    local insideMaps = FGPS.Data and FGPS.Data.insideMaps
 
 
     local reachAt = now()
@@ -657,9 +676,17 @@ function Calibrate.ApplyToRoute(route)
         local before = tonumber(leg.seconds) or 0
         local after = before
         if leg.kind == "walk" then
-            if groundFactor then
-                after = before * groundFactor
+            local insideWalk = insideMaps and leg.inst ~= nil and insideMaps[leg.inst] ~= nil
+            local factor, entry
+            if insideWalk then
+                factor, entry = footFactor, footUsed
+            else
+                factor, entry = groundFactor, groundUsed
+            end
+            if factor then
+                after = before * factor
                 leg.measured = "ground"
+                if not used.ground or not insideWalk then used.ground = entry end
             end
         elseif leg.kind == "taxi" then
             local seconds = Calibrate.FlightSeconds(leg.taxiFrom, leg.taxiTo)
