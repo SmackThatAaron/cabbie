@@ -44,7 +44,8 @@ local ADDON_NAME, FGPS = ...
 
 local L = FGPS.L
 local type, pairs, ipairs, tostring, tonumber, pcall = type, pairs, ipairs, tostring, tonumber, pcall
-local sqrt, abs, floor, format = math.sqrt, math.abs, math.floor, string.format
+local sqrt, abs, floor, min, max, sin, atan2, format = math.sqrt, math.abs, math.floor, math.min, math.max, math.sin, math.atan2, string.format
+local PI, TWO_PI = math.pi, 2 * math.pi
 
 local InWorldPin = {
     initialised = false,
@@ -79,10 +80,37 @@ local InWorldPin = {
 }
 FGPS.UI.InWorldPin = InWorldPin
 
+local RoadBeacon = {
+    frame = nil,
+    beacon = nil,
+    parts = nil,
+    frameFailed = false,
+    attached = false,
+    pinHidden = false,
+    PIN_BACK_SECONDS = 3,
+    frameState = {
+        reason = nil,
+        shown = false,
+        clamped = false,
+        mode = nil,
+        distYards = nil,
+        cue = nil,
+        fade = 0,
+    },
+}
+InWorldPin.Beacon = RoadBeacon
+FGPS.UI.RoadBeacon = RoadBeacon
+
 InWorldPin.MIN_AHEAD_YARDS = 60
 InWorldPin.SIGHT_YARDS = 20
 InWorldPin.SIGHT_CAP_YARDS = 200
 InWorldPin.MOVE_YARDS = 30
+
+
+InWorldPin.BEACON_SIGHT_YARDS = 8
+InWorldPin.BEACON_CAP_YARDS = 60
+InWorldPin.BEACON_TURN_YARDS = 75
+InWorldPin.BEACON_MOVE_YARDS = 12
 InWorldPin.REFRESH_SECONDS = 5
 InWorldPin.MATCH_EPSILON = 0.0005
 InWorldPin.NOTICE_HOLD = 6
@@ -116,9 +144,20 @@ local function focusedQuest()
     return questID
 end
 
+local function beaconMode()
+    local db = FGPS.DB
+    return db ~= nil and db.settings ~= nil and db.settings.roadBeacon == true
+end
+
+local function stockPinMode()
+    local db = FGPS.DB
+    return not (db and db.settings) or db.settings.inWorldPin == true
+end
+
 local function settingsEnabled()
     local db = FGPS.DB
-    if db and db.settings and db.settings.inWorldPin == false then return false end
+    local s = db and db.settings
+    if s and s.inWorldPin ~= true and s.roadBeacon ~= true then return false end
     if FGPS.Perf and FGPS.Perf.guidanceEnabled == false then return false end
     return true
 end
@@ -270,6 +309,11 @@ InWorldPin.ResolveMap = resolveMap
 
 
 local NO_WAY_KINDS = { hearth = true, spell = true, portal = true, elevator = true }
+local TURN_STEP_KINDS = {
+    turn_slight_left = true, turn_left = true, turn_sharp_left = true,
+    turn_slight_right = true, turn_right = true, turn_sharp_right = true,
+    uturn = true, ramp = true, enter = true,
+}
 
 
 local function offLine(x, y, ax, ay, bx, by)
@@ -289,8 +333,8 @@ end
 local passed = {}
 
 
-local function inSight(pos, count, x, y)
-    local sight = InWorldPin.SIGHT_YARDS
+local function inSight(pos, count, x, y, sight)
+    sight = sight or InWorldPin.SIGHT_YARDS
     for i = 1, count do
         local p = passed[i]
         if offLine(p.x, p.y, pos.x, pos.y, x, y) > sight then return false end
@@ -303,12 +347,15 @@ end
 
 
 
-
-
-local function sightTarget(route, progress, pos)
+local function sightTarget(route, progress, pos, useBeacon)
     local legs = route.legs
     local li = progress.legIndex or 1
-    local cap = InWorldPin.SIGHT_CAP_YARDS
+    local sight = useBeacon and InWorldPin.BEACON_SIGHT_YARDS or InWorldPin.SIGHT_YARDS
+    local cap = useBeacon and InWorldPin.BEACON_CAP_YARDS or InWorldPin.SIGHT_CAP_YARDS
+    local turnCap = useBeacon and InWorldPin.BEACON_TURN_YARDS or nil
+    local step = useBeacon and progress.currentStep or nil
+    local turnPoint = (type(step) == "table" and step.legIndex == li and TURN_STEP_KINDS[step.kind]
+        and type(step.pointIndex) == "number") and step.pointIndex or nil
     local count = 0
     local bestX, bestY, bestPoint
     local along, cx, cy = 0, pos.x, pos.y
@@ -342,13 +389,19 @@ local function sightTarget(route, progress, pos)
             local pt = points[p]
             if type(pt) == "table" and pt.x and pt.y then
                 local seg = distance(cx, cy, pt.x, pt.y)
+                if l == li and turnPoint and p == turnPoint and along + seg <= turnCap then
+                    if inSight(pos, count, pt.x, pt.y, sight) then
+                        return pt.x, pt.y, step, false, "step"
+                    end
+                    return bestX, bestY, bestPoint
+                end
                 if along + seg >= cap then
                     local u = (cap - along) / seg
                     local x, y = cx + (pt.x - cx) * u, cy + (pt.y - cy) * u
-                    if inSight(pos, count, x, y) then return x, y, nil end
+                    if inSight(pos, count, x, y, sight) then return x, y, nil end
                     return bestX, bestY, bestPoint
                 end
-                if not inSight(pos, count, pt.x, pt.y) then return bestX, bestY, bestPoint end
+                if not inSight(pos, count, pt.x, pt.y, sight) then return bestX, bestY, bestPoint end
                 bestX, bestY, bestPoint = pt.x, pt.y, pt
                 count = count + 1
                 passed[count] = pt
@@ -371,19 +424,21 @@ end
 
 
 
-function InWorldPin.SelectTarget(route, progress)
+function InWorldPin.SelectTarget(route, progress, beaconOverride)
     if type(route) ~= "table" or type(progress) ~= "table" then return nil end
     local pos = progress.pos
     if type(pos) ~= "table" or not pos.x or not pos.y then return nil end
     local minAhead = InWorldPin.MIN_AHEAD_YARDS
     local inst = pos.inst
+    local useBeacon = beaconOverride
+    if useBeacon == nil then useBeacon = beaconMode() end
 
     local current = type(route.legs) == "table" and route.legs[progress.legIndex or 1] or nil
     if type(current) == "table" then
         if NO_WAY_KINDS[current.kind] then return nil end
         if (current.kind == nil or current.kind == "walk") and (current.inst == nil or inst == nil or current.inst == inst) then
-            local x, y, point, ends = sightTarget(route, progress, pos)
-            if x then return inst, x, y, ends and "stop" or "point", point end
+            local x, y, point, ends, hitKind = sightTarget(route, progress, pos, useBeacon)
+            if x then return inst, x, y, hitKind or (ends and "stop" or "point"), point end
         end
     end
 
@@ -680,8 +735,10 @@ local function syncGameArrow()
     if type(arrow) ~= "table" or type(arrow.SetAlpha) ~= "function" then return end
 
 
-    local hide = st.set and not st.backedOff and not st.stopped and not st.inCombat
-        and turnArrowOn() and not corpseShown()
+
+    local hide = (st.set and not st.backedOff and not st.stopped
+        and not (st.inCombat and combatPolicy() == "hide_all")
+        and turnArrowOn() and not corpseShown()) or RoadBeacon.pinHidden
     if hide and not st.arrowHidden then
         arrow:SetAlpha(0)
         st.arrowHidden = true
@@ -724,6 +781,7 @@ function InWorldPin.BackOff(reason)
     st.saved, st.carriedQuest = nil, nil
     st.target, st.targetKey, st.lastSet = nil, nil, nil
     st.suppressed, st.pinClearedInFight = false, nil
+    RoadBeacon.Refresh()
     syncGameArrow()
     if not st.noticeGiven then
         st.noticeGiven = true
@@ -749,6 +807,7 @@ function InWorldPin.Restore(reason)
     st.saved, st.carriedQuest = nil, nil
     st.target, st.targetKey, st.lastSet = nil, nil, nil
     st.suppressed, st.pinClearedInFight = false, nil
+    RoadBeacon.Refresh()
     syncGameArrow()
 end
 
@@ -756,6 +815,7 @@ end
 local update
 function InWorldPin.Update(force)
     local placed = update(force)
+    RoadBeacon.Refresh()
     syncGameArrow()
     return placed
 end
@@ -767,8 +827,7 @@ update = function(force)
     if st.inCombat and combatPolicy() == "hide_all" then return false end
     local legs = st.route.legs
     local leg = type(legs) == "table" and legs[st.progress.legIndex or 1] or nil
-    if type(leg) == "table" and NO_WAY_KINDS[leg.kind] then
-
+    if type(leg) == "table" and (NO_WAY_KINDS[leg.kind] or (not stockPinMode() and leg.kind ~= nil and leg.kind ~= "walk")) then
 
 
 
@@ -776,20 +835,23 @@ update = function(force)
         if st.set then InWorldPin.Restore("leg without a way to walk") end
         return false
     end
-    local inst, x, y, kind = InWorldPin.SelectTarget(st.route, st.progress)
+    local useBeacon = beaconMode()
+    local inst, x, y, kind, source = InWorldPin.SelectTarget(st.route, st.progress, useBeacon)
     if not inst or not x then return false end
 
 
 
 
     local shown = st.target
+    local moveYards = useBeacon and InWorldPin.BEACON_MOVE_YARDS or InWorldPin.MOVE_YARDS
     if not force and kind == "point" and shown and shown.inst == inst and shown.wx
-        and distance(shown.wx, shown.wy, x, y) < InWorldPin.MOVE_YARDS then
+        and distance(shown.wx, shown.wy, x, y) < moveYards then
         x, y = shown.wx, shown.wy
     end
     local key = format("%d:%.0f:%.0f", inst, x, y)
     local t = now()
     if not force and key == st.targetKey and st.lastSet then
+        if shown then shown.kind, shown.source = kind, source end
         if (t - st.lastSet) < InWorldPin.REFRESH_SECONDS then return false end
 
 
@@ -822,6 +884,7 @@ update = function(force)
         and abs(mx - st.target.x) <= InWorldPin.MATCH_EPSILON
         and abs(my - st.target.y) <= InWorldPin.MATCH_EPSILON
         and InWorldPin.IsOurTrackingIntact() then
+        st.target.kind, st.target.source = kind, source
         st.targetKey = key
         st.lastSet = t
         return false
@@ -832,9 +895,676 @@ update = function(force)
         st.set = true
         st.targetKey = key
         st.lastSet = t
-        st.target = { uiMapID = uiMapID, x = mx, y = my, inst = inst, wx = x, wy = y }
+        st.target = { uiMapID = uiMapID, x = mx, y = my, inst = inst, wx = x, wy = y, kind = kind, source = source }
     end
     return placed
+end
+
+
+
+
+
+
+local BEACON_FADE_IN = 0.14
+local BEACON_FADE_OUT = 0.16
+local BEACON_PULSE = 0.24
+local BEACON_BREATHE = 2.4
+local BEACON_REATTACH = 0.1
+
+local MEDIA = "Interface\\AddOns\\Cabbie\\Media\\"
+local TEX_DOT = MEDIA .. "dot"
+local TEX_RING = MEDIA .. "place_ring"
+local TEX_STOP_RING = MEDIA .. "stop_ring"
+local TEX_CHEVRON = MEDIA .. "arrow_chevron"
+local TEX_POINTER = MEDIA .. "arrow_pointer"
+local TEX_TURN = MEDIA .. "turn_mark"
+local TEX_FLIGHT = MEDIA .. "place_flight"
+local TEX_BOAT = MEDIA .. "place_boat"
+local TEX_ZEPPELIN = MEDIA .. "place_zeppelin"
+local TEX_DUNGEON = MEDIA .. "place_dungeon"
+
+local PIN_REGIONS = { "Icon", "IconBorder", "DistanceText", "Arrow" }
+
+local TURN_SIDE = {
+    turn_slight_left = "left", turn_left = "left", turn_sharp_left = "left",
+    turn_slight_right = "right", turn_right = "right", turn_sharp_right = "right",
+}
+
+local function isSecret(value)
+    return value ~= nil and issecretvalue ~= nil and issecretvalue(value) == true
+end
+
+local function clientSays(fn, ...)
+    if type(fn) ~= "function" then return nil end
+    local ok, value = pcall(fn, ...)
+    if not ok or isSecret(value) then return nil end
+    return value and true or false
+end
+
+local function safeNumber(value)
+    if type(value) ~= "number" or isSecret(value) then return nil end
+    return value
+end
+
+local function setPinAlpha(alpha)
+    local frame = SuperTrackedFrame
+    if type(frame) ~= "table" then return end
+    local st = InWorldPin.state
+    local keepArrowHidden = alpha == 1 and st.set and not st.backedOff and not st.stopped
+        and not (st.inCombat and combatPolicy() == "hide_all") and turnArrowOn() and not corpseShown()
+    for i = 1, #PIN_REGIONS do
+        local name = PIN_REGIONS[i]
+        local region = frame[name]
+        if type(region) == "table" and type(region.SetAlpha) == "function" then
+            region:SetAlpha((keepArrowHidden and name == "Arrow") and 0 or alpha)
+        end
+    end
+end
+
+function RoadBeacon.HidePin()
+    RoadBeacon.pinHidden = true
+    setPinAlpha(0)
+end
+
+function RoadBeacon.ShowPin()
+    RoadBeacon.pinHidden = false
+    setPinAlpha(1)
+end
+
+
+function RoadBeacon.Evaluate()
+    if not beaconMode() then return "setting" end
+    if FGPS.Perf and FGPS.Perf.guidanceEnabled == false then return "setting" end
+    local st = InWorldPin.state
+    local route, progress = st.route, st.progress
+    if (st.navState ~= "active" and st.navState ~= "in_transit") or type(route) ~= "table" or type(progress) ~= "table" then
+        return "no_route"
+    end
+    local legs = route.legs
+    local leg = type(legs) == "table" and legs[progress.legIndex or 1] or nil
+    if type(leg) ~= "table" or (leg.kind ~= nil and leg.kind ~= "walk") then return "not_walk" end
+    local Coords = FGPS.Coords
+    if Coords and Coords.IsInstanced and Coords.IsInstanced() then return "instance" end
+    if clientSays(UnitIsGhost, "player") or corpseShown() then return "ghost" end
+    if not st.set or st.backedOff or st.stopped then return "pin_inactive" end
+    if st.suppressed or not InWorldPin.IsOurTrackingIntact() then return "pin_released" end
+    return nil
+end
+
+local function truncateCue(text)
+    if type(text) ~= "string" or text == "" then return nil end
+    if #text <= 30 then return text end
+    return text:sub(1, 27) .. "..."
+end
+
+local function stopVisual(route, progress)
+    local legs = route and route.legs
+    local li = progress and progress.legIndex or 1
+    if type(legs) == "table" then
+        local walkStop = legs[li] and (legs[li].stopIndex or 1) or 1
+        for k = li + 1, #legs do
+            local nextLeg = legs[k]
+            if type(nextLeg) ~= "table" then break end
+            if (nextLeg.stopIndex or 1) ~= walkStop then break end
+            local nk = nextLeg.kind
+            if nk == "walk" then
+                walkStop = nextLeg.stopIndex or walkStop
+            elseif nk == "taxi" then
+                return TEX_FLIGHT, false, L["Flight master"]
+            elseif nk == "boat" or nk == "ferry" then
+                return TEX_BOAT, false, truncateCue(nextLeg.label) or L["boat"]
+            elseif nk == "zeppelin" then
+                return TEX_ZEPPELIN, false, truncateCue(nextLeg.label) or L["zeppelin"]
+            elseif nk == "portal" then
+                return TEX_DUNGEON, false, truncateCue(nextLeg.label)
+            else
+                break
+            end
+        end
+    end
+    local stops = route and route.stops
+    local stop = type(stops) == "table" and stops[legs and legs[li] and legs[li].stopIndex or #stops] or nil
+    local dest = stop and stop.dest
+    local destType = dest and (dest.type or dest.kind)
+    local name = truncateCue(dest and dest.name)
+    if destType == "dungeon" or destType == "raid" or destType == "instance" then
+        return TEX_DUNGEON, false, name
+    end
+    return TEX_STOP_RING, true, name
+end
+
+local function selectVisual(target)
+    local kind = target and target.kind
+    local source = target and target.source
+    if kind == "step" and type(source) == "table" then
+        local sk = source.kind
+        local cue = truncateCue(source.shortText or source.text)
+        local side = TURN_SIDE[sk]
+        if side == "left" then
+            return "turn", TEX_TURN, false, 0, false, cue
+        elseif side == "right" then
+            return "turn", TEX_TURN, true, 0, false, cue
+        elseif sk == "uturn" then
+            return "turn", TEX_CHEVRON, false, PI, false, cue
+        elseif sk == "enter" then
+            return "stop", TEX_DUNGEON, false, 0, false, cue
+        end
+        return "turn", TEX_CHEVRON, false, 0, false, cue
+    end
+    if kind == "stop" then
+        local st = InWorldPin.state
+        local tex, dotOn, cue = stopVisual(st.route, st.progress)
+        return "stop", tex, false, 0, dotOn, cue
+    end
+    return "road", TEX_CHEVRON, false, 0, false, nil
+end
+
+local function applyVerticalFade(tex, r, g, b, botAlpha)
+    tex:SetVertexColor(r, g, b, botAlpha)
+    if type(CreateColor) == "function" and type(tex.SetGradient) == "function" then
+        local ok = pcall(tex.SetGradient, tex, "VERTICAL", CreateColor(r, g, b, botAlpha), CreateColor(r, g, b, 0))
+        if ok then tex:SetVertexColor(1, 1, 1, 1) end
+    end
+end
+
+local function makeBeaconFrame()
+    local Look = FGPS.UI and FGPS.UI.Look
+    local frame = CreateFrame("Frame", nil, UIParent)
+    frame:Hide()
+    frame:SetFrameStrata("LOW")
+    frame:SetAllPoints(UIParent)
+    if frame.EnableMouse then frame:EnableMouse(false) end
+
+    local beacon = CreateFrame("Frame", nil, frame)
+    beacon:SetSize(32, 32)
+    if beacon.EnableMouse then beacon:EnableMouse(false) end
+    beacon:Hide()
+
+    local beamGlow = beacon:CreateTexture(nil, "BACKGROUND", nil, 1)
+    beamGlow:SetTexture(TEX_DOT)
+    beamGlow:SetTexCoord(0, 1, 0, 0.5)
+    beamGlow:SetBlendMode("ADD")
+    beamGlow:SetPoint("BOTTOM", beacon, "CENTER", 0, 4)
+    beamGlow:SetSize(18, 110)
+    applyVerticalFade(beamGlow, 1.0, 0.84, 0.30, 0.30)
+
+    local beamCore = beacon:CreateTexture(nil, "ARTWORK", nil, -1)
+    beamCore:SetTexture(TEX_DOT)
+    beamCore:SetTexCoord(0, 1, 0, 0.5)
+    beamCore:SetBlendMode("ADD")
+    beamCore:SetPoint("BOTTOM", beacon, "CENTER", 0, 4)
+    beamCore:SetSize(4.5, 96)
+    applyVerticalFade(beamCore, 1.0, 0.97, 0.80, 0.62)
+
+    local halo = beacon:CreateTexture(nil, "BACKGROUND", nil, 0)
+    halo:SetTexture(TEX_DOT)
+    halo:SetBlendMode("ADD")
+    halo:SetPoint("CENTER", beacon, "CENTER", 0, 0)
+    halo:SetSize(44, 44)
+    halo:SetVertexColor(1.0, 0.86, 0.36, 0.24)
+
+    local ring = beacon:CreateTexture(nil, "BORDER", nil, 1)
+    ring:SetTexture(TEX_RING)
+    ring:SetPoint("CENTER", beacon, "CENTER", 0, 0)
+    ring:SetSize(30, 30)
+    ring:SetVertexColor(0.96, 0.85, 0.52, 0.88)
+
+    local icon = beacon:CreateTexture(nil, "ARTWORK", nil, 2)
+    icon:SetTexture(TEX_CHEVRON)
+    icon:SetPoint("CENTER", beacon, "CENTER", 0, 0)
+    icon:SetSize(20, 20)
+    icon:SetVertexColor(1.0, 0.94, 0.72, 1.0)
+
+    local centerDot = beacon:CreateTexture(nil, "OVERLAY", nil, 1)
+    centerDot:SetTexture(TEX_DOT)
+    centerDot:SetPoint("CENTER", beacon, "CENTER", 0, 0)
+    centerDot:SetSize(9, 9)
+    centerDot:SetVertexColor(1.0, 0.92, 0.55, 0.95)
+    centerDot:Hide()
+
+    local pulse = beacon:CreateTexture(nil, "OVERLAY", nil, 2)
+    pulse:SetTexture(TEX_RING)
+    pulse:SetBlendMode("ADD")
+    pulse:SetPoint("CENTER", beacon, "CENTER", 0, 0)
+    pulse:SetSize(30, 30)
+    pulse:SetVertexColor(1.0, 0.90, 0.48, 0)
+    pulse:Hide()
+
+    local edgeArrow = beacon:CreateTexture(nil, "ARTWORK", nil, 3)
+    edgeArrow:SetTexture(TEX_POINTER)
+    edgeArrow:SetPoint("CENTER", beacon, "CENTER", 0, 0)
+    edgeArrow:SetSize(26, 26)
+    edgeArrow:SetVertexColor(1.0, 0.86, 0.36, 0.92)
+    edgeArrow:Hide()
+
+    local distText
+    if Look and Look.FontString then
+        distText = Look.FontString(beacon, "OVERLAY", "mapLabel")
+    else
+        distText = beacon:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    end
+    distText:SetPoint("TOP", beacon, "BOTTOM", 0, -2)
+    if distText.SetWordWrap then distText:SetWordWrap(false) end
+    distText:SetTextColor(0.97, 0.93, 0.82, 1)
+
+    local cueText
+    if Look and Look.FontString then
+        cueText = Look.FontString(beacon, "OVERLAY", "mapLabel")
+    else
+        cueText = beacon:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    end
+    cueText:SetPoint("TOP", distText, "BOTTOM", 0, -1)
+    if cueText.SetWordWrap then cueText:SetWordWrap(false) end
+    cueText:SetTextColor(1.0, 0.86, 0.38, 1)
+    cueText:Hide()
+
+    RoadBeacon.beacon = beacon
+    RoadBeacon.parts = {
+        beacon = beacon,
+        beamGlow = beamGlow,
+        beamCore = beamCore,
+        halo = halo,
+        ring = ring,
+        icon = icon,
+        centerDot = centerDot,
+        pulse = pulse,
+        edgeArrow = edgeArrow,
+        distText = distText,
+        cueText = cueText,
+    }
+    return frame
+end
+
+local frameState = RoadBeacon.frameState
+local anchoredTo = nil
+local lastTargetKey = nil
+local lastTex, lastMirror, lastRot, lastMode = nil, false, 0, nil
+local lastYards, lastUnits, lastCue, distAtEdge = nil, nil, nil, false
+local fade, invalidFor, pinBack = 0, 0, true
+local beaconClock, pulseLeft = 0, 0
+local beaconHalted = false
+local detachedAt
+local detachedOn = setmetatable({}, { __mode = "v" })
+local lastBeaconError
+local detachBeacon
+
+local function resetBeaconState()
+    anchoredTo = nil
+    lastTargetKey = nil
+    lastTex, lastMirror, lastRot, lastMode = nil, false, 0, nil
+    lastYards, lastUnits, lastCue, distAtEdge = nil, nil, nil, false
+    fade, invalidFor, pinBack = 0, 0, true
+    pulseLeft = 0
+    frameState.reason, frameState.shown, frameState.clamped = nil, false, false
+    frameState.mode, frameState.distYards, frameState.cue, frameState.fade = nil, nil, nil, 0
+    if RoadBeacon.beacon then RoadBeacon.beacon:Hide() end
+end
+
+local function targetDistance(target)
+    local Nav = C_Navigation
+    if type(Nav) == "table" and type(Nav.GetDistance) == "function" then
+        local ok, d = pcall(Nav.GetDistance)
+        local n = ok and safeNumber(d) or nil
+        if n and n > 0 then return n end
+    end
+    if target and target.wx and target.wy then
+        local progress = InWorldPin.state.progress
+        local pos = progress and progress.pos
+        if pos and pos.x and pos.y and (target.inst == nil or pos.inst == target.inst) then
+            return distance(pos.x, pos.y, target.wx, target.wy)
+        end
+    end
+    return nil
+end
+
+local function screenCenter()
+    local wf = WorldFrame
+    if type(wf) == "table" and type(wf.GetCenter) == "function" then
+        local ok, cx, cy = pcall(wf.GetCenter, wf)
+        local sx, sy = ok and safeNumber(cx), ok and safeNumber(cy)
+        if sx and sy then
+            local scale = (UIParent and UIParent.GetEffectiveScale and UIParent:GetEffectiveScale()) or 1
+            if type(scale) == "number" and scale > 0 then return sx / scale, sy / scale end
+            return sx, sy
+        end
+    end
+    if UIParent and UIParent.GetCenter then
+        local ok, cx, cy = pcall(UIParent.GetCenter, UIParent)
+        local sx, sy = ok and safeNumber(cx), ok and safeNumber(cy)
+        if sx and sy then return sx, sy end
+    end
+    return 800, 450
+end
+
+local function stepBeacon(elapsed)
+    if type(elapsed) ~= "number" or elapsed < 0 then elapsed = 0 elseif elapsed > 0.25 then elapsed = 0.25 end
+    beaconClock = (beaconClock + elapsed) % 3600
+
+    local Nav = C_Navigation
+    if type(Nav) ~= "table" or type(Nav.HasValidScreenPosition) ~= "function" or type(Nav.GetFrame) ~= "function" then
+        frameState.reason, frameState.shown = "no_api", false
+        return
+    end
+
+    local valid = clientSays(Nav.HasValidScreenPosition)
+    local navFrame = valid and Nav.GetFrame() or nil
+    if not valid or type(navFrame) ~= "table" then
+        frameState.reason = "invalid"
+        if fade > 0 then
+            fade = max(0, fade - elapsed / BEACON_FADE_OUT)
+            frameState.fade = fade
+            if fade > 0 and RoadBeacon.beacon then
+                RoadBeacon.beacon:SetAlpha(fade)
+                frameState.shown = true
+                return
+            end
+        end
+        if RoadBeacon.beacon then RoadBeacon.beacon:Hide() end
+        frameState.shown, frameState.fade = false, 0
+        invalidFor = invalidFor + elapsed
+        if invalidFor >= RoadBeacon.PIN_BACK_SECONDS and not pinBack then
+            pinBack = true
+            if RoadBeacon.pinHidden then RoadBeacon.ShowPin() end
+        end
+        return
+    end
+
+    invalidFor = 0
+    if pinBack or not RoadBeacon.pinHidden then
+        pinBack = false
+        RoadBeacon.HidePin()
+        syncGameArrow()
+    end
+
+    local parts = RoadBeacon.parts
+    local beacon = parts.beacon
+    if anchoredTo ~= navFrame then
+        beacon:ClearAllPoints()
+        beacon:SetPoint("CENTER", navFrame, "CENTER", 0, 0)
+        anchoredTo = navFrame
+    end
+
+    if fade < 1 then
+        fade = min(1, fade + elapsed / BEACON_FADE_IN)
+    end
+
+    local st = InWorldPin.state
+    local target = st.target
+    local key = st.targetKey
+    if key ~= nil and key ~= lastTargetKey then
+        if lastTargetKey ~= nil then pulseLeft = BEACON_PULSE end
+        lastTargetKey = key
+    end
+
+    local dist = targetDistance(target)
+    local yards = dist and floor(dist + 0.5) or nil
+    local units = (FGPS.DB and FGPS.DB.settings and FGPS.DB.settings.units) or "yards"
+    if yards ~= lastYards or units ~= lastUnits then
+        lastYards, lastUnits = yards, units
+        if yards and yards >= 1 then
+            local Look = FGPS.UI and FGPS.UI.Look
+            local label = (Look and Look.Distance and Look.Distance(yards, 1)) or format("%d yd", yards)
+            parts.distText:SetText(label)
+            parts.distText:Show()
+        else
+            parts.distText:Hide()
+        end
+    end
+
+    local clamped = clientSays(Nav.WasClampedToScreen) == true
+    frameState.clamped = clamped
+    frameState.distYards = yards
+
+    local cx, cy = screenCenter()
+    local nx, ny
+    if type(navFrame.GetCenter) == "function" then
+        local ok, rx, ry = pcall(navFrame.GetCenter, navFrame)
+        nx, ny = ok and safeNumber(rx), ok and safeNumber(ry)
+    end
+
+    if clamped then
+        frameState.reason = nil
+        frameState.mode = "edge"
+        frameState.cue = nil
+        parts.beamGlow:Hide()
+        parts.beamCore:Hide()
+        parts.ring:Hide()
+        parts.icon:Hide()
+        parts.centerDot:Hide()
+        parts.pulse:Hide()
+        parts.cueText:Hide()
+
+        parts.halo:SetSize(34, 34)
+        parts.halo:SetAlpha(0.18)
+        parts.halo:Show()
+
+        local angle = 0
+        local ux, uy = 0, 1
+        if nx and ny then
+            local dx, dy = nx - cx, ny - cy
+            local len = sqrt(dx * dx + dy * dy)
+            if len > 1 then
+                ux, uy = dx / len, dy / len
+                angle = atan2(-dx, dy)
+            end
+        end
+        if abs(angle - lastRot) > 0.005 or lastMode ~= "edge" then
+            parts.edgeArrow:SetRotation(angle)
+            lastRot = angle
+        end
+        parts.edgeArrow:Show()
+
+        parts.distText:ClearAllPoints()
+        parts.distText:SetPoint("CENTER", beacon, "CENTER", -ux * 26, -uy * 20)
+        distAtEdge = true
+        lastMode = "edge"
+
+        beacon:SetAlpha(0.88 * fade)
+        beacon:Show()
+        frameState.shown, frameState.fade = true, fade
+        return
+    end
+
+    frameState.reason = nil
+    parts.edgeArrow:Hide()
+    if distAtEdge then
+        parts.distText:ClearAllPoints()
+        parts.distText:SetPoint("TOP", beacon, "BOTTOM", 0, -2)
+        distAtEdge = false
+    end
+
+    local mode, tex, mirror, rot, dotOn, cue = selectVisual(target)
+    frameState.mode = mode
+    frameState.cue = cue
+
+    if tex ~= lastTex then
+        parts.icon:SetTexture(tex)
+        lastTex = tex
+    end
+    if mirror ~= lastMirror then
+        if mirror then
+            parts.icon:SetTexCoord(1, 0, 0, 1)
+        else
+            parts.icon:SetTexCoord(0, 1, 0, 1)
+        end
+        lastMirror = mirror
+    end
+    if rot ~= lastRot or lastMode == "edge" then
+        parts.icon:SetRotation(rot)
+        lastRot = rot
+    end
+    if mode ~= lastMode then
+        if mode == "turn" then
+            parts.icon:SetSize(23, 23)
+            parts.icon:SetVertexColor(1.0, 0.90, 0.42, 1.0)
+            parts.ring:SetVertexColor(1.0, 0.84, 0.36, 0.95)
+            parts.distText:SetTextColor(1.0, 0.90, 0.46, 1)
+        elseif mode == "stop" then
+            local sz = dotOn and 26 or 22
+            parts.icon:SetSize(sz, sz)
+            parts.icon:SetVertexColor(1.0, 0.94, 0.76, 1.0)
+            parts.ring:SetVertexColor(0.98, 0.88, 0.56, 0.92)
+            parts.distText:SetTextColor(1.0, 0.90, 0.46, 1)
+        else
+            parts.icon:SetSize(19, 19)
+            parts.icon:SetVertexColor(1.0, 0.94, 0.72, 0.95)
+            parts.ring:SetVertexColor(0.94, 0.83, 0.50, 0.78)
+            parts.distText:SetTextColor(0.96, 0.93, 0.84, 0.95)
+        end
+        lastMode = mode
+    end
+
+    parts.ring:Show()
+    parts.icon:Show()
+    if dotOn then parts.centerDot:Show() else parts.centerDot:Hide() end
+
+    if cue ~= lastCue then
+        lastCue = cue
+        if cue then
+            parts.cueText:SetText(cue)
+            parts.cueText:Show()
+        else
+            parts.cueText:Hide()
+        end
+    elseif cue and not parts.cueText:IsShown() then
+        parts.cueText:Show()
+    elseif not cue and parts.cueText:IsShown() then
+        parts.cueText:Hide()
+    end
+
+    local d = dist or 45
+    local beamFade = 1
+    if d < 14 then
+        beamFade = (d - 5) / 9
+        if beamFade < 0 then beamFade = 0 elseif beamFade > 1 then beamFade = 1 end
+    end
+    if beamFade > 0.02 then
+        local span = min(1, max(0, (d - 12) / 55))
+        local bh = 82 + 44 * span
+        local boost = (mode == "turn" or mode == "stop") and 1.18 or 1.0
+        parts.beamGlow:SetHeight(bh)
+        parts.beamCore:SetHeight(bh * 0.86)
+        parts.beamGlow:SetAlpha(min(1, beamFade * boost))
+        parts.beamCore:SetAlpha(min(1, beamFade * boost))
+        parts.beamGlow:Show()
+        parts.beamCore:Show()
+    else
+        parts.beamGlow:Hide()
+        parts.beamCore:Hide()
+    end
+
+    local breathe = 0.21 + 0.05 * sin(beaconClock * (TWO_PI / BEACON_BREATHE))
+    parts.halo:SetSize(44, 44)
+    parts.halo:SetAlpha(breathe)
+    parts.halo:Show()
+
+    if pulseLeft > 0 then
+        pulseLeft = pulseLeft - elapsed
+        if pulseLeft > 0 then
+            local u = 1 - pulseLeft / BEACON_PULSE
+            local psz = 28 + 20 * u
+            parts.pulse:SetSize(psz, psz)
+            parts.pulse:SetAlpha(0.55 * (1 - u))
+            parts.pulse:Show()
+        else
+            parts.pulse:Hide()
+        end
+    end
+
+    local comfort = 1
+    if d < 9 then
+        comfort = 0.48 + 0.52 * max(0, d / 9)
+    end
+    if nx and ny then
+        local adx, ady = abs(nx - cx), abs(ny - cy)
+        if adx < 80 and ady < 100 then
+            local box = max(adx / 80, ady / 100)
+            comfort = min(comfort, 0.52 + 0.48 * box)
+        end
+    end
+
+    beacon:SetAlpha(fade * comfort)
+    beacon:Show()
+    frameState.shown, frameState.fade = true, fade
+end
+
+local function reportBeaconError(err)
+    local text = tostring(err)
+    if text ~= lastBeaconError then
+        lastBeaconError = text
+        if FGPS.Log then FGPS.Log:Error("The road beacon stopped: %s", text) end
+    end
+end
+
+local function onBeaconUpdate(_, elapsed)
+    local ok, err = pcall(stepBeacon, elapsed)
+    if ok then return end
+    beaconHalted = true
+    pcall(detachBeacon)
+    pcall(RoadBeacon.ShowPin)
+    syncGameArrow()
+    reportBeaconError(err)
+end
+
+local function attachBeacon()
+    local frame = RoadBeacon.frame
+    if not frame then
+        RoadBeacon.frameFailed = true
+        frame = makeBeaconFrame()
+        RoadBeacon.frameFailed = false
+        RoadBeacon.frame = frame
+    end
+    local t = now()
+    local route = InWorldPin.state.route
+    local again = detachedAt and (t - detachedAt) < BEACON_REATTACH and route ~= nil and route == detachedOn[1]
+    if not again then resetBeaconState() end
+    detachedAt, detachedOn[1] = nil, nil
+    RoadBeacon.attached = true
+    frame:SetScript("OnUpdate", onBeaconUpdate)
+    frame:Show()
+end
+
+detachBeacon = function()
+    RoadBeacon.attached = false
+    local frame = RoadBeacon.frame
+    if frame then
+        frame:SetScript("OnUpdate", nil)
+        frame:Hide()
+    end
+    if RoadBeacon.beacon then RoadBeacon.beacon:Hide() end
+    detachedAt, detachedOn[1] = now(), InWorldPin.state.route
+    frameState.shown = false
+end
+
+function RoadBeacon.IsDrawing()
+    return RoadBeacon.attached
+end
+
+function RoadBeacon.ClearHalt()
+    beaconHalted = false
+end
+
+local function refreshBeacon()
+    local reason = RoadBeacon.Evaluate()
+    frameState.reason = reason
+    if not beaconHalted and not RoadBeacon.frameFailed and reason == nil then
+        if not RoadBeacon.attached then attachBeacon() end
+        if not RoadBeacon.pinHidden and not pinBack then RoadBeacon.HidePin() end
+    elseif RoadBeacon.attached or RoadBeacon.pinHidden then
+        detachBeacon()
+        RoadBeacon.ShowPin()
+    end
+end
+
+function RoadBeacon.Refresh()
+    local ok, err = pcall(refreshBeacon)
+    if ok then
+        lastBeaconError = nil
+    else
+        pcall(detachBeacon)
+        pcall(RoadBeacon.ShowPin)
+        reportBeaconError(err)
+    end
 end
 
 
@@ -854,6 +1584,7 @@ local function progressOf(route)
 end
 
 local function onRouteStarted(_, route)
+    RoadBeacon.ClearHalt()
     local st = InWorldPin.state
     st.route = route
     st.backedOff = false
@@ -861,7 +1592,7 @@ local function onRouteStarted(_, route)
     st.unavailableMaps = {}
     st.targetKey, st.lastSet = nil, nil
     progressOf(route)
-    if st.progress then InWorldPin.Update(true) end
+    if st.progress then InWorldPin.Update(true) else RoadBeacon.Refresh() end
 end
 
 
@@ -877,7 +1608,7 @@ local function onRouteUpdated(_, route, reason)
         st.backedOff, st.noticeGiven = false, false
     end
     progressOf(route)
-    if st.progress then InWorldPin.Update(true) end
+    if st.progress then InWorldPin.Update(true) else RoadBeacon.Refresh() end
 end
 
 local function onRouteProgress(_, progress)
@@ -891,6 +1622,9 @@ local function onNavState(_, newState)
     if newState == "idle" or newState == "arrived" then
         InWorldPin.Restore("state:" .. tostring(newState))
         st.route, st.progress = nil, nil
+    else
+        RoadBeacon.Refresh()
+        syncGameArrow()
     end
 end
 
@@ -934,6 +1668,7 @@ local function onCombatState(_, inCombat)
             InWorldPin.Update(true)
         end
     end
+    RoadBeacon.Refresh()
     syncGameArrow()
 end
 
@@ -967,6 +1702,7 @@ local function onSuperTrackingChanged()
         end
     end
     if quest ~= st.ownQuest then st.ownQuest = nil end
+    RoadBeacon.Refresh()
     syncGameArrow()
     if st.ignore > 0 or not st.set or st.backedOff then return end
     if InWorldPin.IsOurTrackingIntact() then return end
@@ -1036,6 +1772,7 @@ local function letGoForThePin()
     st.set, st.saved, st.backedOff = false, nil, false
     st.target, st.targetKey, st.lastSet = nil, nil, nil
     st.suppressed, st.pinClearedInFight = false, nil
+    RoadBeacon.Refresh()
     syncGameArrow()
 end
 
@@ -1059,16 +1796,20 @@ local function noteQuestMoment()
     if st.suppressed and st.fightMoveAt == st.questMomentAt then st.questAtRelease = focusedQuest() end
 end
 
-local function onSettingsChanged(_, key, value)
-    if key == "inWorldPin" or key == "perf.guidanceEnabled" or key == "*" then
+local function onSettingsChanged(_, key)
+    if key == "inWorldPin" or key == "roadBeacon" or key == "perf.guidanceEnabled" or key == "*" then
         if not InWorldPin.IsEnabled() then
             InWorldPin.Restore("disabled")
         elseif InWorldPin.state.route and InWorldPin.state.progress then
             InWorldPin.Update(true)
+        else
+            RoadBeacon.Refresh()
+            syncGameArrow()
         end
     elseif key == "combatMode" and InWorldPin.state.inCombat then
         onCombatState(nil, true)
     else
+        RoadBeacon.Refresh()
         syncGameArrow()
     end
 end
@@ -1082,6 +1823,7 @@ local function onActionBlocked(_, addon, func)
     local since = now() - st.lastCallAt
     if since > InWorldPin.BLOCKED_WINDOW then return end
     st.stopped = true
+    RoadBeacon.Refresh()
     syncGameArrow()
     if FGPS.Log then
         FGPS.Log:Warn("In-world marker stopped for this session: the client blocked %s %.2f s after the marker's last change (%s)",
@@ -1111,6 +1853,14 @@ function InWorldPin:Init()
         E:RegisterWoW("USER_WAYPOINT_UPDATED", onUserWaypointUpdated, InWorldPin)
         E:RegisterWoW("ADDON_ACTION_FORBIDDEN", onActionBlocked, InWorldPin)
         E:RegisterWoW("ADDON_ACTION_BLOCKED", onActionBlocked, InWorldPin)
+        local function onWorldState()
+            RoadBeacon.Refresh()
+            syncGameArrow()
+        end
+        E:RegisterWoW("PLAYER_DEAD", onWorldState, InWorldPin)
+        E:RegisterWoW("PLAYER_ALIVE", onWorldState, InWorldPin)
+        E:RegisterWoW("PLAYER_UNGHOST", onWorldState, InWorldPin)
+        E:RegisterWoW("ZONE_CHANGED_NEW_AREA", onWorldState, InWorldPin)
 
 
 

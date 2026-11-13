@@ -30,7 +30,7 @@ local Util = FGPS.Util
 local type, pairs, ipairs, tonumber, tostring = type, pairs, ipairs, tonumber, tostring
 
 local DB = {
-    VERSION = 8,
+    VERSION = 10,
     initialized = false,
 }
 FGPS.DB = DB
@@ -62,7 +62,10 @@ local settingsDefaults = {
                 textSize = 1 },
     worldMapLine = true,
     minimapLine = true,
-    inWorldPin = true,
+
+
+    roadBeacon = false,
+    inWorldPin = false,
 
 
     windowSounds = true,
@@ -74,7 +77,7 @@ local settingsDefaults = {
 
     voice = { enabled = false, systemVoice = false, rate = 0, volume = 70, verbosity = "normal" },
     transports = { taxi = true, boat = true, zeppelin = true, tram = true, hearth = true, spells = true },
-    routing = { preferRoads = true, roadShortcuts = false, allowUnverified = true, arrivalRadius = 10,
+    routing = { preferRoads = true, roadShortcuts = false, allowUnverified = true, arrivalRadius = 50,
                 offRouteYards = 40, recalcMinSeconds = 5, assumeMount = "auto",
                 avoidGuarded = true },
 
@@ -293,6 +296,13 @@ DB.defaultChanges = {
 
 
 
+
+
+
+    [8] = { { path = "inWorldPin", from = true } },
+
+
+    [9] = { { path = "routing.arrivalRadius", from = 10 } },
 }
 
 

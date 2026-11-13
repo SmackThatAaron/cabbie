@@ -28,7 +28,7 @@ end
 FGPS.version = metadata("Version") or "0.0.0-dev"
 
 
-FGPS.fileVersion = "1.6.0"
+FGPS.fileVersion = "1.7.0"
 FGPS.title = metadata("Title") or "Cabbie"
 
 function FGPS.UpdatedWhileRunning()
@@ -77,7 +77,7 @@ FGPS.Const = {
     PORTAL_SECONDS = 5,
     HEARTH_CAST_SECONDS = 10,
     HEARTH_LOAD_SECONDS = 5,
-    ARRIVE_YARDS = 10,
+    ARRIVE_YARDS = 50,
     INTERMEDIATE_ARRIVE_YARDS = 15,
     OFFROUTE_YARDS = 40,
 

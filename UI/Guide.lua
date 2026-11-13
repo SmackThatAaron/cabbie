@@ -786,6 +786,13 @@ local function inFight()
 end
 
 
+local function calloutHiddenInFight()
+    if not inFight() then return false end
+    local DB = FGPS.DB
+    return DB ~= nil and DB.Get ~= nil and DB:Get("combatMode") == "hide_all"
+end
+
+
 
 local function forgetHeading()
     Guide.wrongWay, Guide.wrongSince = false, nil
@@ -962,7 +969,7 @@ function Guide.Say(text, holdSeconds, glyph)
     if not say(text, holdSeconds, glyph, true) then return end
     local DB = FGPS.DB
     local off = DB and DB.Get and DB:Get("callout.enabled") == false
-    if (off or inFight()) and type(UIErrorsFrame) == "table" and type(UIErrorsFrame.AddMessage) == "function" then
+    if (off or calloutHiddenInFight()) and type(UIErrorsFrame) == "table" and type(UIErrorsFrame.AddMessage) == "function" then
         UIErrorsFrame:AddMessage(text, 1, 0.1, 0.1)
     end
 end
@@ -976,7 +983,7 @@ end
 
 
 function Guide.Tell(text, holdSeconds, glyph)
-    if not inFight() then return say(text, holdSeconds, glyph) end
+    if not calloutHiddenInFight() then return say(text, holdSeconds, glyph) end
     if type(text) ~= "string" or text == "" or type(holdSeconds) ~= "number" then return false end
     Guide.Hush()
     Guide.notice = { text = text, glyph = glyph, untilTime = huge, hold = holdSeconds }
@@ -1291,6 +1298,7 @@ function Guide:Init()
 
 
     Events:Register("SETTINGS_CHANGED", function(_, key)
+        if (key == "*" or key == "combatMode") and not calloutHiddenInFight() then releaseNews() end
         if key == "*" or key == "units" or key == "perf.guidanceEnabled" then Guide.Refresh() end
     end, self)
 

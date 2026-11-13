@@ -2,7 +2,7 @@
 ## Title: Cabbie map data: Eastern Kingdoms (5 of 5)
 ## Notes: Road map of Eastern Kingdoms for Cabbie. Loaded by Cabbie when needed; keep it enabled.
 ## Author: Cabbie contributors
-## Version: 1.6.0
+## Version: 1.7.0
 ## LoadOnDemand: 1
 ## Dependencies: Cabbie, Cabbie_Data_EK_4
 ## X-Cabbie-Instance: 0

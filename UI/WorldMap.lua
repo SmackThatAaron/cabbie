@@ -1939,6 +1939,10 @@ local function removeNearClick(mapCanvas, button, cursorX, cursorY)
 end
 
 function WorldMap:OnCanvasClick(mapCanvas, button, cursorX, cursorY)
+    local QuestClicks = FGPS.UI.QuestClicks
+    if QuestClicks and QuestClicks.ConsumeMapClick and QuestClicks.ConsumeMapClick() then
+        return true
+    end
     local goNow = WorldMap.IsGoClick(button)
     if not (goNow or WorldMap.ClickMatches(button)) then return removeNearClick(mapCanvas, button, cursorX, cursorY) end
     local Destinations = FGPS.Destinations

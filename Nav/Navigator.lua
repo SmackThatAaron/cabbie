@@ -2318,8 +2318,53 @@ end
 
 
 function Navigator:ArriveRadius(isFinal)
-    return isFinal and setting("routing.arrivalRadius", Const.ARRIVE_YARDS or 10)
+    return isFinal and setting("routing.arrivalRadius", Const.ARRIVE_YARDS or 50)
         or (Const.INTERMEDIATE_ARRIVE_YARDS or 15)
+end
+
+local TURN_COS_MAX = math.cos(math.rad(35))
+local LAST_TURN_STEPS = { enter = true, level = true, ramp = true, uturn = true }
+
+
+
+
+
+
+local function finalWalkRadius(self, route, legIndex, leg, cum, along)
+    local radius = self:ArriveRadius(true)
+    if radius <= 10 then return radius end
+    local pts = leg.points
+    local n = #pts
+    local lastTurn
+    for i = n - 1, 2, -1 do
+        local a, b, c = pts[i - 1], pts[i], pts[i + 1]
+        local vx1, vy1 = b.x - a.x, b.y - a.y
+        local vx2, vy2 = c.x - b.x, c.y - b.y
+        local l1 = sqrt(vx1 * vx1 + vy1 * vy1)
+        local l2 = sqrt(vx2 * vx2 + vy2 * vy2)
+        if l1 > 0 and l2 > 0 and (vx1 * vx2 + vy1 * vy2) / (l1 * l2) <= TURN_COS_MAX then
+            lastTurn = i
+            break
+        end
+    end
+    local steps = type(route) == "table" and route.steps or nil
+    if type(steps) == "table" then
+        for i = 1, #steps do
+            local s = steps[i]
+            local kind = s and s.kind
+            local pi = s and s.pointIndex
+            if s.legIndex == legIndex and type(pi) == "number" and pi >= 2 and pi < n
+                    and (LAST_TURN_STEPS[kind] or (type(kind) == "string" and kind:find("^turn_") ~= nil)) then
+                if not lastTurn or pi > lastTurn then lastTurn = pi end
+            end
+        end
+    end
+    if lastTurn and (along == nil or along < (cum[lastTurn] or 0)) then return 10 end
+    local stretch = (cum.total or cum[n] or 0) - (lastTurn and (cum[lastTurn] or 0) or 0)
+    local cap = stretch / 3
+    if cap < 10 then cap = 10 end
+    if cap < radius then return cap end
+    return radius
 end
 
 
@@ -2991,6 +3036,7 @@ function Navigator:Advance(pos)
     local boarding = T ~= nil and T.dock ~= nil and T.dock.legIndex == p.legIndex + 1
     local target = p.pointIndex
     if target < 1 then target = 1 end
+    local cum = cumulative(leg)
     while target <= n do
         local pt = pts[target]
         local isLegEnd = target == n
@@ -2998,7 +3044,11 @@ function Navigator:Advance(pos)
         if isLegEnd then
             local stopIdx = stopIndexForLeg(route, p.legIndex)
             local isFinal = stopIdx ~= nil and ((route.stops == nil) or stopIdx >= #route.stops)
-            radius = stopIdx and self:ArriveRadius(isFinal) or (Const.INTERMEDIATE_ARRIVE_YARDS or 15)
+            if isFinal then
+                radius = finalWalkRadius(self, route, p.legIndex, leg, cum, along)
+            else
+                radius = stopIdx and self:ArriveRadius(false) or (Const.INTERMEDIATE_ARRIVE_YARDS or 15)
+            end
         else
             radius = Const.INTERMEDIATE_ARRIVE_YARDS or 15
         end
@@ -3006,7 +3056,7 @@ function Navigator:Advance(pos)
 
 
 
-        local pointAlong = cumulative(leg)[target] or 0
+        local pointAlong = cum[target] or 0
         local alongOk = along ~= nil and pointAlong <= along + radius
         local passed = (not isLegEnd) and following and alongOk and segIndex ~= nil and segIndex >= target
         if (d <= radius and alongOk) or passed then

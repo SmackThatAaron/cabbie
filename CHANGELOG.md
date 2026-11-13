@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.7.0 (2026-11-13)
+
+Restart the game completely after updating (a `/reload` will not load new files).
+
+- **Pick your guidance style + optional 3D Road beacon:** First-time setup (`/cabbie setup`) now lets you choose any mix of **Turn arrow** (on by default), **Road beacon** (a 3D light beam, turn icon, and distance on the road ahead), **Voice guidance**, and **Step list**.
+- **Shift-click quests anywhere:** Shift + Left-click (while no chat box is open) or Ctrl + Left-click a quest in the quest sidebar (both the game's tracker and Questie's tracker, without untracking it), in the quest view (quest list or open quest details), or right on a quest icon on the world map to start routing there.
+- **Navigation stays visible in combat:** Visual guidance (including the turn arrow) now stays shown during fights by default while voice waits until combat ends (`Settings > Cabbie > Advanced` still offers **Keep All Guidance** and **Hide all guidance**).
+- **Wider 50-yard arrival auto-completion:** Routes now complete automatically within 50 yards by default (configurable up to 100 yards in `Settings > Cabbie > Advanced`) while still guiding you tightly around final turns and short local walks.
+
 ## 1.6.0 (2026-11-12)
 
 Restart the game completely after updating (a `/reload` will not load new files).

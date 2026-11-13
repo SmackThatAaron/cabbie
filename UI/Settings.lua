@@ -68,8 +68,7 @@ function UISettings.MapClickLabel(modifier)
     return nil
 end
 
-
-local COMBAT_MODES = { { "all", "Keep Map Lines and Voice", "The arrow still fades in a fight." },
+local COMBAT_MODES = { { "all", "Keep All Guidance" },
                        { "visuals_only", "Visuals only, no voice" },
                        { "hide_all", "Hide all guidance" } }
 local VERBOSITY = { { "minimal", "Minimal" }, { "normal", "Normal" }, { "detailed", "Detailed" } }
@@ -363,6 +362,7 @@ local function registerGeneral(category)
     checkbox(category, "callout.showWords", "Show the words", "Names the turn and its landmark on a small scroll under the arrow.")
     checkbox(category, "callout.showDistance", "Show the distance", "Shows how far away the turn is, under the arrow.")
     checkbox(category, "callout.turnPulse", "Pulse at turns", "The arrow glows once, softly, when a turn comes up.")
+    checkbox(category, "roadBeacon", "Road beacon", "Shows a light beam, turn icon and distance on the road ahead in the world.")
     checkbox(category, "windowSounds", "Window sounds",
         "Plays the game's quest log sounds in the Cabbie window: opening, closing, turning a page and picking a row.")
     checkbox(category, "worldMapLine", "World map line", "Draws your route on the world map.")
@@ -527,7 +527,7 @@ local function registerRouting(category)
         "Routes go round the towns and outposts the other side holds, off the road where they must. A route still goes in when you start or stop there, or when there is no other way. Off: routes take the road through them.")
     checkbox(category, "routing.allowUnverified", "Allow straight guesses",
         "Where Cabbie knows no ground it may draw a straight line. Off: a place far from any known ground gets no route. To stay on roads use \"Prefer roads\".")
-    slider(category, "routing.arrivalRadius", "Arrival radius (yards)", "How close to the place you need to be for Cabbie to say you've arrived.", 5, 60, 1,
+    slider(category, "routing.arrivalRadius", "Arrival radius (yards)", "How close to the place you need to be for Cabbie to say you've arrived.", 5, 100, 1,
         function(value) return format("%d", value) end)
     slider(category, "routing.offRouteYards", "Off-route distance (yards)", "How far you can stray from the route before Cabbie finds a new one.", 15, 150, 5,
         function(value) return format("%d", value) end)

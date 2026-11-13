@@ -9,6 +9,8 @@
 
 
 
+
+
 local ADDON_NAME, FGPS = ...
 
 local type, min, max, abs, exp, pi = type, math.min, math.max, math.abs, math.exp, math.pi
@@ -397,6 +399,13 @@ local function enabled()
 end
 
 
+local function hiddenInCombat()
+    if not Callout.combat then return false end
+    local DB = FGPS.DB
+    return DB ~= nil and DB.Get ~= nil and DB:Get("combatMode") == "hide_all"
+end
+
+
 
 local function placeDistance(frame, alone)
     if Callout.distanceAlone == alone then return end
@@ -752,7 +761,7 @@ local function paint(model)
     if not frame then return end
     local callout = type(model) == "table" and model.callout or nil
     if type(callout) ~= "table" and Callout.editing then callout = Callout.SAMPLE end
-    if not (type(callout) == "table" and enabled() and not Callout.combat) then
+    if not (type(callout) == "table" and enabled() and not hiddenInCombat()) then
         Callout.live, Callout.shownX, Callout.shownY, Callout.blendLeft = nil, nil, nil, 0
         Callout.offset, Callout.offsetRate, Callout.turnFrom = 0, 0, nil
         Callout.wrongWayPulsed = false
@@ -849,6 +858,7 @@ local function paint(model)
     pulseAtTurn(frame, callout)
     fadeTo(frame, 1)
 end
+
 
 
 
@@ -954,7 +964,7 @@ function Callout:Init()
         repaint()
     end, self)
     Events:Register("SETTINGS_CHANGED", function(_, key)
-        if key == "*" or key == "callout" or (type(key) == "string" and key:sub(1, 8) == "callout.") then
+        if key == "*" or key == "combatMode" or key == "callout" or (type(key) == "string" and key:sub(1, 8) == "callout.") then
             applyLook(Callout.frame)
             repaint()
         end

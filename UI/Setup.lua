@@ -7,19 +7,28 @@
 
 
 
-
-
 local ADDON_NAME, FGPS = ...
 
 local L = FGPS.L
+local ipairs, pcall, tostring, type = ipairs, pcall, tostring, type
 
 local Setup = { ready = false }
 FGPS.UI = FGPS.UI or {}
 FGPS.UI.Setup = Setup
 
-Setup.WIDTH = 440
-Setup.HEIGHT = 286
+Setup.WIDTH = 460
+Setup.HEIGHT = 420
 Setup.GAP = 10
+
+Setup.METHODS = {
+    { key = "arrow",  field = "ArrowCheck",  path = "callout.enabled",    labelKey = "SETUP_METHOD_ARROW",  tipKey = "SETUP_METHOD_ARROW_TIP" },
+    { key = "beacon", field = "BeaconCheck", path = "roadBeacon",         labelKey = "SETUP_METHOD_BEACON", tipKey = "SETUP_METHOD_BEACON_TIP" },
+    { key = "voice",  field = "VoiceCheck",  path = "voice.enabled",      labelKey = "SETUP_METHOD_VOICE",  tipKey = "SETUP_METHOD_VOICE_TIP" },
+    { key = "steps",  field = "StepsCheck",  path = "routeBlock.enabled", labelKey = "SETUP_METHOD_STEPS",  tipKey = "SETUP_METHOD_STEPS_TIP" },
+}
+
+local METHOD_PATHS = {}
+for _, spec in ipairs(Setup.METHODS) do METHOD_PATHS[spec.path] = true end
 
 local function Look()
     return FGPS.UI.Look
@@ -34,7 +43,17 @@ local function text(parent, role)
 end
 
 local function windowHeight()
-    return Setup.HEIGHT + 12 * Look().TextSizeDelta()
+    return Setup.HEIGHT + 24 * Look().TextSizeDelta()
+end
+
+
+function Setup:Sync()
+    local win = self.frame
+    local DB = FGPS.DB
+    if not (win and win.Methods and DB and DB.Get) then return end
+    for _, row in ipairs(win.Methods) do
+        row.Check:SetChecked(DB:Get(row.path) == true)
+    end
 end
 
 
@@ -63,6 +82,34 @@ function Setup:Create()
     win.Intro:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, -2)
     win.Intro:SetText(L.SETUP_INTRO)
 
+    win.PickHeading = text(content, "listTitle")
+    win.PickHeading:SetPoint("TOPLEFT", win.Intro, "BOTTOMLEFT", 0, -Setup.GAP)
+    win.PickHeading:SetPoint("TOPRIGHT", win.Intro, "BOTTOMRIGHT", 0, -Setup.GAP)
+    win.PickHeading:SetText(L.SETUP_PICK)
+
+    win.Methods = {}
+    local prevAnchor = win.PickHeading
+    for i, spec in ipairs(Setup.METHODS) do
+        local check = look.CheckButton(content, L[spec.labelKey])
+        check:SetPoint("TOPLEFT", prevAnchor, "BOTTOMLEFT", 0, i == 1 and -6 or -4)
+        if check.SetHitRectInsets then check:SetHitRectInsets(0, -240, 0, -14) end
+        check:SetScript("OnClick", function(btn)
+            look.PlaySound("row")
+            if FGPS.DB and FGPS.DB.Set then
+                FGPS.DB:Set(spec.path, btn:GetChecked() and true or false)
+            end
+        end)
+
+        local tip = text(content, "hint")
+        tip:SetPoint("TOPLEFT", check, "BOTTOMLEFT", 26, 2)
+        tip:SetPoint("RIGHT", content, "RIGHT", 0, 0)
+        tip:SetText(L[spec.tipKey])
+
+        win[spec.field] = check
+        win.Methods[i] = { key = spec.key, path = spec.path, Check = check, Tip = tip }
+        prevAnchor = tip
+    end
+
     win.Done = look.Button(content, L.SETUP_DONE, 96, 22)
     win.Done:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, 0)
     win.Done:SetScript("OnClick", function() Setup:Hide() end)
@@ -81,6 +128,7 @@ function Setup:Create()
     win.Later:SetText(L.SETUP_LATER)
 
     self.frame = win
+    self:Sync()
     return win
 end
 
@@ -88,6 +136,7 @@ end
 function Setup:Show()
     local win = self:Create()
     if not win then return false end
+    self:Sync()
     self:MarkDone()
     win:Show()
 
@@ -113,6 +162,8 @@ function Setup:Init()
     Events:Register("DESTINATION_SET", hide, self)
     Events:Register("MAP_SHOWN", hide, self)
     Events:Register("SETTINGS_CHANGED", function(_, key)
-        if (key == "textSize" or key == "*") and self.frame then self.frame:SetHeight(windowHeight()) end
+        if not self.frame then return end
+        if key == "textSize" or key == "*" then self.frame:SetHeight(windowHeight()) end
+        if METHOD_PATHS[key] or key == "*" then self:Sync() end
     end, self)
 end

@@ -335,8 +335,9 @@ end
 function QuestSearch.Dest(questID, place, questName)
     if type(place) ~= "table" or not place.inst then return nil end
     questName = questName or QuestSearch.QuestName(questID)
-    local text = place.text or ""
-    local dest = { kind = "custom", type = "questplace", name = questName and format(L["%s: %s"], questName, text) or text,
+    local text = type(place.text) == "string" and place.text or ""
+    local name = (questName and text ~= "") and format(L["%s: %s"], questName, text) or (questName or text)
+    local dest = { kind = "custom", type = "questplace", name = name,
                    inst = place.inst, x = floor(place.x * 10 + 0.5) / 10, y = floor(place.y * 10 + 0.5) / 10, map = place.map,
                    questID = questID, questRole = place.role }
     local Coords = FGPS.Coords
