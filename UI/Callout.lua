@@ -13,7 +13,7 @@
 
 local ADDON_NAME, FGPS = ...
 
-local type, min, max, abs, exp, pi = type, math.min, math.max, math.abs, math.exp, math.pi
+local type, min, max, abs, sqrt, exp, pi = type, math.min, math.max, math.abs, math.sqrt, math.exp, math.pi
 local TWO_PI = 2 * pi
 
 
@@ -35,8 +35,14 @@ local Callout = {
     rotation = nil,
     shownX = nil,
     shownY = nil,
+    shownDirX = nil,
+    shownDirY = nil,
+    shownAhead = nil,
     fromX = nil,
     fromY = nil,
+    fromDirX = nil,
+    fromDirY = nil,
+    fromAhead = nil,
     blendLeft = 0,
     editing = false,
     editRegistered = false,
@@ -153,6 +159,13 @@ local DISTANCE_GAP = 10
 
 
 Callout.AIM_MIN_YARDS = 1
+
+
+
+
+
+Callout.CORRIDOR_YARDS = 4
+Callout.CORRIDOR_LOOKAHEAD_YARDS = 8
 
 
 
@@ -518,6 +531,7 @@ local function turnArrow(frame, elapsed)
     local line = Callout.live
     local Coords = FGPS.Coords
     if not (line and Coords) then return end
+    local dirX, dirY, aheadYards = line.dirX, line.dirY, line.aheadYards
     if Callout.blendLeft > 0 then
         local left = Callout.blendLeft - (elapsed or 0)
         if left < 0 then left = 0 end
@@ -525,8 +539,26 @@ local function turnArrow(frame, elapsed)
         local u = 1 - left / Callout.BLEND_SECONDS
         Callout.shownX = Callout.fromX + (line.aimX - Callout.fromX) * u
         Callout.shownY = Callout.fromY + (line.aimY - Callout.fromY) * u
+        if dirX and dirY and Callout.fromDirX and Callout.fromDirY then
+            local bx = Callout.fromDirX + (dirX - Callout.fromDirX) * u
+            local by = Callout.fromDirY + (dirY - Callout.fromDirY) * u
+            local blen = sqrt(bx * bx + by * by)
+            if blen > 1e-4 then
+                Callout.shownDirX, Callout.shownDirY = bx / blen, by / blen
+            else
+                Callout.shownDirX, Callout.shownDirY = dirX, dirY
+            end
+        else
+            Callout.shownDirX, Callout.shownDirY = dirX, dirY
+        end
+        if aheadYards and Callout.fromAhead then
+            Callout.shownAhead = Callout.fromAhead + (aheadYards - Callout.fromAhead) * u
+        else
+            Callout.shownAhead = aheadYards
+        end
     else
         Callout.shownX, Callout.shownY = line.aimX, line.aimY
+        Callout.shownDirX, Callout.shownDirY, Callout.shownAhead = dirX, dirY, aheadYards
     end
     local aimX, aimY = Callout.shownX, Callout.shownY
     local rotation
@@ -535,8 +567,39 @@ local function turnArrow(frame, elapsed)
         local x, y, inst = Coords.PlayerXY()
         if x and inst == line.aimInst then
             local dx, dy = aimX - x, aimY - y
+            local tx, ty = Callout.shownDirX, Callout.shownDirY
+            local buf = Callout.CORRIDOR_YARDS
+            if tx and ty and buf > 0 then
+                local look = Callout.CORRIDOR_LOOKAHEAD_YARDS
+                local rem = Callout.shownAhead
+                if type(rem) == "number" and rem < look then
+                    local s = rem > 0 and (rem / look) or 0
+                    buf = buf * s
+                    look = rem > 0 and rem or 0
+                end
+                local forward = dx * tx + dy * ty
+                local side = -dx * ty + dy * tx
+                if forward > -look then
+                    if forward < 0 then
+                        local t = (forward + look) / look
+                        buf = buf * t
+                        forward = 2 * forward + look
+                    elseif forward < look then
+                        forward = look
+                    end
+                    if abs(side) <= buf then
+                        side = 0
+                    elseif side > 0 then
+                        side = side - buf
+                    else
+                        side = side + buf
+                    end
+                    dx = forward * tx - side * ty
+                    dy = forward * ty + side * tx
+                end
+            end
             if dx * dx + dy * dy < Callout.AIM_MIN_YARDS * Callout.AIM_MIN_YARDS then return end
-            rotation = fold(Coords.Bearing(x, y, aimX, aimY) - facing)
+            rotation = fold(Coords.Bearing(0, 0, dx, dy) - facing)
         end
     end
     if not rotation then rotation = Callout.ROTATION[line.glyph] end
@@ -763,6 +826,7 @@ local function paint(model)
     if type(callout) ~= "table" and Callout.editing then callout = Callout.SAMPLE end
     if not (type(callout) == "table" and enabled() and not hiddenInCombat()) then
         Callout.live, Callout.shownX, Callout.shownY, Callout.blendLeft = nil, nil, nil, 0
+        Callout.shownDirX, Callout.shownDirY, Callout.shownAhead = nil, nil, nil
         Callout.offset, Callout.offsetRate, Callout.turnFrom = 0, 0, nil
         Callout.wrongWayPulsed = false
         if frame.Glyph.fgpsOpenCue then
@@ -838,14 +902,18 @@ local function paint(model)
 
     local was = Callout.live
     local sx, sy = Callout.shownX, Callout.shownY
+    local sdx, sdy, sahead = Callout.shownDirX, Callout.shownDirY, Callout.shownAhead
     local shownRotation = Callout.glyph and frame.Glyph:IsShown() and Callout.rotation or nil
     if live and was and sx and was.aimInst == live.aimInst
         and (live.aimX - sx) ^ 2 + (live.aimY - sy) ^ 2 <= Callout.BLEND_MAX_YARDS * Callout.BLEND_MAX_YARDS then
-        if live.aimX ~= was.aimX or live.aimY ~= was.aimY then
+        if live.aimX ~= was.aimX or live.aimY ~= was.aimY
+            or live.dirX ~= was.dirX or live.dirY ~= was.dirY or live.aheadYards ~= was.aheadYards then
             Callout.fromX, Callout.fromY, Callout.blendLeft = sx, sy, Callout.BLEND_SECONDS
+            Callout.fromDirX, Callout.fromDirY, Callout.fromAhead = sdx, sdy, sahead
         end
     else
         Callout.shownX, Callout.shownY, Callout.blendLeft = nil, nil, 0
+        Callout.shownDirX, Callout.shownDirY, Callout.shownAhead = nil, nil, nil
         if live then Callout.turnFrom = shownRotation end
     end
     Callout.live = live

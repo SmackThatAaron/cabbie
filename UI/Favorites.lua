@@ -98,11 +98,16 @@ end
 
 local function goTo(dest, mode)
     local Search = places()
+    mode = mode or "start"
     if Search and Search.GoTo then return Search.GoTo(dest, mode) end
     local Navigator = FGPS.Navigator
     if not Navigator or not Navigator.SetDestination then return false end
     if mode == "addStop" then
         if Navigator.AddStop then Navigator:AddStop(dest) else Navigator:SetDestination(dest, { addStop = true }) end
+        return true
+    end
+    if mode == "start" then
+        Navigator:SetDestination(dest, { start = true })
         return true
     end
 

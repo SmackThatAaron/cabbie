@@ -2,7 +2,7 @@
 ## Title: Cabbie map data: Kalimdor shortcuts (1 of 2)
 ## Notes: Faster route search on foot in Kalimdor for Cabbie. Loaded by Cabbie when needed; keep it enabled.
 ## Author: Cabbie contributors
-## Version: 1.7.0
+## Version: 1.8.0
 ## LoadOnDemand: 1
 ## Dependencies: Cabbie, Cabbie_Data_Kalimdor_6
 ## X-Cabbie-Instance: 1

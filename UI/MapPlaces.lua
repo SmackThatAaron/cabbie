@@ -422,7 +422,11 @@ function MapPlaces.TooltipLines(index)
             line = format(L["%s, %s"], line, Util.FormatDistance(sqrt(dx * dx + dy * dy), s and s.units))
         end
     end
-    return { title = P.name[index], line = line, hint = L["Click to go here"] }
+    return {
+        title = P.name[index],
+        line = line,
+        hint = L["Click to go here"] .. " \194\183 " .. L["Right-click for options"],
+    }
 end
 
 local function showTooltip(icon)
@@ -434,6 +438,55 @@ end
 
 
 
+
+function MapPlaces.OpenIconMenu(icon)
+    local index = type(icon) == "table" and icon.poiIndex or nil
+    local Destinations = FGPS.Destinations
+    local Menus = FGPS.UI.Menus
+    local WorldMap = FGPS.UI.WorldMap
+    if not (index and Destinations and Destinations.FromPOI and Menus and Menus.OpenRowMenu) then return nil end
+    local ok, dest = pcall(Destinations.FromPOI, index)
+    if not ok then
+        FGPS.Log:Error("FromPOI failed for place %s: %s", tostring(index), tostring(dest))
+        return nil
+    end
+    if type(dest) ~= "table" then return nil end
+    local Search = FGPS.UI.Search
+    local favorite = Destinations.IsFavorite and Destinations.IsFavorite(dest) and true or false
+    local entries = {}
+    if WorldMap and WorldMap.GoTo then
+        entries[#entries + 1] = {
+            label = L["Go"],
+            onClick = function() WorldMap.GoTo(dest, { start = true, quiet = true }) end,
+        }
+        if Search and (Search.addStopMode or (Search.JourneyRunning and Search.JourneyRunning())) then
+            entries[#entries + 1] = {
+                label = L["Add as a Stop"],
+                onClick = function() WorldMap.GoTo(dest, { addStop = true, start = false }) end,
+            }
+        end
+    elseif Search and Search.GoTo then
+        entries[#entries + 1] = {
+            label = L["Go"],
+            onClick = function() Search.GoTo(dest, "start", { quiet = true }) end,
+        }
+        if Search.addStopMode or (Search.JourneyRunning and Search.JourneyRunning()) then
+            entries[#entries + 1] = {
+                label = L["Add as a Stop"],
+                onClick = function() Search.GoTo(dest, "addStop") end,
+            }
+        end
+    end
+    if Search and Search.ToggleFavorite then
+        entries[#entries + 1] = {
+            label = favorite and L["Remove from Favorites"] or L["Add to Favorites"],
+            onClick = function() Search:ToggleFavorite(dest) end,
+        }
+    end
+    local P = FGPS.Data and FGPS.Data.poi
+    local title = type(dest.name) == "string" and dest.name or (P and P.name and P.name[index]) or nil
+    return Menus.OpenRowMenu(icon, { title = title, entries = entries })
+end
 
 
 
@@ -447,6 +500,14 @@ end
 
 local function onClick(icon, button)
     local index = icon.poiIndex
+    if button == "RightButton" then
+        if (IsShiftKeyDown and IsShiftKeyDown()) or (IsControlKeyDown and IsControlKeyDown())
+            or (IsAltKeyDown and IsAltKeyDown()) then
+            return
+        end
+        MapPlaces.OpenIconMenu(icon)
+        return
+    end
     local Destinations = FGPS.Destinations
     local WorldMap = FGPS.UI.WorldMap
     if not index or not Destinations or not Destinations.FromPOI or not WorldMap or not WorldMap.GoTo then return end
@@ -538,7 +599,7 @@ local function setupIcon(icon)
     icon:EnableMouseWheel(false)
 
 
-    icon:RegisterForClicks("LeftButtonUp")
+    icon:RegisterForClicks("LeftButtonUp", "RightButtonUp")
     icon:SetScript("OnClick", onClick)
     icon:SetScript("OnEnter", onEnter)
     icon:SetScript("OnLeave", onLeave)

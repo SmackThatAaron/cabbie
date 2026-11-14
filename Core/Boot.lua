@@ -19,7 +19,7 @@ local Boot = {
         "UI.Guide", "UI.RouteBlock", "UI.Callout", "UI.Go", "UI.Menus", "UI.SearchLine",
         "UI.Skins", "UI.Frames", "UI.Positions", "UI.Tome", "UI.EditMode", "UI.WorldMap",
         "UI.MapPlaces", "UI.Minimap", "UI.Launcher", "UI.Search", "UI.Preview", "UI.Favorites", "UI.Itinerary", "UI.Voice",
-        "UI.InWorldPin", "UI.Settings", "UI.Setup", "UI.Compat", "UI.QuestClicks", "UI.Bindings", "UI.Cues", "SelfTest",
+        "UI.InWorldPin", "UI.Settings", "UI.Setup", "UI.WhatsNew", "UI.Compat", "UI.QuestClicks", "UI.Bindings", "UI.Cues", "SelfTest",
     },
     report = nil,
 }

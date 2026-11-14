@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.8.0 (2026-11-13)
+
+Restart the game completely after updating (a `/reload` will not load new files).
+
+- **3D Road beacon by default + pick either or both:** New and default world guidance now uses the **Road beacon** (a 3D light beam, turn icon, and distance on the road ahead) on its own, while `/cabbie setup` and Settings let you pick the Road beacon, the **Turn arrow**, or both together.
+- **What's New visual update window:** Updating Cabbie now pops up a **What's New** window once per release (and any time via `/cabbie whatsnew` or `/cabbie news`) with a live HUD preview, hover spotlighting, and one-click toggles for new guidance options.
+- **Add to Favorites everywhere:** Right-clicking any place icon on the world map, any stop in **Your Route**, the **Route** block or stop/destination pins on the world map, or any match in the `/go` and world-map search dropdowns now offers **Add to Favorites** / **Remove from Favorites**, and `/cabbie fav <name>` or `/cabbie fav <number>` starts guidance right away.
+- **Smoother road-centred turn arrow (4-yard buffer):** Walking or riding within 4 yards of a road's centreline now keeps the turn arrow pointing straight down the road instead of swinging hard towards road nodes beside you, while nudging smoothly back towards the route if you drift further off.
+
 ## 1.7.0 (2026-11-13)
 
 Restart the game completely after updating (a `/reload` will not load new files).

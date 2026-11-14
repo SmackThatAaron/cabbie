@@ -109,8 +109,14 @@ local function createRow(surface, index)
     row.Text = Look.FontString(row, "OVERLAY", "row")
     row.Text:SetPoint("LEFT", row, "LEFT", SearchLine.PAD + SearchLine.ICON + SearchLine.GAP, 0)
     if row.Text.SetJustifyH then row.Text:SetJustifyH("LEFT") end
-    row:RegisterForClicks("LeftButtonUp")
-    row:SetScript("OnClick", function() SearchLine.Click(key, index) end)
+    row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    row:SetScript("OnClick", function(_, button)
+        if button == "RightButton" then
+            SearchLine.RightClick(key, index)
+            return
+        end
+        SearchLine.Click(key, index)
+    end)
 
     row:SetScript("OnEnter", function() hovered(key, index) end)
     surface.list.Rows[index] = row
@@ -325,6 +331,53 @@ function SearchLine.Click(key, index)
     if view.selectable then return SearchLine.Accept(key, index) end
     SearchLine.Dismiss(key)
     return false
+end
+
+
+
+function SearchLine.RightClick(key, index)
+    local surface = SearchLine.surfaces[key]
+    local view = surface and surface.view
+    local entry = view and view.selectable and view.rows[index] or nil
+    local dest = entry and entry.dest or nil
+    local Search, Menus = FGPS.UI.Search, FGPS.UI.Menus
+    if type(dest) ~= "table" or not (Search and Menus and Menus.OpenRowMenu) then return nil end
+    local Destinations = FGPS.Destinations
+    local favorite = Destinations and Destinations.IsFavorite and Destinations.IsFavorite(dest) and true or false
+    local entries = {
+        { label = L["Go"], onClick = function()
+            SearchLine.Dismiss(key)
+            local Rows = FGPS.UI.SearchRows
+            if Rows and Rows.Start then Rows.Start({ dest = dest }) end
+        end },
+    }
+    if Search.GoTo and (Search.addStopMode or (Search.JourneyRunning and Search.JourneyRunning())) then
+        entries[#entries + 1] = { label = L["Add as a Stop"], onClick = function()
+            SearchLine.Dismiss(key)
+            Search.GoTo(dest, "addStop")
+        end }
+    end
+    if Search.ToggleFavorite then
+        entries[#entries + 1] = {
+            label = favorite and L["Remove from Favorites"] or L["Add to Favorites"],
+            onClick = function() Search:ToggleFavorite(dest) end,
+        }
+    end
+    local map = type(dest.map) == "number" and dest.map or nil
+    if Menus.ShowOnMap then
+        entries[#entries + 1] = {
+            label = L["Show on Map"],
+            onClick = function()
+                if key == "line" then SearchLine.Close() end
+                Menus.ShowOnMap(map)
+            end,
+            disabled = map == nil or function()
+                return InCombatLockdown ~= nil and InCombatLockdown() == true
+            end,
+        }
+    end
+    local owner = (key == "map" and surface.holder) or UIParent or surface.holder
+    return Menus.OpenRowMenu(owner, { title = dest.name, entries = entries })
 end
 
 

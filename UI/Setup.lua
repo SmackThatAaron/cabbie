@@ -21,8 +21,8 @@ Setup.HEIGHT = 420
 Setup.GAP = 10
 
 Setup.METHODS = {
-    { key = "arrow",  field = "ArrowCheck",  path = "callout.enabled",    labelKey = "SETUP_METHOD_ARROW",  tipKey = "SETUP_METHOD_ARROW_TIP" },
     { key = "beacon", field = "BeaconCheck", path = "roadBeacon",         labelKey = "SETUP_METHOD_BEACON", tipKey = "SETUP_METHOD_BEACON_TIP" },
+    { key = "arrow",  field = "ArrowCheck",  path = "callout.enabled",    labelKey = "SETUP_METHOD_ARROW",  tipKey = "SETUP_METHOD_ARROW_TIP" },
     { key = "voice",  field = "VoiceCheck",  path = "voice.enabled",      labelKey = "SETUP_METHOD_VOICE",  tipKey = "SETUP_METHOD_VOICE_TIP" },
     { key = "steps",  field = "StepsCheck",  path = "routeBlock.enabled", labelKey = "SETUP_METHOD_STEPS",  tipKey = "SETUP_METHOD_STEPS_TIP" },
 }
@@ -57,9 +57,15 @@ function Setup:Sync()
 end
 
 
+
 function Setup:MarkDone()
     local account = FGPS.DB and FGPS.DB.account
-    if account then account.setupComplete = true end
+    if account then
+        account.setupComplete = true
+        if type(FGPS.version) == "string" and FGPS.version ~= "" then
+            account.whatsNewVersion = FGPS.version
+        end
+    end
 end
 
 function Setup:Create()
@@ -120,6 +126,14 @@ function Setup:Create()
         Setup:Hide()
         local Settings = FGPS.UI.Settings
         if Settings and Settings.Open then Settings:Open() end
+    end)
+
+    win.WhatsNew = look.Button(content, L.SETUP_WHATSNEW, 110, 22)
+    win.WhatsNew:SetPoint("RIGHT", win.Settings, "LEFT", -6, 0)
+    win.WhatsNew:SetScript("OnClick", function()
+        Setup:Hide()
+        local WhatsNew = FGPS.UI.WhatsNew
+        if WhatsNew and WhatsNew.Show then WhatsNew:Show() end
     end)
 
     win.Later = text(content, "hint")

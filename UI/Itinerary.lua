@@ -156,28 +156,40 @@ end
 
 
 
+
 function Itinerary.OpenStopMenu(owner, item)
     local Menus = FGPS.UI.Menus
     if not (Menus and Menus.OpenRowMenu) or type(item) ~= "table" then return nil end
-    return Menus.OpenRowMenu(owner, {
-        title = item.name,
-        entries = {
-            { label = L["Move Up"],
-              onClick = function() local i = placeOf(item) if i then Itinerary:MoveStop(i, i - 1) end end,
-              disabled = function() local i = placeOf(item) return i == nil or i <= 1 end },
-            { label = L["Move Down"],
-              onClick = function() local i = placeOf(item) if i then Itinerary:MoveStop(i, i + 1) end end,
-              disabled = function() local i, stops = placeOf(item) return i == nil or i >= #stops end },
-            { label = L["Skip Stop"], onClick = function() Itinerary:SkipStop() end,
-              disabled = function()
-                  local i, stops = placeOf(item)
-                  return i == nil or i ~= (currentStopIndex(stops) or 1)
-              end },
-            { label = L["Remove"], destructive = true,
-              onClick = function() local i = placeOf(item) if i then Itinerary:RemoveStop(i) end end,
-              disabled = function() return placeOf(item) == nil end },
-        },
-    })
+    local dest = item.dest
+    local Search = FGPS.UI.Search
+    local Destinations = FGPS.Destinations
+    local entries = {
+        { label = L["Move Up"],
+          onClick = function() local i = placeOf(item) if i then Itinerary:MoveStop(i, i - 1) end end,
+          disabled = function() local i = placeOf(item) return i == nil or i <= 1 end },
+        { label = L["Move Down"],
+          onClick = function() local i = placeOf(item) if i then Itinerary:MoveStop(i, i + 1) end end,
+          disabled = function() local i, stops = placeOf(item) return i == nil or i >= #stops end },
+        { label = L["Skip Stop"], onClick = function() Itinerary:SkipStop() end,
+          disabled = function()
+              local i, stops = placeOf(item)
+              return i == nil or i ~= (currentStopIndex(stops) or 1)
+          end },
+    }
+    if type(dest) == "table" and type(dest.inst) == "number" and type(dest.x) == "number" and type(dest.y) == "number"
+        and Search and Search.ToggleFavorite then
+        local favorite = Destinations and Destinations.IsFavorite and Destinations.IsFavorite(dest) and true or false
+        entries[#entries + 1] = {
+            label = favorite and L["Remove from Favorites"] or L["Add to Favorites"],
+            onClick = function() Search:ToggleFavorite(dest) end,
+        }
+    end
+    entries[#entries + 1] = {
+        label = L["Remove"], destructive = true,
+        onClick = function() local i = placeOf(item) if i then Itinerary:RemoveStop(i) end end,
+        disabled = function() return placeOf(item) == nil end,
+    }
+    return Menus.OpenRowMenu(owner, { title = item.name, entries = entries })
 end
 
 

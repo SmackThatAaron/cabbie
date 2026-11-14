@@ -30,7 +30,7 @@ local Util = FGPS.Util
 local type, pairs, ipairs, tonumber, tostring = type, pairs, ipairs, tonumber, tostring
 
 local DB = {
-    VERSION = 10,
+    VERSION = 11,
     initialized = false,
 }
 FGPS.DB = DB
@@ -49,7 +49,8 @@ local settingsDefaults = {
 
 
 
-    callout = { enabled = true,
+
+    callout = { enabled = false,
                 arrowSize = 1,
                 arrowAlpha = 1,
                 arrowColor = "ffd030",
@@ -64,7 +65,7 @@ local settingsDefaults = {
     minimapLine = true,
 
 
-    roadBeacon = false,
+    roadBeacon = true,
     inWorldPin = false,
 
 
@@ -303,6 +304,9 @@ DB.defaultChanges = {
 
 
     [9] = { { path = "routing.arrivalRadius", from = 10 } },
+
+
+    [10] = { { path = "roadBeacon", from = false }, { path = "callout.enabled", from = true } },
 }
 
 

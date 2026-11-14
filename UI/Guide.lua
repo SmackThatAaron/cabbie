@@ -10,7 +10,7 @@ local ADDON_NAME, FGPS = ...
 
 local L = FGPS.L
 local Util = FGPS.Util
-local type, format, abs, max, pi, huge = type, string.format, math.abs, math.max, math.pi, math.huge
+local type, format, abs, max, sqrt, pi, huge = type, string.format, math.abs, math.max, math.sqrt, math.pi, math.huge
 
 local Guide = {
     model = nil,
@@ -386,6 +386,8 @@ end
 
 
 
+
+
 function Guide.Aim(route, progress, speed)
     local Route = FGPS.Route
     local legs = type(route) == "table" and route.legs or nil
@@ -393,14 +395,41 @@ function Guide.Aim(route, progress, speed)
     local along = type(progress) == "table" and progress.alongYards or nil
     if type(leg) ~= "table" or leg.kind ~= "walk" or type(leg.points) ~= "table" or #leg.points < 2
         or type(along) ~= "number" or not (Route and Route.PointAlong and Route.Cumulative) then return nil end
-    local target = type(progress.pointIndex) == "number" and leg.points[progress.pointIndex] or nil
+    local pts = leg.points
+    local target = type(progress.pointIndex) == "number" and pts[progress.pointIndex] or nil
     local yards = Guide.LookAheadYards(speed)
     if type(target) == "table" and (target.indoor or target.stacked) then yards = Guide.LOOKAHEAD_MIN_YARDS end
-    local ahead, inst = heldAt(route, progress, Route.Cumulative(leg), along, along + yards), leg.inst
+    local cum = Route.Cumulative(leg)
+    local total = cum.total or 0
+    local ahead, inst = heldAt(route, progress, cum, along, along + yards), leg.inst
+    if ahead > total then ahead = total end
+    if ahead < 0 then ahead = 0 end
 
     local x, y = Route.PointAlong(leg, ahead)
     if type(x) ~= "number" or type(y) ~= "number" then return nil end
-    return x, y, inst
+    local baseAlong = along > 0 and along or 0
+    if pts[2] and pts[2].k == 14 and cum[2] and baseAlong < cum[2] and ahead > cum[2] then
+        baseAlong = cum[2]
+    end
+    local bx, by = Route.PointAlong(leg, baseAlong)
+    local dirX, dirY
+    if type(bx) == "number" and type(by) == "number" then
+        local dx, dy = x - bx, y - by
+        local len = sqrt(dx * dx + dy * dy)
+        if len > 1e-4 then dirX, dirY = dx / len, dy / len end
+    end
+    if not dirX then
+        local n = #pts
+        local a, b = pts[n - 1], pts[n]
+        if a and b and type(a.x) == "number" and type(b.x) == "number" then
+            local dx, dy = b.x - a.x, b.y - a.y
+            local len = sqrt(dx * dx + dy * dy)
+            if len > 1e-4 then dirX, dirY = dx / len, dy / len end
+        end
+    end
+    local aheadYards = ahead - along
+    if aheadYards < 0 then aheadYards = 0 end
+    return x, y, inst, dirX, dirY, aheadYards
 end
 
 
@@ -692,10 +721,11 @@ function Guide.Build(input)
 
 
                 if input.facing and (line or input.moving) then
-                    local aimX, aimY, aimInst = Guide.Aim(route, progress, input.speed)
+                    local aimX, aimY, aimInst, dirX, dirY, aheadYards = Guide.Aim(route, progress, input.speed)
                     if aimX then
                         line = line or liveLine(route, progress, model.rows[1] and model.rows[1].open)
                         line.live, line.aimX, line.aimY, line.aimInst = true, aimX, aimY, aimInst
+                        line.dirX, line.dirY, line.aheadYards = dirX, dirY, aheadYards
                     end
                 end
                 model.callout = line
@@ -719,10 +749,11 @@ function Guide.Build(input)
 
 
         if notice.depart and journey and state == "active" and input.facing then
-            local aimX, aimY, aimInst = Guide.Aim(route, progress, input.speed)
+            local aimX, aimY, aimInst, dirX, dirY, aheadYards = Guide.Aim(route, progress, input.speed)
             if aimX then
                 local c = model.callout
                 c.glyph, c.live, c.aimX, c.aimY, c.aimInst = "ahead", true, aimX, aimY, aimInst
+                c.dirX, c.dirY, c.aheadYards = dirX, dirY, aheadYards
             end
         end
     end

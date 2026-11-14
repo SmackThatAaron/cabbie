@@ -140,6 +140,37 @@ local function stopRoute()
     if not blockSaysIt and Guide.Say then Guide.Say(L["Route stopped."], Menus.STOPPED_HOLD) end
 end
 
+local function isPlace(dest)
+    return type(dest) == "table" and type(dest.inst) == "number"
+        and type(dest.x) == "number" and type(dest.y) == "number"
+end
+
+
+
+local function routeDest(owner)
+    if type(owner) == "table" and isPlace(owner.fgpsDest) then return owner.fgpsDest end
+    local Navigator = FGPS.Navigator
+    local stops = Navigator and Navigator.GetStops and Navigator:GetStops() or nil
+    if type(stops) == "table" and isPlace(stops[#stops]) then return stops[#stops] end
+    local route = Navigator and Navigator.GetRoute and Navigator:GetRoute() or nil
+    local routeStops = type(route) == "table" and route.stops or nil
+    local last = type(routeStops) == "table" and routeStops[#routeStops] or nil
+    local dest = last and (last.dest or last) or nil
+    if isPlace(dest) then return dest end
+    return nil
+end
+
+local function addFavorite(owner, root)
+    local dest = routeDest(owner)
+    local Search = FGPS.UI.Search
+    if not (dest and Search and Search.ToggleFavorite) then return end
+    local Destinations = FGPS.Destinations
+    local favorite = Destinations and Destinations.IsFavorite and Destinations.IsFavorite(dest) and true or false
+    root:CreateButton(favorite and L["Remove from Favorites"] or L["Add to Favorites"], function()
+        Search:ToggleFavorite(dest)
+    end)
+end
+
 
 local function addTitle(root)
     if type(root.CreateTitle) == "function" then root:CreateTitle(L["Route"]) end
@@ -173,6 +204,7 @@ function Menus.RouteMenu(owner, root)
         root:CreateButton(L["Show on Map"], function() Menus.ShowOnMap() end)
     end
     addResetPosition(root)
+    addFavorite(owner, root)
     addHowToUse(root)
 
 

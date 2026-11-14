@@ -2,7 +2,7 @@
 
 Cabbie is a sat-nav for WoW: Forever. Tell it where you want to go and it works out the way: roads, flight paths, boats, zeppelins, lifts, the tram, and right into dungeons and raids, room by room. Then it talks you through it one turn at a time.
 
-While you travel, the turn arrow sits at the top of the screen (with optional words and distance in Edit Mode), the route is drawn in ink on your world map and minimap, an optional **Road beacon** places a 3D light beam and turn icon on the road ahead, and an optional Route block beside your quest list names the next steps. On first setup (`/cabbie setup`) you can pick which guidance methods you want. Turn on voice guidance and a built-in voice will tell you "in 80 yards, turn left" so you can keep your eyes on the game, the same on Windows, Mac and Linux.
+While you travel, a **Road beacon** places a 3D light beam and turn icon on the road ahead by default, the route is drawn in ink on your world map and minimap, an optional turn arrow sits at the top of the screen (with optional words and distance in Edit Mode), and an optional Route block beside your quest list names the next steps. On first setup (`/cabbie setup`) or after updates (`/cabbie whatsnew`), you can pick one, the other, or both world guidance styles. Turn on voice guidance and a built-in voice will tell you "in 80 yards, turn left" so you can keep your eyes on the game, the same on Windows, Mac and Linux.
 
 Cabbie only ever shows you the way. It never moves, steers or clicks for your character.
 
