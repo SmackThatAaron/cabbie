@@ -12,14 +12,14 @@ local Boot = {
     -- Core services that need saved settings; they run before the module list.
     coreOrder = { "Scheduler", "Perf", "DataLoad" },
     -- Fixed init order (ARCHITECTURE.md section 6). It keeps the TOC's order (section 4) by and large but
-    -- not exactly: Calibrate before Social, Compat and Bindings before Cues, SelfTest last.
+    -- not exactly: Calibrate before Social, Compat and QuestClicks before Bindings, SelfTest last.
     order = {
         "Coords", "Graph", "Access", "Cost", "Route", "Router", "Instructions", "Personal", "Transport",
         "Destinations", "ServiceSearch", "Calibrate", "Social", "Inside", "Navigator",
         "UI.Guide", "UI.RouteBlock", "UI.Callout", "UI.Go", "UI.Menus", "UI.SearchLine",
         "UI.Skins", "UI.Frames", "UI.Positions", "UI.Tome", "UI.EditMode", "UI.WorldMap",
-        "UI.MapPlaces", "UI.Minimap", "UI.Launcher", "UI.Search", "UI.Preview", "UI.Favorites", "UI.Itinerary", "UI.Voice",
-        "UI.InWorldPin", "UI.Settings", "UI.Setup", "UI.WhatsNew", "UI.Compat", "UI.QuestClicks", "UI.Bindings", "UI.Cues", "SelfTest",
+        "UI.MapPlaces", "UI.Minimap", "UI.Launcher", "UI.Search", "UI.Preview", "UI.Favorites", "UI.Itinerary",
+        "UI.InWorldPin", "UI.Settings", "UI.Setup", "UI.WhatsNew", "UI.Compat", "UI.QuestClicks", "UI.Bindings", "SelfTest",
     },
     report = nil,
 }

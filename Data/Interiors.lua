@@ -19,6 +19,7 @@ local ADDON_NAME, FGPS = ...
 
 
 
+
 FGPS.Data = FGPS.Data or {}
 
 FGPS.Data.interiors = {
@@ -32,7 +33,7 @@ FGPS.Data.interiors = {
     levelMin = 20,
     levelMax = 34,
     aliases = { "BFD" },
-    inside = { x = 106.6, y = -150.2 },
+    inside = { x = 106.6, y = -150.2, z = -39.6 },
   },
   {
     name = "Blackrock Depths",
@@ -44,7 +45,7 @@ FGPS.Data.interiors = {
     levelMin = 48,
     levelMax = 60,
     aliases = { "BRD" },
-    inside = { x = 34.1, y = 456.9 },
+    inside = { x = 34.1, y = 456.9, z = -69.4 },
   },
   {
     name = "Blackrock Spire",
@@ -55,7 +56,7 @@ FGPS.Data.interiors = {
     source = "cmangos:areatrigger_teleport:1470 (exit target)",
     levelMin = 55,
     aliases = { "BRS", "LBRS", "UBRS", "Lower Blackrock Spire", "Upper Blackrock Spire" },
-    inside = { x = -226.8, y = 78.4 },
+    inside = { x = -226.8, y = 78.4, z = 49.9 },
   },
   {
     name = "City of Dalaran",
@@ -87,7 +88,7 @@ FGPS.Data.interiors = {
     levelMin = 17,
     levelMax = 26,
     aliases = { "The Deadmines", "VC", "DM" },
-    inside = { x = -385.5, y = -14.6 },
+    inside = { x = -385.5, y = -14.6, z = 62.7 },
   },
   {
     name = "Dire Maul",
@@ -98,7 +99,7 @@ FGPS.Data.interiors = {
     source = "cmangos:areatrigger_teleport:3195 (exit target)",
     levelMin = 55,
     aliases = { "DM" },
-    inside = { x = -323, y = -203.2 },
+    inside = { x = -323, y = -203.2, z = -2.7 },
   },
   {
     name = "Dire Maul (East Back Door)",
@@ -109,7 +110,7 @@ FGPS.Data.interiors = {
     source = "cmangos:areatrigger_teleport:3196 (exit target)",
     levelMin = 55,
     aliases = { "Dire Maul", "DM", "DM East Back Door" },
-    inside = { x = -837, y = 10.6 },
+    inside = { x = -837, y = 10.6, z = -32.3 },
   },
   {
     name = "Dire Maul (East)",
@@ -120,7 +121,7 @@ FGPS.Data.interiors = {
     source = "cmangos:areatrigger_teleport:3194 (exit target)",
     levelMin = 55,
     aliases = { "Dire Maul", "DM", "DM East" },
-    inside = { x = -153.7, y = 47.5 },
+    inside = { x = -153.7, y = 47.5, z = -2.6 },
   },
   {
     name = "Dire Maul (North)",
@@ -131,7 +132,7 @@ FGPS.Data.interiors = {
     source = "cmangos:areatrigger_teleport:3193 (exit target)",
     levelMin = 55,
     aliases = { "Dire Maul", "DM", "DM North" },
-    inside = { x = -19.5, y = 254.9 },
+    inside = { x = -19.5, y = 254.9, z = -2.5 },
   },
   {
     name = "Dire Maul (West Side Door)",
@@ -142,7 +143,7 @@ FGPS.Data.interiors = {
     source = "cmangos:areatrigger_teleport:3191 (exit target)",
     levelMin = 55,
     aliases = { "Dire Maul", "DM", "DM West Side Door" },
-    inside = { x = 159, y = 33.1 },
+    inside = { x = 159, y = 33.1, z = -3.4 },
   },
   {
     name = "Dire Maul (West)",
@@ -153,7 +154,7 @@ FGPS.Data.interiors = {
     source = "cmangos:areatrigger_teleport:3190 (exit target)",
     levelMin = 55,
     aliases = { "Dire Maul", "DM", "DM West" },
-    inside = { x = 159.6, y = -65.7 },
+    inside = { x = 159.6, y = -65.7, z = -3.4 },
   },
   {
     name = "Excavation Site: Wetlands",
@@ -175,7 +176,7 @@ FGPS.Data.interiors = {
     levelMin = 24,
     levelMax = 40,
     aliases = { "Gnomer" },
-    inside = { x = -3.2, y = -329.1 },
+    inside = { x = -3.2, y = -329.1, z = -152.8 },
   },
   {
     name = "Gnomeregan (Train Depot)",
@@ -187,7 +188,7 @@ FGPS.Data.interiors = {
     levelMin = 24,
     levelMax = 40,
     aliases = { "Gnomeregan", "Gnomer", "Gnomer Train Depot" },
-    inside = { x = 1.9, y = -733.6 },
+    inside = { x = 1.9, y = -733.6, z = -248.8 },
   },
   {
     name = "Maraudon (Orange)",
@@ -199,7 +200,7 @@ FGPS.Data.interiors = {
     levelMin = 40,
     levelMax = 58,
     aliases = { "Maraudon", "Mara", "Mara Orange" },
-    inside = { x = -458.5, y = 1016.8 },
+    inside = { x = -458.5, y = 1016.8, z = -43.3 },
   },
   {
     name = "Maraudon (Purple)",
@@ -211,7 +212,7 @@ FGPS.Data.interiors = {
     levelMin = 40,
     levelMax = 58,
     aliases = { "Maraudon", "Mara", "Mara Purple" },
-    inside = { x = -617.7, y = 755.1 },
+    inside = { x = -617.7, y = 755.1, z = -32.7 },
   },
   {
     name = "Ragefire Chasm",
@@ -223,7 +224,7 @@ FGPS.Data.interiors = {
     levelMin = 13,
     levelMax = 22,
     aliases = { "RFC" },
-    inside = { x = -8.2, y = 0.8 },
+    inside = { x = -8.2, y = 0.8, z = -15.3 },
   },
   {
     name = "Razorfen Downs",
@@ -235,7 +236,7 @@ FGPS.Data.interiors = {
     levelMin = 33,
     levelMax = 47,
     aliases = { "RFD" },
-    inside = { x = 1111.2, y = 2593.7 },
+    inside = { x = 1111.2, y = 2593.7, z = 51.1 },
   },
   {
     name = "Razorfen Kraul",
@@ -247,7 +248,7 @@ FGPS.Data.interiors = {
     levelMin = 24,
     levelMax = 40,
     aliases = { "RFK" },
-    inside = { x = 1544.2, y = 1942.3 },
+    inside = { x = 1544.2, y = 1942.3, z = 82.1 },
   },
   {
     name = "Ruins of Lordaeron",
@@ -269,7 +270,7 @@ FGPS.Data.interiors = {
     levelMin = 29,
     levelMax = 48,
     aliases = { "Scarlet Monastery", "SM", "SM Armory", "SM Arm" },
-    inside = { x = -318.9, y = 1608.1 },
+    inside = { x = -318.9, y = 1608.1, z = 18.7 },
   },
   {
     name = "Scarlet Monastery (Cathedral)",
@@ -281,7 +282,7 @@ FGPS.Data.interiors = {
     levelMin = 29,
     levelMax = 48,
     aliases = { "Scarlet Monastery", "SM", "SM Cathedral", "SM Cath" },
-    inside = { x = 1319.2, y = 853.2 },
+    inside = { x = 1319.2, y = 853.2, z = 18.7 },
   },
   {
     name = "Scarlet Monastery (Graveyard)",
@@ -293,7 +294,7 @@ FGPS.Data.interiors = {
     levelMin = 29,
     levelMax = 48,
     aliases = { "Scarlet Monastery", "SM", "SM Graveyard", "SM GY" },
-    inside = { x = 1050.1, y = 1687.3 },
+    inside = { x = 1050.1, y = 1687.3, z = 18.7 },
   },
   {
     name = "Scarlet Monastery (Library)",
@@ -305,7 +306,7 @@ FGPS.Data.interiors = {
     levelMin = 29,
     levelMax = 48,
     aliases = { "Scarlet Monastery", "SM", "SM Library", "SM Lib" },
-    inside = { x = -206.6, y = 253.7 },
+    inside = { x = -206.6, y = 253.7, z = 18.7 },
   },
   {
     name = "Scholomance",
@@ -316,7 +317,7 @@ FGPS.Data.interiors = {
     source = "cmangos:areatrigger_teleport:2568 (exit target)",
     levelMin = 58,
     aliases = { "Scholo" },
-    inside = { x = 126.3, y = 190.8 },
+    inside = { x = 126.3, y = 190.8, z = 137.4 },
   },
   {
     name = "Shadowfang Keep",
@@ -328,7 +329,7 @@ FGPS.Data.interiors = {
     levelMin = 20,
     levelMax = 26,
     aliases = { "SFK" },
-    inside = { x = 2111.4, y = -228.2 },
+    inside = { x = 2111.4, y = -228.2, z = 77 },
   },
   {
     name = "Stormwind Stockade",
@@ -340,7 +341,7 @@ FGPS.Data.interiors = {
     levelMin = 22,
     levelMax = 34,
     aliases = { "The Stockade", "Stockade", "Stocks" },
-    inside = { x = 0.5, y = 49 },
+    inside = { x = 0.5, y = 49, z = -16.2 },
   },
   {
     name = "Stratholme",
@@ -351,7 +352,7 @@ FGPS.Data.interiors = {
     source = "cmangos:instance_template:329 ghostEntrance",
     levelMin = 58,
     aliases = { "Strat" },
-    inside = { x = -3379.7, y = 3392.9 },
+    inside = { x = -3379.7, y = 3392.9, z = 143.1 },
   },
   {
     name = "Stratholme (Back Door)",
@@ -362,7 +363,7 @@ FGPS.Data.interiors = {
     source = "cmangos:areatrigger_teleport:2221 (exit target)",
     levelMin = 58,
     aliases = { "Stratholme", "Strat", "Strat Back Door" },
-    inside = { x = -3643.2, y = 3590.9 },
+    inside = { x = -3643.2, y = 3590.9, z = 138.7 },
   },
   {
     name = "Sunken Temple",
@@ -373,7 +374,7 @@ FGPS.Data.interiors = {
     source = "cmangos:areatrigger_teleport:448 (exit target)",
     levelMin = 50,
     aliases = { "ST", "Temple of Atal'Hakkar" },
-    inside = { x = 100.2, y = -315.9 },
+    inside = { x = 100.2, y = -315.9, z = -131.7 },
   },
   {
     name = "Uldaman",
@@ -384,7 +385,7 @@ FGPS.Data.interiors = {
     source = "cmangos:areatrigger_teleport:288 (exit target)",
     levelMin = 41,
     levelMax = 51,
-    inside = { x = 46.1, y = -228.9 },
+    inside = { x = 46.1, y = -228.9, z = -46 },
   },
   {
     name = "Wailing Caverns",
@@ -396,7 +397,7 @@ FGPS.Data.interiors = {
     levelMin = 17,
     levelMax = 24,
     aliases = { "WC" },
-    inside = { x = 131.6, y = -158.4 },
+    inside = { x = 131.6, y = -158.4, z = -74 },
   },
   {
     name = "Zul'Farrak",
@@ -408,91 +409,7 @@ FGPS.Data.interiors = {
     levelMin = 43,
     levelMax = 54,
     aliases = { "ZF" },
-    inside = { x = 842, y = 1212.7 },
-  },
-  {
-    name = "Ahn'Qiraj Temple",
-    kind = "raid",
-    entrance = { inst = 1, x = 2005.3, y = -8230.4, map = 1451 },
-    instanceMap = 531,
-    status = "entrance-only",
-    source = "cmangos:areatrigger_teleport:4010 + areatrigger:4010",
-    levelMin = 60,
-    levelMax = 60,
-    aliases = { "AQ40", "AQ 40", "Temple of Ahn'Qiraj" },
-    inside = { x = 2014.3, y = -8221.4 },
-  },
-  {
-    name = "Blackwing Lair",
-    kind = "raid",
-    entrance = { inst = 0, x = -1228.4, y = -7524.7, map = 1428 },
-    instanceMap = 469,
-    status = "entrance-only",
-    source = "cmangos:areatrigger_teleport:3728 (exit target)",
-    levelMin = 60,
-    levelMax = 60,
-    aliases = { "BWL" },
-    inside = { x = -1107, y = -7672.3 },
-  },
-  {
-    name = "Molten Core",
-    kind = "raid",
-    entrance = { inst = 0, x = -1035.9, y = -7510.9, map = 1428 },
-    instanceMap = 409,
-    status = "entrance-only",
-    source = "cmangos:areatrigger_teleport:3528 + areatrigger:3528",
-    levelMin = 60,
-    levelMax = 60,
-    aliases = { "MC" },
-    inside = { x = -467, y = 1091.9 },
-  },
-  {
-    name = "Naxxramas",
-    kind = "raid",
-    entrance = { inst = 0, x = -3730.3, y = 3133.1, map = 1423 },
-    instanceMap = 533,
-    status = "entrance-only",
-    source = "cmangos:areatrigger_teleport:4055 + areatrigger:4055",
-    levelMin = 60,
-    levelMax = 60,
-    aliases = { "Naxx" },
-    inside = { x = -3435, y = 3005.9 },
-  },
-  {
-    name = "Onyxia's Lair",
-    kind = "raid",
-    entrance = { inst = 1, x = -3752.1, y = -4768.6, map = 1445 },
-    instanceMap = 249,
-    status = "entrance-only",
-    source = "cmangos:areatrigger_teleport:2848 + areatrigger:2848",
-    levelMin = 60,
-    levelMax = 60,
-    aliases = { "Ony", "Onyxia" },
-    inside = { x = -54.1, y = 30.9 },
-  },
-  {
-    name = "Ruins of Ahn'Qiraj",
-    kind = "raid",
-    entrance = { inst = 1, x = 1508.7, y = -8424.9, map = 1414 },
-    instanceMap = 509,
-    status = "entrance-only",
-    source = "cmangos:areatrigger_teleport:4008 + areatrigger:4008",
-    levelMin = 60,
-    levelMax = 60,
-    aliases = { "AQ20", "AQ 20" },
-    inside = { x = 1519.2, y = -8436.5 },
-  },
-  {
-    name = "Zul'Gurub",
-    kind = "raid",
-    entrance = { inst = 0, x = -1236.4, y = -11915.8, map = 1434 },
-    instanceMap = 309,
-    status = "entrance-only",
-    source = "cmangos:areatrigger_teleport:3928 + areatrigger:3928",
-    levelMin = 60,
-    levelMax = 60,
-    aliases = { "ZG" },
-    inside = { x = -1243.5, y = -11916.6 },
+    inside = { x = 842, y = 1212.7, z = 9.1 },
   },
 }
 FGPS.Data.insideMaps = {
@@ -501,6 +418,14 @@ FGPS.Data.insideMaps = {
     rooms = {
     },
     bosses = {
+      { name = "Razorclaw the Butcher", npc = 3886, x = 2258, y = -202.6, z = 76.3 },
+      { name = "Baron Silverlaine", npc = 3887, x = 2297.3, y = -275.3, z = 76.2 },
+      { name = "Rethilgore", npc = 3914, x = 2123.1, y = -252.1, z = 81.2 },
+      { name = "Wolf Master Nandos", npc = 3927, x = 2162, y = -120.7, z = 155.8 },
+      { name = "Fenrus the Devourer", npc = 4274, x = 2168.7, y = -135.6, z = 128.8 },
+      { name = "Archmage Arugal", npc = 4275, x = 2152.4, y = -76.8, z = 155.8 },
+      { name = "Commander Springvale", npc = 4278, x = 2259.4, y = -222.6, z = 102.8 },
+      { name = "Odo the Blindwatcher", npc = 4279, x = 2146.1, y = -236.7, z = 100.1 },
     },
   },
   [34] = {
@@ -509,6 +434,11 @@ FGPS.Data.insideMaps = {
       { name = "Stormwind Stockade", x = 0, y = 121.9, z = -25.6 },
     },
     bosses = {
+      { name = "Dextren Ward", npc = 1663, x = 95.4, y = 179, z = -33.9 },
+      { name = "Kam Deepfury", npc = 1666, x = -71.9, y = 142.6, z = -34.9 },
+      { name = "Targorr the Dread", npc = 1696, x = -28.9, y = 81.5, z = -26.4 },
+      { name = "Bazil Thredd", npc = 1716, x = -134.4, y = 92, z = -33.9 },
+      { name = "Hamhock", npc = 1717, x = -105.8, y = 105.5, z = -35.1 },
     },
   },
   [36] = {
@@ -519,6 +449,12 @@ FGPS.Data.insideMaps = {
       { name = "Mast Room", x = -497.8, y = -292.3, z = 50.4 },
     },
     bosses = {
+      { name = "Edwin VanCleef", npc = 639, x = -819.9, y = -87.4, z = 39.3 },
+      { name = "Rhahk'Zor", npc = 644, x = -453.2, y = -191.7, z = 54.5 },
+      { name = "Cookie", npc = 645, x = -850.1, y = -69.3, z = 16.9 },
+      { name = "Mr. Smite", npc = 646, x = -797.3, y = -22.8, z = 20.4 },
+      { name = "Captain Greenskin", npc = 647, x = -832.9, y = -64.1, z = 41.2 },
+      { name = "Gilnid", npc = 1763, x = -576.7, y = -178, z = 19.3 },
     },
   },
   [43] = {
@@ -531,6 +467,10 @@ FGPS.Data.insideMaps = {
       { name = "Winding Chasm", x = -183.1, y = -138.5, z = -68 },
     },
     bosses = {
+      { name = "Kresh", npc = 3653, x = 319.1, y = -64.4, z = -106.7 },
+      { name = "Lord Cobrahn", npc = 3669, x = 414.4, y = -151.1, z = -72.6 },
+      { name = "Lord Pythas", npc = 3670, x = -241.1, y = 36.8, z = -79.5 },
+      { name = "Skum", npc = 3674, x = -310.9, y = -283.6, z = -69.2 },
     },
   },
   [47] = {
@@ -539,6 +479,12 @@ FGPS.Data.insideMaps = {
       { name = "Razorfen Kraul", area = 491, x = 1711, y = 2114.5, z = 81.3 },
     },
     bosses = {
+      { name = "Overlord Ramtusk", npc = 4420, x = 1640, y = 2203.1, z = 85.9 },
+      { name = "Charlga Razorflank", npc = 4421, x = 1864.3, y = 2190.4, z = 79.1 },
+      { name = "Agathelos the Raging", npc = 4422, x = 1976.4, y = 1994.4, z = 63.3 },
+      { name = "Aggem Thorncurse", npc = 4424, x = 1463.5, y = 2082.3, z = 73.2 },
+      { name = "Death Speaker Jargba", npc = 4428, x = 1411.2, y = 2146.4, z = 74 },
+      { name = "Roogug", npc = 6168, x = 1581.6, y = 2143, z = 80.4 },
     },
   },
   [48] = {
@@ -552,6 +498,11 @@ FGPS.Data.insideMaps = {
       { name = "The Pool of Ask'ar", x = 193, y = -462.2, z = -53.1 },
     },
     bosses = {
+      { name = "Aku'mai", npc = 4829, x = -453.9, y = -848.4, z = -33.9 },
+      { name = "Twilight Lord Kelris", npc = 4832, x = -155.6, y = -818.8, z = -25.8 },
+      { name = "Ghamoo-ra", npc = 4887, x = 211.8, y = -442.4, z = -52.6 },
+      { name = "Gelihast", npc = 6243, x = 40.9, y = -412.7, z = -48.1 },
+      { name = "Lorgus Jett", npc = 12902, x = -10.4, y = -622.4, z = -22.8 },
     },
   },
   [70] = {
@@ -568,6 +519,13 @@ FGPS.Data.insideMaps = {
       { name = "The Stone Vault", x = 400.4, y = 55.1, z = -37.1 },
     },
     bosses = {
+      { name = "Archaedas", npc = 2748, x = 272.3, y = 104.3, z = -51.7 },
+      { name = "Grimlok", npc = 4854, x = 455.3, y = 56.7, z = -41 },
+      { name = "Baelog", npc = 6906, x = 117.2, y = -353, z = -44.4 },
+      { name = "Revelosh", npc = 6910, x = 161.2, y = -225.6, z = -44.5 },
+      { name = "Ancient Stone Keeper", npc = 7206, x = 221.3, y = -38.4, z = -48.4 },
+      { name = "Ironaya", npc = 7228, x = 309.6, y = -235.7, z = -47.6 },
+      { name = "Galgann Firehammer", npc = 7291, x = 414.7, y = -10.4, z = -46.9 },
     },
   },
   [90] = {
@@ -583,6 +541,10 @@ FGPS.Data.insideMaps = {
       { name = "Tinkers' Court", x = 674.3, y = -533.3, z = -325.2 },
     },
     bosses = {
+      { name = "Crowd Pummeler 9-60", npc = 6229, x = 360.7, y = -889.1, z = -272.5 },
+      { name = "Electrocutioner 6000", npc = 6235, x = 500.9, y = -549.4, z = -216.8 },
+      { name = "Viscous Fallout", npc = 7079, x = 48.5, y = -471.4, z = -208 },
+      { name = "Mekgineer Thermaplugg", npc = 7800, x = 670.2, y = -531.3, z = -325.2 },
     },
   },
   [109] = {
@@ -597,6 +559,12 @@ FGPS.Data.insideMaps = {
       { name = "The Pit of Sacrifice", x = 99.1, y = -480.6, z = -94.4 },
     },
     bosses = {
+      { name = "Shade of Eranikus", npc = 5709, x = -34, y = -660, z = -90.8 },
+      { name = "Jammal'an the Prophet", npc = 5710, x = -85.7, y = -426.7, z = -88.1 },
+      { name = "Morphaz", npc = 5719, x = 122.1, y = -646.5, z = -90.8 },
+      { name = "Weaver", npc = 5720, x = 117.5, y = -428.5, z = -58.2 },
+      { name = "Dreamscythe", npc = 5721, x = 69, y = -422.6, z = -57.8 },
+      { name = "Hazzas", npc = 5722, x = 131.6, y = -649.7, z = -90.8 },
     },
   },
   [129] = {
@@ -608,6 +576,9 @@ FGPS.Data.insideMaps = {
       { name = "The Murder Pens", x = 745.6, y = 2528.6, z = 53.2 },
     },
     bosses = {
+      { name = "Mordresh Fire Eye", npc = 7357, x = 671.4, y = 2466.6, z = 63.5 },
+      { name = "Amnennar the Coldbringer", npc = 7358, x = 960.9, y = 2403.4, z = 55.1 },
+      { name = "Glutton", npc = 8567, x = 1006.8, y = 2468.7, z = 23.8 },
     },
   },
   [189] = {
@@ -628,6 +599,13 @@ FGPS.Data.insideMaps = {
       { name = "Training Grounds", x = -364.5, y = 1685.8, z = 18.1 },
     },
     bosses = {
+      { name = "Houndmaster Loksey", npc = 3974, x = -260.9, y = 119.9, z = 18.6 },
+      { name = "Herod", npc = 3975, x = -431.6, y = 1965.1, z = 6.3 },
+      { name = "High Inquisitor Whitemane", npc = 3977, x = 1399.1, y = 1202.1, z = 29.1 },
+      { name = "Interrogator Vishas", npc = 3983, x = 1124.4, y = 1786.5, z = 7.6 },
+      { name = "High Inquisitor Fairbanks", npc = 4542, x = 1354.3, y = 1158.9, z = 30.4 },
+      { name = "Bloodmage Thalnos", npc = 4543, x = 1416.7, y = 1820.3, z = -7.9 },
+      { name = "Arcanist Doan", npc = 6487, x = -428.7, y = 148.3, z = 18.5 },
     },
   },
   [209] = {
@@ -635,6 +613,14 @@ FGPS.Data.insideMaps = {
     rooms = {
     },
     bosses = {
+      { name = "Chief Ukorz Sandscalp", npc = 7267, x = 1018.3, y = 1726.7, z = 55 },
+      { name = "Witch Doctor Zum'rah", npc = 7271, x = 1016.1, y = 1912.2, z = 11.6 },
+      { name = "Theka the Martyr", npc = 7272, x = 859, y = 1778.5, z = 9 },
+      { name = "Gahz'rilla", npc = 7273, x = 1190.6, y = 1667.5, z = -2.8 },
+      { name = "Shadowpriest Sezz'ziz", npc = 7275, x = 1201.7, y = 1884, z = 9 },
+      { name = "Hydromancer Velratha", npc = 7795, x = 1225.1, y = 1680.5, z = 9 },
+      { name = "Nekrum Gutchewer", npc = 7796, x = 1201.5, y = 1882.3, z = 9 },
+      { name = "Antu'sul", npc = 8127, x = 670.4, y = 1815.8, z = 15 },
     },
   },
   [229] = {
@@ -656,6 +642,18 @@ FGPS.Data.insideMaps = {
       { name = "The Storehouse", x = -467.6, y = -203.4, z = 89.6 },
     },
     bosses = {
+      { name = "Highlord Omokk", npc = 9196, x = -300.7, y = -22.8, z = 31.8 },
+      { name = "Shadow Hunter Vosh'gajin", npc = 9236, x = -482.2, y = -121.2, z = 24.7 },
+      { name = "War Master Voone", npc = 9237, x = -458.6, y = -10, z = -18.6 },
+      { name = "Overlord Wyrmthalak", npc = 9568, x = -486.2, y = -22.6, z = 90.8 },
+      { name = "Quartermaster Zigris", npc = 9736, x = -475.6, y = -191.1, z = 87.4 },
+      { name = "Pyroguard Emberseer", npc = 9816, x = -258.1, y = 144.6, z = 96.5 },
+      { name = "Halycon", npc = 10220, x = -338.1, y = -193.9, z = 64.5 },
+      { name = "Gizrul the Slavener", npc = 10268, x = -415, y = -167.5, z = 76.1 },
+      { name = "General Drakkisath", npc = 10363, x = -286, y = 36.5, z = 111 },
+      { name = "The Beast", npc = 10430, x = -554.1, y = 87.4, z = 111.1 },
+      { name = "Urok Doomhowl", npc = 10584, x = -391.9, y = -24, z = 48.6 },
+      { name = "Mother Smolderweb", npc = 10596, x = -565.9, y = -135.5, z = 10.2 },
     },
   },
   [230] = {
@@ -683,14 +681,23 @@ FGPS.Data.insideMaps = {
       { name = "West Garrison", x = 13, y = 692.1, z = -45.5 },
     },
     bosses = {
-    },
-  },
-  [249] = {
-    name = "Onyxia's Lair", kind = "raid", build = "1.60.1.70790",
-    rooms = {
-    },
-    bosses = {
-      { name = "Onyxia", npc = 10184, x = -217.2, y = -4.9, z = -86.7 },
+      { name = "Golem Lord Argelmach", npc = 8983, x = 16.3, y = 846.8, z = -53.6 },
+      { name = "Bael'Gar", npc = 9016, x = 184.5, y = 702.4, z = -72 },
+      { name = "Lord Incendius", npc = 9017, x = -267.1, y = 893.5, z = -71.9 },
+      { name = "High Interrogator Gerstahn", npc = 9018, x = -146.3, y = 310.6, z = -70.3 },
+      { name = "Emperor Dagran Thaurissan", npc = 9019, x = -831.6, y = 1380.2, z = -87.6 },
+      { name = "Pyromancer Loregrain", npc = 9024, x = -243.9, y = 530.2, z = -43 },
+      { name = "Lord Roccor", npc = 9025, x = -172.4, y = 654.6, z = -73.6 },
+      { name = "General Angerforge", npc = 9033, x = 21.4, y = 652.4, z = -60 },
+      { name = "Anger'rel", npc = 9035, x = -220.7, y = 1215, z = -85.6 },
+      { name = "Warder Stilgiss", npc = 9041, x = -342.3, y = 823.4, z = -50.1 },
+      { name = "Fineous Darkvire", npc = 9056, x = -340.9, y = 960, z = -71.5 },
+      { name = "Ambassador Flamelash", npc = 9156, x = -239, y = 1009.8, z = -61.3 },
+      { name = "Houndmaster Grebmar", npc = 9319, x = -174.8, y = 607.7, z = -84.5 },
+      { name = "Plugger Spazzring", npc = 9499, x = -177.9, y = 888.5, z = -43 },
+      { name = "Phalanx", npc = 9502, x = -230.1, y = 847.8, z = -43.6 },
+      { name = "Ribbly Screwspigot", npc = 9543, x = -167.7, y = 878.5, z = -49.7 },
+      { name = "Magmus", npc = 9938, x = -659.3, y = 1380.7, z = -92 },
     },
   },
   [289] = {
@@ -710,33 +717,18 @@ FGPS.Data.insideMaps = {
       { name = "Vault of the Ravenian", x = 0, y = 137.1, z = 75.5 },
     },
     bosses = {
-    },
-  },
-  [309] = {
-    name = "Zul'Gurub", kind = "raid", build = "1.60.1.70790",
-    rooms = {
-      { name = "Altar of Hir'eek", area = 3378, x = -1440, y = -12213.3, z = 130.8 },
-      { name = "Altar of the Blood God", area = 3384, x = -1620.3, y = -11785.6, z = 21.2 },
-      { name = "Edge of Madness", area = 3398, x = -1869.3, y = -11896.1, z = 64 },
-      { name = "Hakkari Grounds", area = 3380, x = -1878, y = -12290.1, z = 131.3 },
-      { name = "Mine", x = -1136.1, y = -11077.1, z = 56 },
-      { name = "Naze of Shirvallah", area = 3381, x = -1876.5, y = -11711.2, z = 47.9 },
-      { name = "Pagle's Pointe", area = 3419, x = -1773.6, y = -11707, z = 10.7 },
-      { name = "Shadra'zaar", area = 3379, x = -1634.8, y = -12297.5, z = 132.9 },
-      { name = "Temple of Bethekk", area = 3382, x = -1619.4, y = -11527.9, z = 49.8 },
-      { name = "The Bloodfire Pit", area = 3383, x = -1300.9, y = -11573.3, z = 78.2 },
-      { name = "The Coil", area = 3377, x = -1691.8, y = -12010.9, z = 32.4 },
-      { name = "The Mountain Den", x = -615.7, y = -13060.1, z = 65.9 },
-      { name = "Zanza's Rise", area = 3397, x = -1778.4, y = -12017.3, z = 57.4 },
-    },
-    bosses = {
-      { name = "Jin'do the Hexxer", npc = 11380, x = -1275.5, y = -11515.8, z = 79.7 },
-      { name = "Bloodlord Mandokir", npc = 11382, x = -1927.2, y = -12167.8, z = 153.7 },
-      { name = "High Priest Venoxis", npc = 14507, x = -1707.9, y = -12029.8, z = 39.4 },
-      { name = "High Priest Thekal", npc = 14509, x = -1998.9, y = -11700.8, z = 62.4 },
-      { name = "High Priestess Mar'li", npc = 14510, x = -1577.1, y = -12326.5, z = 133.6 },
-      { name = "High Priestess Jeklik", npc = 14517, x = -1380.1, y = -12291.9, z = 144.9 },
-      { name = "Hakkar", npc = 14834, x = -1649.3, y = -11787.4, z = 54.1 },
+      { name = "Vectus", npc = 10432, x = 99.1, y = 143.5, z = 104.7 },
+      { name = "Marduk Blackpool", npc = 10433, x = 116.2, y = 150.4, z = 104.7 },
+      { name = "Lady Illucia Barov", npc = 10502, x = 0.9, y = 266, z = 75.3 },
+      { name = "Jandice Barov", npc = 10503, x = 73.6, y = 268.2, z = 95.9 },
+      { name = "Lord Alexei Barov", npc = 10504, x = -91, y = 178.7, z = 70.9 },
+      { name = "Instructor Malicia", npc = 10505, x = -2, y = 86.7, z = 85.3 },
+      { name = "Kirtonos the Herald", npc = 10506, x = 93.5, y = 309.6, z = 101.7 },
+      { name = "The Ravenian", npc = 10507, x = -1.7, y = 103.3, z = 75.2 },
+      { name = "Ras Frostwhisper", npc = 10508, x = 141.3, y = -25.1, z = 83.9 },
+      { name = "Lorekeeper Polkelt", npc = 10901, x = 1.3, y = 274.9, z = 85.3 },
+      { name = "Doctor Theolen Krastinov", npc = 11261, x = -95.4, y = 182.2, z = 85.3 },
+      { name = "Rattlegore", npc = 11622, x = 171.7, y = 137.1, z = 96 },
     },
   },
   [329] = {
@@ -757,6 +749,16 @@ FGPS.Data.insideMaps = {
       { name = "The Slaughter House", x = -3364, y = 4032.7, z = 115.1 },
     },
     bosses = {
+      { name = "Magistrate Barthilas", npc = 10435, x = -3619.1, y = 3663.2, z = 138 },
+      { name = "Baroness Anastari", npc = 10436, x = -3715.8, y = 3855.3, z = 148.2 },
+      { name = "Nerub'enkan", npc = 10437, x = -3528.8, y = 3855, z = 144.3 },
+      { name = "Maleki the Pallid", npc = 10438, x = -3647.8, y = 4035.8, z = 135.7 },
+      { name = "Baron Rivendare", npc = 10440, x = -3336.3, y = 4035.8, z = 115.1 },
+      { name = "The Unforgiven", npc = 10516, x = -3426.7, y = 3718.5, z = 131.8 },
+      { name = "Hearthsinger Forresten", npc = 10558, x = -3363.2, y = 3692.9, z = 130.8 },
+      { name = "Archivist Galford", npc = 10811, x = -3103.4, y = 3456, z = 136.5 },
+      { name = "Cannon Master Willey", npc = 10997, x = -2937.3, y = 3573.6, z = 125.1 },
+      { name = "Malor the Zealous", npc = 11032, x = -3126.8, y = 3621.1, z = 135.7 },
     },
   },
   [349] = {
@@ -772,6 +774,14 @@ FGPS.Data.insideMaps = {
       { name = "Zaetar's Grave", x = -45.3, y = 14, z = -127.2 },
     },
     bosses = {
+      { name = "Princess Theradras", npc = 12201, x = 83.2, y = 27.9, z = -124.5 },
+      { name = "Landslide", npc = 12203, x = -185.5, y = 356.7, z = -59.8 },
+      { name = "Celebras the Cursed", npc = 12225, x = 78, y = 726.1, z = -86.6 },
+      { name = "Lord Vyletongue", npc = 12236, x = -219.6, y = 748.9, z = -47.7 },
+      { name = "Razorlash", npc = 12258, x = -10.2, y = 978.9, z = -62.5 },
+      { name = "Noxxion", npc = 13282, x = -191.3, y = 1130.4, z = -80 },
+      { name = "Rotgrip", npc = 13596, x = -66, y = 42.1, z = -199.6 },
+      { name = "Tinkerer Gizlock", npc = 13601, x = -313.7, y = 134.9, z = -173.6 },
     },
   },
   [389] = {
@@ -779,24 +789,10 @@ FGPS.Data.insideMaps = {
     rooms = {
     },
     bosses = {
-    },
-  },
-  [409] = {
-    name = "Molten Core", kind = "raid", build = "1.60.1.70790",
-    rooms = {
-      { name = "Magmadar Cavern", x = -991.1, y = 1038.6, z = -181.6 },
-      { name = "Ragnaros' Lair", x = -839, y = 823.5, z = -230 },
-      { name = "The Molten Core", x = -881.7, y = 953.5, z = -173.9 },
-    },
-    bosses = {
-      { name = "Magmadar", npc = 11982, x = -1020.5, y = 1144.6, z = -185.7 },
-      { name = "Golemagg the Incinerator", npc = 11988, x = -998.3, y = 793.2, z = -206.8 },
-      { name = "Baron Geddon", npc = 12056, x = -981.7, y = 747.5, z = -178.4 },
-      { name = "Garr", npc = 12057, x = -498, y = 679.8, z = -213.7 },
-      { name = "Sulfuron Harbinger", npc = 12098, x = -1179.1, y = 601.1, z = -195.9 },
-      { name = "Lucifron", npc = 12118, x = -955.4, y = 1000.2, z = -179.6 },
-      { name = "Gehennas", npc = 12259, x = -545.9, y = 898.1, z = -203.4 },
-      { name = "Shazzrah", npc = 12264, x = -799.8, y = 583.5, z = -205.4 },
+      { name = "Oggleflint", npc = 11517, x = 38.7, y = -147.5, z = -38.8 },
+      { name = "Jergosh the Invoker", npc = 11518, x = 209.2, y = -376.8, z = -21.8 },
+      { name = "Bazzalan", npc = 11519, x = 146, y = -384.9, z = 7.8 },
+      { name = "Taragaman the Hungerer", npc = 11520, x = 150.1, y = -244.7, z = -18.7 },
     },
   },
   [429] = {
@@ -804,82 +800,22 @@ FGPS.Data.insideMaps = {
     rooms = {
     },
     bosses = {
-    },
-  },
-  [469] = {
-    name = "Blackwing Lair", kind = "raid", build = "1.60.1.70790",
-    rooms = {
-      { name = "Dragonmaw Garrison", x = -1048.9, y = -7591.1, z = 408.4 },
-      { name = "Halls of Strife", x = -1009.9, y = -7622.6, z = 440.2 },
-      { name = "Nefarian's Lair", x = -1203.2, y = -7519.2, z = 476.9 },
-      { name = "Shadow Wing Lair", x = -1013.3, y = -7484.4, z = 408.6 },
-    },
-    bosses = {
-      { name = "Flamegor", npc = 11981, x = -1031, y = -7407.9, z = 477.4 },
-      { name = "Firemaw", npc = 11983, x = -923.8, y = -7433.4, z = 465.4 },
-      { name = "Broodlord Lashlayer", npc = 12017, x = -1035.2, y = -7573.9, z = 449.2 },
-      { name = "Razorgore the Untamed", npc = 12435, x = -1088.2, y = -7571.7, z = 413.5 },
-      { name = "Vaelastrasz the Corrupt", npc = 13020, x = -1016, y = -7483.8, z = 408.7 },
-      { name = "Chromaggus", npc = 14020, x = -1029.6, y = -7515.3, z = 476.7 },
-      { name = "Ebonroc", npc = 14601, x = -994.3, y = -7358.2, z = 477.4 },
-    },
-  },
-  [509] = {
-    name = "Ruins of Ahn'Qiraj", kind = "raid", build = "1.60.1.70790",
-    rooms = {
-      { name = "General's Terrace", area = 3449, x = 1559.1, y = -9066.7, z = 22 },
-      { name = "Scarab Terrace", area = 3448, x = 1475.6, y = -8622.2, z = 32 },
-      { name = "The Comb", area = 3452, x = 1564.4, y = -9687.6, z = 21.7 },
-      { name = "The Hatchery", area = 3451, x = 1389.5, y = -9417.6, z = 26.9 },
-      { name = "The Reservoir", area = 3450, x = 2015.7, y = -8929.9, z = 22.9 },
-      { name = "Watchers' Terrace", area = 3453, x = 1918.7, y = -9351.4, z = 85.7 },
-    },
-    bosses = {
-      { name = "Ossirian the Unscarred", npc = 15339, x = 2030.3, y = -9493.6, z = 105.5 },
-      { name = "Moam", npc = 15340, x = 2260.1, y = -8845.5, z = 21.5 },
-      { name = "General Rajaxx", npc = 15341, x = 1602.5, y = -9129.7, z = 26.5 },
-      { name = "Kurinnaxx", npc = 15348, x = 1629.5, y = -8824.5, z = 20.4 },
-      { name = "Ayamiss the Hunter", npc = 15369, x = 1514.8, y = -9719.6, z = 27.6 },
-      { name = "Buru the Gorger", npc = 15370, x = 1234.1, y = -9236, z = -63.7 },
-    },
-  },
-  [531] = {
-    name = "Ahn'Qiraj Temple", kind = "raid", build = "1.60.1.70790",
-    rooms = {
-    },
-    bosses = {
-      { name = "The Prophet Skeram", npc = 15263, x = 2081, y = -8346, z = 125.7 },
-      { name = "Emperor Vek'nilash", npc = 15275, x = 1176.2, y = -9023.7, z = -104.2 },
-      { name = "Viscidus", npc = 15299, x = 928.6, y = -8000.2, z = -51.9 },
-      { name = "Princess Huhuran", npc = 15509, x = 1696.5, y = -8532.1, z = -90.3 },
-      { name = "Fankriss the Unyielding", npc = 15510, x = 1196.7, y = -8085.4, z = -92 },
-      { name = "Battleguard Sartura", npc = 15516, x = 1688.7, y = -8281.9, z = -25.9 },
-      { name = "Vem", npc = 15544, x = 2165, y = -8544.1, z = -3.5 },
-      { name = "C'Thun", npc = 15727, x = 1985.8, y = -8578.6, z = 100.3 },
-    },
-  },
-  [533] = {
-    name = "Naxxramas", kind = "raid", build = "1.60.1.70790",
-    rooms = {
-      { name = "Kel'Thuzad's Chamber", x = -5102.2, y = 3715.6, z = 141.5 },
-      { name = "Sapphiron's Lair", x = -5244.4, y = 3502.2, z = 137.6 },
-      { name = "The Arachnid Quarter", x = -3627.5, y = 3206.9, z = 280.4 },
-      { name = "The Construct Quarter", x = -3322.8, y = 3111.1, z = 293.8 },
-      { name = "The Horsemen's Assembly", x = -2963.9, y = 2523.3, z = 245.7 },
-      { name = "The Military Quarter", x = -3256.4, y = 2794.6, z = 267.7 },
-      { name = "The Necrotic Vault", x = -4000, y = 2897.8, z = 273.7 },
-      { name = "The Outer Ring", x = -3095.8, y = 2645.5, z = 240 },
-      { name = "The Plague Quarter", x = -3612.6, y = 2805.6, z = 256.7 },
-    },
-    bosses = {
-      { name = "Heigan the Unclean", npc = 15936, x = -3708.8, y = 2795.3, z = 276.6 },
-      { name = "Grand Widow Faerlina", npc = 15953, x = -3620.1, y = 3353.2, z = 261.1 },
-      { name = "Noth the Plaguebringer", npc = 15954, x = -3485.1, y = 2678, z = 261.3 },
-      { name = "Anub'Rekhan", npc = 15956, x = -3476.2, y = 3316.5, z = 287.3 },
-      { name = "Kel'Thuzad", npc = 15990, x = -5113.4, y = 3746.4, z = 142 },
-      { name = "Loatheb", npc = 16011, x = -3999.5, y = 2909.4, z = 274.3 },
-      { name = "Gothik the Harvester", npc = 16060, x = -3388.4, y = 2642.2, z = 285.6 },
-      { name = "Instructor Razuvious", npc = 16061, x = -3098, y = 2755.6, z = 267.9 },
+      { name = "Prince Tortheldrin", npc = 11486, x = 625.9, y = 132.6, z = -48.4 },
+      { name = "Magister Kalendris", npc = 11487, x = 575.6, y = 33.1, z = -4.3 },
+      { name = "Illyanna Ravenoak", npc = 11488, x = 544, y = -84.3, z = 28.6 },
+      { name = "Tendris Warpwood", npc = 11489, x = 475.8, y = 14.4, z = -23.3 },
+      { name = "Zevrim Thornhoof", npc = 11490, x = -448, y = -35, z = -37.9 },
+      { name = "Alzzin the Wildshaper", npc = 11492, x = -427.3, y = 274.8, z = -120 },
+      { name = "Immol'thar", npc = 11496, x = 812.4, y = -38.1, z = -29.5 },
+      { name = "King Gordok", npc = 11501, x = 481.3, y = 829.7, z = 37.4 },
+      { name = "Hydrospawn", npc = 13280, x = -438.4, y = 4.6, z = -60 },
+      { name = "Guard Fengus", npc = 14321, x = 258.3, y = 356.8, z = 11.7 },
+      { name = "Stomper Kreeg", npc = 14322, x = 97.4, y = 491.2, z = -2.5 },
+      { name = "Guard Slip'kik", npc = 14323, x = 533.7, y = 550.4, z = -25.3 },
+      { name = "Cho'Rush the Observer", npc = 14324, x = 489.5, y = 834, z = 37.4 },
+      { name = "Captain Kromcrush", npc = 14325, x = 481.7, y = 627.6, z = 29.5 },
+      { name = "Guard Mol'dar", npc = 14326, x = -3.2, y = 410.7, z = -24.6 },
+      { name = "Lethtendris", npc = 14327, x = -441.1, y = -5.5, z = 16.4 },
     },
   },
   [2959] = {

@@ -95,7 +95,7 @@ local RIGHT_SHARE = 0.32
 
 
 
-Search.SECTION_ORDER = { corpse = 1, route = 5, nearest = 10, ornament = 15, favorites = 20, recent = 30,
+Search.SECTION_ORDER = { corpse = 1, route = 5, dungeon = 8, nearest = 10, ornament = 15, favorites = 20, recent = 30,
                          matches = 1000 }
 local BREAK_FILE, BREAK_HEIGHT = "Interface\\QuestFrame\\UI-HorizontalBreak", 16
 local WHEEL_ROWS = 3
@@ -111,7 +111,7 @@ local TOWN_TYPES = { 1, 2, 5, 18, 21 }
 local FILTERS = {
     { key = "all", label = "All", width = 44, types = nil },
     { key = "towns", label = "Towns", width = 62, first = TOWN_TYPES },
-    { key = "dungeons", label = "Dungeons", width = 82, types = { 3, 4, 19 } },
+    { key = "dungeons", label = "Dungeons", width = 82, types = { 3, 19 } },
     { key = "travel", label = "Travel", width = 62, types = { 6, 14, 15, 17 } },
     { key = "services", label = "Vendors", width = 74, types = { 7, 8, 9, 10, 11, 12, 13, 16, 20 } },
 }
@@ -145,7 +145,7 @@ end
 
 local KINDS = {
     { key = "towns", label = "Towns", types = { 5, 1, 2 } },
-    { key = "dungeons", label = "Dungeons", types = { 3, 4 }, insideFirst = true },
+    { key = "dungeons", label = "Dungeons", types = { 3 }, insideFirst = true },
     { key = "travel", label = "Travel", types = { 6, 14, 15, 17 }, skip = isLiftLanding },
     { key = "vendor", label = "Vendors", types = { 8 }, nearest = "vendor" },
     { key = "repair", label = "Repair", types = { 9 }, nearest = "repair" },
@@ -575,6 +575,7 @@ function Search:ToggleFavorite(dest)
         FGPS:Print(L["Pick a place first."])
         return false
     end
+    local changed = false
     local index = Destinations.IsFavorite and Destinations.IsFavorite(dest)
     if index and Destinations.RemoveFavorite then
         if type(index) ~= "number" then
@@ -584,9 +585,9 @@ function Search:ToggleFavorite(dest)
                 if (Destinations.Equal and Destinations.Equal(fav, dest)) or fav == dest then index = i break end
             end
         end
-        if index then
-            Destinations.RemoveFavorite(index)
+        if index and Destinations.RemoveFavorite(index) ~= false then
             FGPS:Print(L["Removed from favorites: %s"], describe(dest))
+            changed = true
         end
     elseif Destinations.AddFavorite then
         local ok, reason = Destinations.AddFavorite(dest)
@@ -594,13 +595,14 @@ function Search:ToggleFavorite(dest)
             FGPS:Print(L["Couldn't add that to your favorites (%s)."], reasonText(reason, L["unknown reason"]))
         else
             FGPS:Print(L["Added to favorites: %s"], describe(dest))
+            changed = true
         end
     end
 
 
     self:RefreshDistances()
     self:PickChanged()
-    return true
+    return changed
 end
 
 
@@ -951,7 +953,7 @@ end
 
 
 local PLACE_TYPES = {
-    town = true, landmark = true, dungeon = true, raid = true, capital = true, room = true,
+    town = true, landmark = true, dungeon = true, capital = true, room = true,
     zone = true, area = true,
 }
 
@@ -1767,6 +1769,86 @@ end
 
 
 
+local function activeDungeonRows()
+    local Inside = FGPS.Inside
+    local map = Inside and Inside.Map and Inside.Map() or nil
+    local rec = map and FGPS.Data and FGPS.Data.insideMaps and FGPS.Data.insideMaps[map] or nil
+    local Destinations = FGPS.Destinations
+    if not (rec and Destinations and Destinations.InsideBossesFirst) then return nil, nil end
+    local ok, rows = pcall(Destinations.InsideBossesFirst, map)
+    if not ok or type(rows) ~= "table" or #rows == 0 then return nil, nil end
+    return rec, rows
+end
+
+local function buildDungeon(frame)
+    frame.Head = pageText(frame, "pageSub", "rubric")
+    frame.Head:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
+    frame.Head:SetHeight(HEAD_HEIGHT)
+    frame.Rows = {}
+    return function(f)
+        local rec, rows = activeDungeonRows()
+        if not rows then
+            for _, row in ipairs(f.Rows) do
+                row.entry = nil
+                row:Hide()
+            end
+            if page.picked == "dungeon" then Search:Unpick("dungeon") end
+            return 0
+        end
+        local look = Look()
+        local delta = look.TextSizeDelta()
+        local rowH = look.PlaceRowHeight()
+        local headH = HEAD_HEIGHT + delta
+        local width = pageSize(page.frame)
+        local Destinations = FGPS.Destinations
+        local pos = playerPos()
+        local s = settings()
+        local units = s and s.units or "yards"
+        f.Head:SetText(type(rec.name) == "string" and rec.name ~= "" and rec.name or L["Bosses"])
+        f.Head:SetHeight(headH)
+        local y = headH
+        for i, r in ipairs(rows) do
+            local dest = r.dest
+            local row = f.Rows[i]
+            if not row then
+                row = Search.NewPlaceRow(f, "dungeon")
+                f.Rows[i] = row
+            end
+            local right = dest.type == "boss" and L["Boss"] or L["Room"]
+            if pos and pos.inst == dest.inst and type(pos.x) == "number" and type(pos.y) == "number"
+                and type(dest.x) == "number" and type(dest.y) == "number" then
+                local dx, dy = pos.x - dest.x, pos.y - dest.y
+                right = format(L["%s, %s"], right, Util.FormatDistance(math.sqrt(dx * dx + dy * dy), units))
+            end
+            local item = {
+                kind = "dest",
+                dest = dest,
+                label = r.label,
+                icon = "dungeon",
+                right = right,
+                favorite = Destinations and Destinations.IsFavorite and Destinations.IsFavorite(dest) and true or false,
+            }
+            row:ClearAllPoints()
+            row:SetPoint("TOPLEFT", f, "TOPLEFT", 0, -y)
+            row:SetSize(width, rowH)
+            paintPlaceRow(row, item, width)
+            paintGlow(row)
+            row:Show()
+            y = y + rowH
+        end
+        for i = #rows + 1, #f.Rows do
+            f.Rows[i].entry = nil
+            f.Rows[i]:Hide()
+        end
+        return y
+    end
+end
+
+
+
+
+
+
 
 
 
@@ -2089,6 +2171,7 @@ local function buildPage(frame)
         end
     end
     placeSection("corpse", Search.SECTION_ORDER.corpse, buildCorpse)
+    placeSection("dungeon", Search.SECTION_ORDER.dungeon, buildDungeon)
     placeSection("nearest", Search.SECTION_ORDER.nearest, buildNearest)
     for key, section in pairs(pending) do placeSection(key, section.order, section.builder) end
     pending = {}
@@ -2456,6 +2539,7 @@ function Search:Init()
     local Events = FGPS.Events
     Events:Register("FAVORITES_CHANGED", onListsChanged, self)
     Events:Register("RECENTS_CHANGED", onListsChanged, self)
+    Events:Register("WORLD_ENTERED", onListsChanged, self)
 
 
     Events:Register("LEARNED_SERVICES_CHANGED", function() nearest.revision = nearest.revision + 1 end, self)

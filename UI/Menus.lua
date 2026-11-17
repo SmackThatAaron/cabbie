@@ -17,6 +17,11 @@ local type, pcall, format, ipairs = type, pcall, string.format, ipairs
 local Menus = { bound = false }
 FGPS.UI.Menus = Menus
 
+do
+    local Look = FGPS.UI.Look
+    if Look and Look.ShimMenuVariants then Look.ShimMenuVariants() end
+end
+
 
 Menus.STOPPED_HOLD = 6
 
@@ -213,9 +218,747 @@ function Menus.RouteMenu(owner, root)
 end
 
 
+
+
+
+
+
+Menus.KEYS_TEMPLATE = "InsecureKeyboardInputPropagatorTemplate"
+Menus.FALLBACK_POLL_SECONDS = 0.2
+Menus.FALLBACK_PAD_X = 10
+Menus.FALLBACK_PAD_Y = 8
+Menus.FALLBACK_ROW_HEIGHT = 20
+Menus.FALLBACK_TITLE_HEIGHT = 20
+Menus.FALLBACK_DIVIDER_HEIGHT = 8
+Menus.FALLBACK_MIN_WIDTH = 140
+Menus.FALLBACK_MAX_WIDTH = 320
+
+local rootPane
+local subPane
+local fallbackWatcher
+local activeFallback
+
+local function evalEnabled(val)
+    if val == nil then return true end
+    if type(val) == "function" then
+        local ok, yes = pcall(val)
+        return ok and yes and true or false
+    end
+    return val and true or false
+end
+
+local function evalSelected(fn, data)
+    if type(fn) ~= "function" then return fn and true or false end
+    local ok, yes = pcall(fn, data)
+    return ok and yes and true or false
+end
+
+local function attachElementMethods(node)
+    function node:SetTag(tag, contextData)
+        self.tag, self.contextData = tag, contextData
+    end
+    function node:SetEnabled(val)
+        self.enabled = val
+        return self
+    end
+    function node:IsEnabled()
+        return evalEnabled(self.enabled)
+    end
+    function node:ShouldPollEnabled()
+        return type(self.enabled) == "function"
+    end
+    function node:SetResponder(fn)
+        self.callback = fn
+        return self
+    end
+    local function pushChild(kind, text, callback, extra)
+        local el = {
+            kind = kind,
+            text = text or "",
+            callback = callback,
+            elements = {},
+        }
+        if extra then
+            for k, v in pairs(extra) do el[k] = v end
+        end
+        attachElementMethods(el)
+        node.elements[#node.elements + 1] = el
+        return el
+    end
+    function node:CreateTitle(text)
+        return pushChild("title", text, nil)
+    end
+    function node:CreateDivider()
+        return pushChild("divider", "", nil)
+    end
+    function node:CreateButton(text, callback, data)
+        return pushChild("button", text, callback, { data = data })
+    end
+    function node:CreateRedHighlightButton(text, callback, data)
+        return pushChild("button", text, callback, { data = data, red = true })
+    end
+    function node:CreateCheckbox(text, isSelected, setSelected, data)
+        return pushChild("checkbox", text, setSelected, {
+            isSelected = isSelected,
+            setSelected = setSelected,
+            data = data,
+        })
+    end
+    function node:CreateRadio(text, isSelected, setSelected, data)
+        return pushChild("radio", text, setSelected, {
+            isSelected = isSelected,
+            setSelected = setSelected,
+            data = data,
+        })
+    end
+    return node
+end
+
+local function newFallbackDescription()
+    return attachElementMethods({ elements = {} })
+end
+
+local function setFallbackPropagation(frame, on)
+    if inCombat() or not (frame and frame.SetPropagateKeyboardInput) then return end
+    pcall(frame.SetPropagateKeyboardInput, frame, on)
+end
+
+local function fallbackLetsKeysThrough(frame)
+    setFallbackPropagation(frame, true)
+    if not (frame and frame.GetPropagateKeyboardInput) then return false end
+    local ok, on = pcall(frame.GetPropagateKeyboardInput, frame)
+    return ok and on == true
+end
+
+local function syncFallbackKeyboard(frame, wanted)
+    if not (frame and frame.EnableKeyboard) then return end
+    if wanted and frame:IsVisible() and fallbackLetsKeysThrough(frame) then
+        frame:EnableKeyboard(true)
+    else
+        frame:EnableKeyboard(false)
+    end
+end
+
+local function paneHasMouse(pane)
+    if not (pane and pane.frame and pane.frame:IsShown()) then return false end
+    if pane.frame.IsMouseOver and pane.frame:IsMouseOver() then return true end
+    return false
+end
+
+function Menus.CloseFallbackMenu()
+    local was = activeFallback
+    activeFallback = nil
+    Menus.fallbackMenu = nil
+    if subPane and subPane.frame then
+        subPane.activeElements = nil
+        subPane.frame:Hide()
+    end
+    if rootPane and rootPane.frame then
+        rootPane.activeElements = nil
+        syncFallbackKeyboard(rootPane.frame, false)
+        rootPane.frame:Hide()
+    end
+    return was ~= nil
+end
+
+local function ensureFallbackWatcher()
+    if fallbackWatcher or type(CreateFrame) ~= "function" then return end
+    fallbackWatcher = CreateFrame("Frame", nil, UIParent)
+    fallbackWatcher:Hide()
+    pcall(fallbackWatcher.RegisterEvent, fallbackWatcher, "GLOBAL_MOUSE_DOWN")
+    pcall(fallbackWatcher.RegisterEvent, fallbackWatcher, "PLAYER_REGEN_DISABLED")
+    fallbackWatcher:SetScript("OnEvent", function(_, event)
+        if not activeFallback then return end
+        if event == "PLAYER_REGEN_DISABLED" then
+            if rootPane and rootPane.frame and rootPane.frame.EnableKeyboard then
+                rootPane.frame:EnableKeyboard(false)
+            end
+            return
+        end
+        if event == "GLOBAL_MOUSE_DOWN" then
+            if not paneHasMouse(rootPane) and not paneHasMouse(subPane) then
+                Menus.CloseFallbackMenu()
+            end
+        end
+    end)
+end
+
+local function createPopupFrame(Look, withKeyboard, level)
+    local frame, how
+    if withKeyboard and Look.HasTemplate(Look.GROUND_TEMPLATE) and Look.HasTemplate(Menus.KEYS_TEMPLATE) then
+        local ok, made = pcall(CreateFrame, "Frame", nil, UIParent, Look.GROUND_TEMPLATE .. "," .. Menus.KEYS_TEMPLATE)
+        if ok and made then
+            how = Look.Ground(made, 16)
+            frame = made
+        end
+    end
+    if not frame then
+        frame, how = Look.CreateGround("Frame", UIParent, 16)
+    end
+    frame:Hide()
+    if frame.SetFrameStrata then frame:SetFrameStrata("TOOLTIP") end
+    if frame.SetFrameLevel then frame:SetFrameLevel(level) end
+    if frame.SetClampedToScreen then frame:SetClampedToScreen(true) end
+    frame:EnableMouse(true)
+    local inset = how == "game" and 4 or 0
+    local underlay = frame:CreateTexture(nil, "BACKGROUND", nil, -8)
+    underlay:SetColorTexture(0.05, 0.05, 0.07, 0.96)
+    underlay:SetPoint("TOPLEFT", frame, "TOPLEFT", inset, -inset)
+    underlay:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -inset, inset)
+    frame.fgpsUnderlay = underlay
+    return {
+        frame = frame,
+        titles = {},
+        dividers = {},
+        buttons = {},
+        activeButtons = {},
+    }
+end
+
+local function paintButtonState(btn)
+    local Look = FGPS.UI.Look
+    local el = btn.fgpsElement
+    if not el then return end
+    local enabled = el:IsEnabled()
+    btn.fgpsEnabled = enabled
+    if enabled then btn:Enable() else btn:Disable() end
+    if not enabled and btn.Glow then btn.Glow:Hide() end
+    if not enabled then
+        btn.Label:SetTextColor(Look.Color("grey"))
+    elseif el.red then
+        if btn.fgpsHover then
+            btn.Label:SetTextColor(1, 1, 1, 1)
+        else
+            btn.Label:SetTextColor(1, 0.25, 0.25, 1)
+        end
+    else
+        btn.Label:SetTextColor(1, 1, 1, 1)
+    end
+    if btn.ArrowText then
+        if enabled then
+            btn.ArrowText:SetTextColor(Look.Color("header"))
+        else
+            btn.ArrowText:SetTextColor(Look.Color("grey"))
+        end
+    end
+    if el.kind == "checkbox" or el.kind == "radio" then
+        local checked = evalSelected(el.isSelected, el.data)
+        btn.CheckBox:Show()
+        if checked then
+            local checkFile = el.kind == "radio"
+                and "Interface\\Buttons\\UI-RadioButton"
+                or "Interface\\Buttons\\UI-CheckBox-Check"
+            if Look.HasFile(checkFile) then
+                btn.CheckMark:SetTexture(checkFile)
+                if btn.CheckMark.SetTexCoord then
+                    if el.kind == "radio" then
+                        btn.CheckMark:SetTexCoord(0.25, 0.5, 0, 1)
+                    else
+                        btn.CheckMark:SetTexCoord(0, 1, 0, 1)
+                    end
+                end
+            else
+                local r, g, b = Look.Color("match")
+                btn.CheckMark:SetColorTexture(r, g, b, 1)
+            end
+            btn.CheckMark:Show()
+        else
+            btn.CheckMark:Hide()
+        end
+    else
+        btn.CheckBox:Hide()
+        btn.CheckMark:Hide()
+    end
+end
+
+local renderPane
+
+local function refreshOpenPanes()
+    if rootPane and rootPane.frame and rootPane.frame:IsShown() then
+        for _, btn in ipairs(rootPane.activeButtons) do paintButtonState(btn) end
+    end
+    if subPane and subPane.frame and subPane.frame:IsShown() then
+        for _, btn in ipairs(subPane.activeButtons) do paintButtonState(btn) end
+    end
+end
+
+local function screenBounds()
+    local w = UIParent and UIParent.GetWidth and UIParent:GetWidth() or 0
+    local h = UIParent and UIParent.GetHeight and UIParent:GetHeight() or 0
+    if type(w) ~= "number" or w <= 0 then w = 1024 end
+    if type(h) ~= "number" or h <= 0 then h = 768 end
+    return w, h
+end
+
+local function placeRootAtCursor(frame, owner, width, height)
+    local screenW, screenH = screenBounds()
+    local cx, cy
+    if type(GetCursorPosition) == "function" then
+        local ok, rawX, rawY = pcall(GetCursorPosition)
+        if ok and type(rawX) == "number" and type(rawY) == "number" then
+            local scale = (UIParent and UIParent.GetEffectiveScale and UIParent:GetEffectiveScale()) or 1
+            if type(scale) ~= "number" or scale <= 0 then scale = 1 end
+            cx, cy = rawX / scale, rawY / scale
+        end
+    end
+    if not cx and type(owner) == "table" and owner.GetLeft and owner.GetBottom then
+        local left, bottom = owner:GetLeft(), owner:GetBottom()
+        if type(left) == "number" and type(bottom) == "number" then
+            cx, cy = left, bottom
+        end
+    end
+    if not cx then cx, cy = screenW * 0.5, screenH * 0.5 end
+    local x = math.max(4, math.min(cx, math.max(4, screenW - width - 4)))
+    local top = cy
+    if top - height < 4 then
+        top = math.min(screenH - 4, math.max(height + 4, cy + height))
+    else
+        top = math.min(screenH - 4, top)
+    end
+    frame:ClearAllPoints()
+    frame:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", x, top)
+end
+
+local function placeSubPaneBeside(frame, parentBtn, width, height)
+    local screenW, screenH = screenBounds()
+    local left = parentBtn.GetLeft and parentBtn:GetLeft()
+    local right = parentBtn.GetRight and parentBtn:GetRight()
+    local top = parentBtn.GetTop and parentBtn:GetTop()
+    if type(right) ~= "number" or type(top) ~= "number" then
+        frame:ClearAllPoints()
+        frame:SetPoint("TOPLEFT", parentBtn, "TOPRIGHT", -2, Menus.FALLBACK_PAD_Y)
+        return
+    end
+    local x = right - 2
+    if x + width > screenW - 4 and type(left) == "number" then
+        x = math.max(4, left - width + 2)
+    end
+    local yTop = math.min(screenH - 4, top + Menus.FALLBACK_PAD_Y)
+    if yTop - height < 4 then
+        yTop = math.min(screenH - 4, math.max(height + 4, height + 4))
+    end
+    frame:ClearAllPoints()
+    frame:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", x, yTop)
+end
+
+local function acquirePopupButton(pane, index)
+    local btn = pane.buttons[index]
+    if btn then return btn end
+    local Look = FGPS.UI.Look
+    btn = CreateFrame("Button", nil, pane.frame)
+    btn:SetHeight(Menus.FALLBACK_ROW_HEIGHT)
+    btn:RegisterForClicks("LeftButtonUp")
+    btn.Glow = btn:CreateTexture(nil, "BACKGROUND")
+    btn.Glow:SetAllPoints(btn)
+    Look.Highlight(btn.Glow)
+    btn.Glow:Hide()
+    btn.CheckBox = btn:CreateTexture(nil, "BORDER")
+    btn.CheckBox:SetSize(14, 14)
+    btn.CheckBox:SetPoint("LEFT", btn, "LEFT", 2, 0)
+    btn.CheckBox:SetColorTexture(0.35, 0.35, 0.38, 0.65)
+    btn.CheckBox:Hide()
+    btn.CheckMark = btn:CreateTexture(nil, "ARTWORK")
+    btn.CheckMark:SetSize(14, 14)
+    btn.CheckMark:SetPoint("CENTER", btn.CheckBox, "CENTER", 0, 0)
+    btn.CheckMark:Hide()
+    btn.Label = Look.FontString(btn, "OVERLAY", "row")
+    btn.Label:SetJustifyH("LEFT")
+    if btn.Label.SetWordWrap then btn.Label:SetWordWrap(false) end
+    btn.ArrowText = Look.FontString(btn, "OVERLAY", "rowSmall")
+    btn.ArrowText:SetPoint("RIGHT", btn, "RIGHT", -2, 0)
+    btn.ArrowText:SetText(">")
+    btn.ArrowText:Hide()
+
+    btn:SetScript("OnEnter", function(self)
+        local el = self.fgpsElement
+        if not el then return end
+        self.fgpsHover = true
+        if el:IsEnabled() then
+            if el.red then
+                self.Glow:SetVertexColor(1, 0.2, 0.2, 0.85)
+            else
+                self.Glow:SetVertexColor(1, 1, 1, 1)
+            end
+            self.Glow:Show()
+        end
+        paintButtonState(self)
+        if pane == rootPane then
+            if #el.elements > 0 and el:IsEnabled() then
+                if not subPane then subPane = createPopupFrame(FGPS.UI.Look, false, 9520) end
+                local sw, sh = renderPane(subPane, el.elements)
+                placeSubPaneBeside(subPane.frame, self, sw, sh)
+                subPane.frame:Show()
+                if activeFallback then activeFallback.subFrame = subPane.frame end
+            elseif subPane and subPane.frame then
+                subPane.frame:Hide()
+            end
+        end
+    end)
+    btn:SetScript("OnLeave", function(self)
+        self.fgpsHover = false
+        self.Glow:Hide()
+        paintButtonState(self)
+    end)
+    btn:SetScript("OnClick", function(self)
+        local el = self.fgpsElement
+        if not el or not el:IsEnabled() then return end
+        if #el.elements > 0 then
+            if pane == rootPane then
+                if not subPane then subPane = createPopupFrame(FGPS.UI.Look, false, 9520) end
+                local sw, sh = renderPane(subPane, el.elements)
+                placeSubPaneBeside(subPane.frame, self, sw, sh)
+                subPane.frame:Show()
+                if activeFallback then activeFallback.subFrame = subPane.frame end
+            end
+            return
+        end
+        if el.kind == "checkbox" or el.kind == "radio" then
+            if type(el.setSelected) == "function" then
+                local ok, resp = pcall(el.setSelected, el.data)
+                if not ok and FGPS.Log then
+                    FGPS.Log:Error("Context menu option %s failed: %s", tostring(el.text), tostring(resp))
+                end
+                local refreshCode = (_G.MenuResponse and _G.MenuResponse.Refresh) or 2
+                if ok and resp == refreshCode then
+                    refreshOpenPanes()
+                    return
+                end
+            end
+            Menus.CloseFallbackMenu()
+            return
+        end
+        Menus.CloseFallbackMenu()
+        if type(el.callback) == "function" then
+            local ok, err = pcall(el.callback, el.data)
+            if not ok and FGPS.Log then
+                FGPS.Log:Error("Context menu entry %s failed: %s", tostring(el.text), tostring(err))
+            end
+        end
+    end)
+    pane.buttons[index] = btn
+    return btn
+end
+
+renderPane = function(pane, elements)
+    local Look = FGPS.UI.Look
+    pane.activeElements = elements
+    for i = #pane.activeButtons, 1, -1 do pane.activeButtons[i] = nil end
+    local hasChecks, hasSubs = false, false
+    for _, el in ipairs(elements) do
+        if el.kind == "checkbox" or el.kind == "radio" then hasChecks = true end
+        if #el.elements > 0 then hasSubs = true end
+    end
+    local leftGutter = hasChecks and 20 or 0
+    local rightGutter = hasSubs and 16 or 0
+    local padX, padY = Menus.FALLBACK_PAD_X, Menus.FALLBACK_PAD_Y
+    local titleIdx, divIdx, btnIdx = 0, 0, 0
+    local maxTextW = 0
+    local rows = {}
+
+    for _, el in ipairs(elements) do
+        if el.kind == "title" then
+            titleIdx = titleIdx + 1
+            local title = pane.titles[titleIdx]
+            if not title then
+                title = Look.FontString(pane.frame, "OVERLAY", "listTitle")
+                title:SetJustifyH("LEFT")
+                if title.SetWordWrap then title:SetWordWrap(false) end
+                pane.titles[titleIdx] = title
+            else
+                Look.ApplyFont(title, "listTitle")
+            end
+            title:SetTextColor(Look.Color("header"))
+            title:SetText(el.text or "")
+            local tw = title.GetStringWidth and title:GetStringWidth() or 0
+            if tw > maxTextW then maxTextW = tw end
+            rows[#rows + 1] = { kind = "title", widget = title, height = Menus.FALLBACK_TITLE_HEIGHT }
+        elseif el.kind == "divider" then
+            divIdx = divIdx + 1
+            local div = pane.dividers[divIdx]
+            if not div then
+                div = pane.frame:CreateTexture(nil, "ARTWORK")
+                div:SetColorTexture(0.65, 0.58, 0.42, 0.35)
+                pane.dividers[divIdx] = div
+            end
+            rows[#rows + 1] = { kind = "divider", widget = div, height = Menus.FALLBACK_DIVIDER_HEIGHT }
+        else
+            btnIdx = btnIdx + 1
+            local btn = acquirePopupButton(pane, btnIdx)
+            btn.fgpsElement = el
+            btn.fgpsHover = false
+            btn.Glow:Hide()
+            Look.ApplyFont(btn.Label, "row")
+            btn.Label:SetText(el.text or "")
+            local tw = (btn.Label.GetStringWidth and btn.Label:GetStringWidth() or 0) + leftGutter + rightGutter
+            if tw > maxTextW then maxTextW = tw end
+            btn.ArrowText:SetShown(#el.elements > 0)
+            paintButtonState(btn)
+            pane.activeButtons[#pane.activeButtons + 1] = btn
+            rows[#rows + 1] = { kind = "button", widget = btn, height = Menus.FALLBACK_ROW_HEIGHT }
+        end
+    end
+
+    for i = titleIdx + 1, #pane.titles do pane.titles[i]:Hide() end
+    for i = divIdx + 1, #pane.dividers do pane.dividers[i]:Hide() end
+    for i = btnIdx + 1, #pane.buttons do
+        pane.buttons[i].fgpsElement = nil
+        pane.buttons[i]:Hide()
+    end
+
+    local innerW = math.max(Menus.FALLBACK_MIN_WIDTH - 2 * padX,
+        math.min(Menus.FALLBACK_MAX_WIDTH - 2 * padX, math.ceil(maxTextW) + 12))
+    local width = innerW + 2 * padX
+    local y = padY
+    for _, r in ipairs(rows) do
+        local w = r.widget
+        w:ClearAllPoints()
+        if r.kind == "title" then
+            w:SetPoint("TOPLEFT", pane.frame, "TOPLEFT", padX, -y)
+            w:SetWidth(innerW)
+            w:SetHeight(r.height)
+            w:Show()
+        elseif r.kind == "divider" then
+            local mid = math.floor(r.height * 0.5)
+            w:SetPoint("TOPLEFT", pane.frame, "TOPLEFT", padX, -(y + mid))
+            w:SetPoint("TOPRIGHT", pane.frame, "TOPRIGHT", -padX, -(y + mid))
+            w:SetHeight(1)
+            w:Show()
+        else
+            w:SetPoint("TOPLEFT", pane.frame, "TOPLEFT", padX, -y)
+            w:SetSize(innerW, r.height)
+            w.Label:ClearAllPoints()
+            w.Label:SetPoint("LEFT", w, "LEFT", leftGutter + 4, 0)
+            w.Label:SetPoint("RIGHT", w, "RIGHT", -(rightGutter + 4), 0)
+            w:Show()
+        end
+        y = y + r.height
+    end
+    local height = y + padY
+    pane.frame:SetSize(width, height)
+    return width, height
+end
+
+local function ensureRootPane()
+    if rootPane then return rootPane end
+    local Look = FGPS.UI.Look
+    rootPane = createPopupFrame(Look, true, 9500)
+    rootPane.frame:SetScript("OnKeyDown", function(frame, key)
+        if key ~= "ESCAPE" or not activeFallback then return end
+        local later = not inCombat() and C_Timer and C_Timer.After
+        if later then setFallbackPropagation(frame, false) end
+        Menus.CloseFallbackMenu()
+        if later then
+            C_Timer.After(0, function() setFallbackPropagation(frame, true) end)
+        end
+    end)
+    rootPane.frame:SetScript("OnUpdate", function(_, elapsed)
+        local current = activeFallback
+        if not current then return end
+        local tracked = current.trackedOwner
+        if tracked and tracked.IsVisible and not tracked:IsVisible() then
+            Menus.CloseFallbackMenu()
+            return
+        end
+        current.pollElapsed = (current.pollElapsed or 0) + (tonumber(elapsed) or 0)
+        if current.pollElapsed >= Menus.FALLBACK_POLL_SECONDS then
+            current.pollElapsed = 0
+            refreshOpenPanes()
+        end
+    end)
+    return rootPane
+end
+
+local function openFallbackPopup(owner, generator)
+    Menus.CloseFallbackMenu()
+    local desc = newFallbackDescription()
+    local ok, err = pcall(generator, owner or UIParent, desc)
+    if not ok then
+        if FGPS.Log then FGPS.Log:Error("Fallback menu generator failed: %s", tostring(err)) end
+        return nil
+    end
+    if #desc.elements == 0 then return nil end
+    ensureFallbackWatcher()
+    local pane = ensureRootPane()
+    local width, height = renderPane(pane, desc.elements)
+    placeRootAtCursor(pane.frame, owner, width, height)
+
+    local trackedOwner = nil
+    if type(owner) == "table" and owner ~= UIParent and owner ~= WorldMapFrame and owner ~= Minimap
+        and type(owner.IsVisible) == "function" and owner:IsVisible() then
+        trackedOwner = owner
+    end
+
+    desc.fgpsFallback = true
+    desc.frame = pane.frame
+    desc.buttons = pane.activeButtons
+    desc.trackedOwner = trackedOwner
+    desc.pollElapsed = 0
+    function desc:IsShown()
+        return pane.frame:IsShown()
+    end
+    function desc:IsVisible()
+        return pane.frame:IsVisible()
+    end
+    function desc:Close()
+        if activeFallback == self then Menus.CloseFallbackMenu() end
+    end
+    function desc:Button(label)
+        for _, btn in ipairs(pane.activeButtons) do
+            if btn.fgpsElement and btn.fgpsElement.text == label then return btn end
+        end
+        if subPane and subPane.frame and subPane.frame:IsShown() then
+            for _, btn in ipairs(subPane.activeButtons) do
+                if btn.fgpsElement and btn.fgpsElement.text == label then return btn end
+            end
+        end
+        return nil
+    end
+    function desc:Select(label)
+        local btn = self:Button(label)
+        if not btn then return false end
+        local onClick = btn.GetScript and btn:GetScript("OnClick")
+        if type(onClick) == "function" then onClick(btn, "LeftButton") end
+        return true
+    end
+
+    activeFallback = desc
+    Menus.fallbackMenu = desc
+    pane.frame:Show()
+    syncFallbackKeyboard(pane.frame, true)
+    return desc
+end
+
+local function safeIndex(tbl, key)
+    return tbl[key]
+end
+
+local function safeCallMethod(tbl, method)
+    if type(tbl) ~= "table" then return end
+    local okIndex, fn = pcall(safeIndex, tbl, method)
+    if okIndex and type(fn) == "function" then
+        pcall(fn, tbl)
+    end
+end
+
+local function resolveMenuFrame(menu)
+    if type(menu) ~= "table" then return menu end
+    local okToProxy, toProxy = pcall(safeIndex, menu, "ToProxy")
+    if not okToProxy then return nil end
+    if type(toProxy) == "function" then
+        local ok, proxy = pcall(toProxy, menu)
+        if ok and type(proxy) == "table" then return proxy end
+        local okP, p = pcall(safeIndex, menu, "proxy")
+        if okP and type(p) == "table" then return p end
+        return nil
+    end
+    local okProxy, proxy = pcall(safeIndex, menu, "proxy")
+    if not okProxy then return nil end
+    if type(proxy) == "table" then return proxy end
+    return menu
+end
+
+local function closeHalfOpenedBlizzardMenu(menu)
+    if type(menu) ~= "table" then return end
+    safeCallMethod(menu, "Close")
+    safeCallMethod(menu, "Hide")
+    local okFrame, frame = pcall(resolveMenuFrame, menu)
+    if okFrame and type(frame) == "table" and frame ~= menu then
+        safeCallMethod(frame, "Close")
+        safeCallMethod(frame, "Hide")
+    end
+end
+
+local function blizzardMenuHealthy(menu)
+    if menu == nil then return false end
+    if type(menu) ~= "table" then return true end
+    local okFrame, frame = pcall(resolveMenuFrame, menu)
+    if not okFrame or frame == nil or type(frame) ~= "table" then return false end
+
+    local okShownFn, isShownFn = pcall(safeIndex, frame, "IsShown")
+    if not okShownFn then return false end
+    if type(isShownFn) == "function" then
+        local okShown, shown = pcall(isShownFn, frame)
+        if not okShown or not shown then return false end
+    end
+
+    local okVisFn, isVisFn = pcall(safeIndex, frame, "IsVisible")
+    if not okVisFn then return false end
+    if type(isVisFn) == "function" and UIParent and type(UIParent.IsVisible) == "function" and UIParent:IsVisible() then
+        local okVis, vis = pcall(isVisFn, frame)
+        if not okVis or not vis then return false end
+    end
+
+    local okWFn, getWFn = pcall(safeIndex, frame, "GetWidth")
+    local okHFn, getHFn = pcall(safeIndex, frame, "GetHeight")
+    if not okWFn or not okHFn then return false end
+    if type(getWFn) == "function" or type(getHFn) == "function" then
+        if type(getWFn) ~= "function" or type(getHFn) ~= "function" then
+            return false
+        end
+        local okW, w = pcall(getWFn, frame)
+        local okH, h = pcall(getHFn, frame)
+        if not okW or not okH or type(w) ~= "number" or type(h) ~= "number" then
+            return false
+        end
+        if w ~= w or h ~= h or w <= 1 or h <= 1 then
+            return false
+        end
+    end
+    return true
+end
+
+
+
+
+
+function Menus.OpenContextMenu(owner, generator, opts)
+    if type(generator) ~= "function" then return nil end
+    opts = opts or {}
+    Menus.CloseFallbackMenu()
+    if GameTooltip and owner and GameTooltip.IsOwned and GameTooltip:IsOwned(owner) then
+        GameTooltip:Hide()
+    end
+    local Look = FGPS.UI.Look
+    if Look and Look.ShimMenuVariants then Look.ShimMenuVariants() end
+    local hasMenuUtil = Look and Look.TomeHas and Look.TomeHas("global", "MenuUtil")
+        and type(MenuUtil) == "table" and type(MenuUtil.CreateContextMenu) == "function"
+    if not hasMenuUtil then
+        if opts.noteKey and Look and Look.NoteOnce then
+            Look.NoteOnce(opts.noteKey, "%s", opts.noteMessage or "No MenuUtil; using Cabbie popup menu")
+        end
+        return openFallbackPopup(owner, generator)
+    end
+    local safeOwner = Look and Look.MenuOwner and Look.MenuOwner(owner) or owner
+    local ok, menu = pcall(MenuUtil.CreateContextMenu, safeOwner, generator)
+    local okHealth, healthy = false, false
+    if ok then
+        okHealth, healthy = pcall(blizzardMenuHealthy, menu)
+    end
+    if ok and okHealth and healthy then
+        return menu
+    end
+    if not ok then
+        local errField = opts.errorFlag or "contextMenuFailed"
+        if not Menus[errField] then
+            Menus[errField] = true
+            if FGPS.Log then
+                FGPS.Log:Error("%s: %s", opts.errorLabel or "A context menu failed to open", tostring(menu))
+            end
+        end
+    else
+        pcall(closeHalfOpenedBlizzardMenu, menu)
+    end
+    return openFallbackPopup(owner, generator)
+end
+
+
 function Menus.OpenRouteMenu(owner)
-    if type(MenuUtil) ~= "table" or type(MenuUtil.CreateContextMenu) ~= "function" then return nil end
-    return MenuUtil.CreateContextMenu(owner, Menus.RouteMenu)
+    return Menus.OpenContextMenu(owner, Menus.RouteMenu, {
+        noteKey = "route:menu",
+        noteMessage = "Route menu: no MenuUtil in this client; using Cabbie popup menu",
+        errorFlag = "routeMenuFailed",
+        errorLabel = "The Route menu failed to open",
+    })
 end
 
 
@@ -271,11 +1014,14 @@ local function rowMenuGenerator(spec)
                 local ok, err = pcall(entry.onClick)
                 if not ok and FGPS.Log then FGPS.Log:Error("Row menu entry %s failed: %s", entry.label, tostring(err)) end
             end)
-            if type(element) ~= "table" or type(element.SetEnabled) ~= "function" then return end
-            if type(entry.disabled) == "function" then
-                element:SetEnabled(function() return not entryDisabled(entry) end)
-            elseif entry.disabled then
-                element:SetEnabled(false)
+            if type(element) ~= "table" or type(element.SetEnabled) == "function" then
+                if type(element) == "table" then
+                    if type(entry.disabled) == "function" then
+                        element:SetEnabled(function() return not entryDisabled(entry) end)
+                    elseif entry.disabled then
+                        element:SetEnabled(false)
+                    end
+                end
             end
         end
         for _, entry in ipairs(plain) do add(root, root.CreateButton, entry) end
@@ -289,30 +1035,14 @@ end
 
 
 
-
-
-
-
 function Menus.OpenRowMenu(owner, spec)
-    local Look = FGPS.UI.Look
-    if not (Look and Look.TomeHas and Look.TomeHas("global", "MenuUtil")) then
-        if Look and Look.NoteOnce then
-            Look.NoteOnce("tome:rowmenu", "Tome: no MenuUtil in this client; a right-click on a row opens no menu")
-        end
-        return nil
-    end
-    if type(MenuUtil) ~= "table" or type(MenuUtil.CreateContextMenu) ~= "function" then return nil end
     if type(spec) ~= "table" then return nil end
-    if GameTooltip and owner and GameTooltip.IsOwned and GameTooltip:IsOwned(owner) then GameTooltip:Hide() end
-
-
-    local ok, menu = pcall(MenuUtil.CreateContextMenu, owner, rowMenuGenerator(spec))
-    if ok then return menu end
-    if not Menus.rowMenuFailed then
-        Menus.rowMenuFailed = true
-        if FGPS.Log then FGPS.Log:Error("A row's menu failed to open: %s", tostring(menu)) end
-    end
-    return nil
+    return Menus.OpenContextMenu(owner, rowMenuGenerator(spec), {
+        noteKey = "tome:rowmenu",
+        noteMessage = "Tome: no MenuUtil in this client; using Cabbie popup menu",
+        errorFlag = "rowMenuFailed",
+        errorLabel = "A row's menu failed to open",
+    })
 end
 
 

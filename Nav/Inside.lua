@@ -14,13 +14,21 @@ local sqrt = math.sqrt
 local Inside = {
     map = nil,
     mode = nil,
+    enteredDoor = nil,
+    _outdoorSpot = nil,
     names = {},
 }
 FGPS.Inside = Inside
 
+local LOCKED_RAID_MAPS = {
+    [249] = true, [309] = true, [409] = true, [469] = true,
+    [509] = true, [531] = true, [533] = true,
+}
+
 local function listed(map)
+    if map == nil or LOCKED_RAID_MAPS[map] then return nil end
     local maps = FGPS.Data and FGPS.Data.insideMaps
-    return type(maps) == "table" and map ~= nil and maps[map] or nil
+    return type(maps) == "table" and maps[map] or nil
 end
 
 
@@ -175,6 +183,23 @@ function Inside.Runs(leg)
     return runs
 end
 
+local function hasXY(point)
+    return type(point) == "table" and type(point.x) == "number" and type(point.y) == "number"
+end
+
+local function doorOrigin(map, door)
+    if not hasXY(door) then return nil end
+    return {
+        inst = map,
+        x = door.x,
+        y = door.y,
+        z = type(door.z) == "number" and door.z or nil,
+        inferred = true,
+    }
+end
+
+
+
 
 
 
@@ -191,9 +216,19 @@ function Inside.Origin(inside)
             end
         end
     end
-    local door = type(inside) == "table" and inside.map == map and inside.door or nil
-    if type(door) == "table" and type(door.x) == "number" and type(door.y) == "number" then
-        return { inst = map, x = door.x, y = door.y, inferred = true }
+    local fromRoute = type(inside) == "table" and inside.map == map and doorOrigin(map, inside.door) or nil
+    if fromRoute then return fromRoute end
+    local entered = Inside.enteredDoor
+    local fromEntry = type(entered) == "table" and entered.map == map and doorOrigin(map, entered.inside) or nil
+    if fromEntry then return fromEntry end
+    local entrance = Inside.EntranceFor(map)
+    local fromMap = entrance and doorOrigin(map, entrance.inside) or nil
+    if fromMap then return fromMap end
+    for _, rec in ipairs(type(FGPS.Data and FGPS.Data.interiors) == "table" and FGPS.Data.interiors or {}) do
+        if type(rec) == "table" and rec.instanceMap == map then
+            local fallback = doorOrigin(map, rec.inside)
+            if fallback then return fallback end
+        end
     end
     return nil
 end
@@ -235,7 +270,7 @@ end
 
 
 function Inside.EntranceFor(inst, insideX, insideY)
-    if inst == nil then return nil end
+    if inst == nil or LOCKED_RAID_MAPS[inst] then return nil end
     local pos = playerPos()
     local best, bestWing, bestD
     local list = FGPS.Data and FGPS.Data.interiors
@@ -258,9 +293,44 @@ end
 
 
 
+local function rememberOutdoorSpot()
+    local C = FGPS.Coords
+    if C and C.IsInstanced and C.IsInstanced() then return end
+    local pos = playerPos()
+    if hasXY(pos) and pos.inst ~= nil and not listed(pos.inst) then
+        Inside._outdoorSpot = { inst = pos.inst, x = pos.x, y = pos.y }
+    end
+end
+
+local function resolveEnteredDoor(map, out)
+    if not map or LOCKED_RAID_MAPS[map] or not hasXY(out) or out.inst == nil then return nil end
+    local best, bestD
+    local list = FGPS.Data and FGPS.Data.interiors
+    for _, rec in ipairs(type(list) == "table" and list or {}) do
+        local e = type(rec) == "table" and rec.instanceMap == map and rec.entrance or nil
+        if hasXY(e) and e.inst == out.inst and hasXY(rec.inside) then
+            local d = distanceTo(out, e.inst, e.x, e.y)
+            if d and (not bestD or d < bestD) then
+                best, bestD = rec, d
+            end
+        end
+    end
+    if not best then return nil end
+    local landing = best.inside
+    return {
+        map = map,
+        name = best.name,
+        inside = { x = landing.x, y = landing.y, z = type(landing.z) == "number" and landing.z or nil },
+    }
+end
+
+
+
+
 function Inside:Refresh()
     local map = Inside.Map()
     local mode = map and modeOf(map) or nil
+    if self.enteredDoor and self.enteredDoor.map ~= map then self.enteredDoor = nil end
     if map ~= self.map or mode ~= self.mode then
         self.map, self.mode = map, mode
         Events:Fire("INSIDE_CHANGED", map, mode)
@@ -334,10 +404,12 @@ end
 local function nearestDoor(inst, x, y)
     local best, bestD
     for _, rec in ipairs(FGPS.Data and FGPS.Data.interiors or {}) do
-        local e = rec.entrance
-        if type(e) == "table" and e.inst == inst and type(e.x) == "number" and type(e.y) == "number" then
-            local d = FGPS.Coords.Distance(x, y, e.x, e.y)
-            if not bestD or d < bestD then best, bestD = rec, d end
+        if not LOCKED_RAID_MAPS[rec.instanceMap] then
+            local e = rec.entrance
+            if type(e) == "table" and e.inst == inst and type(e.x) == "number" and type(e.y) == "number" then
+                local d = FGPS.Coords.Distance(x, y, e.x, e.y)
+                if not bestD or d < bestD then best, bestD = rec, d end
+            end
         end
     end
     if not best then return nil end
@@ -414,7 +486,8 @@ end
 
 
 local function onPlaceChanged()
-    Inside:Refresh()
+    local map = Inside:Refresh()
+    if not map then rememberOutdoorSpot() end
     noteOutdoor("place")
     local visit = currentVisit()
     if visit then
@@ -427,7 +500,14 @@ end
 
 
 local function onWorldEntered()
+    local out = Inside._outdoorSpot
+    Inside._outdoorSpot = nil
     local map = Inside:Refresh()
+    if map then
+        if out then Inside.enteredDoor = resolveEnteredDoor(map, out) end
+    else
+        rememberOutdoorSpot()
+    end
     noteVisit()
 
     Inside.outdoor = nil
@@ -442,6 +522,9 @@ function Inside:Init()
     for _, event in ipairs({ "ZONE_CHANGED", "ZONE_CHANGED_INDOORS", "NEW_WMO_CHUNK", "ZONE_CHANGED_NEW_AREA" }) do
         Events:RegisterWoW(event, onPlaceChanged, self)
     end
-    Events:RegisterWoW("PLAYER_LEAVING_WORLD", function() noteOutdoor("leaving") end, self)
-    self:Refresh()
+    Events:RegisterWoW("PLAYER_LEAVING_WORLD", function()
+        rememberOutdoorSpot()
+        noteOutdoor("leaving")
+    end, self)
+    if not self:Refresh() then rememberOutdoorSpot() end
 end

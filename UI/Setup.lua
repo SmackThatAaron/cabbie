@@ -17,13 +17,12 @@ FGPS.UI = FGPS.UI or {}
 FGPS.UI.Setup = Setup
 
 Setup.WIDTH = 460
-Setup.HEIGHT = 420
+Setup.HEIGHT = 368
 Setup.GAP = 10
 
 Setup.METHODS = {
     { key = "beacon", field = "BeaconCheck", path = "roadBeacon",         labelKey = "SETUP_METHOD_BEACON", tipKey = "SETUP_METHOD_BEACON_TIP" },
     { key = "arrow",  field = "ArrowCheck",  path = "callout.enabled",    labelKey = "SETUP_METHOD_ARROW",  tipKey = "SETUP_METHOD_ARROW_TIP" },
-    { key = "voice",  field = "VoiceCheck",  path = "voice.enabled",      labelKey = "SETUP_METHOD_VOICE",  tipKey = "SETUP_METHOD_VOICE_TIP" },
     { key = "steps",  field = "StepsCheck",  path = "routeBlock.enabled", labelKey = "SETUP_METHOD_STEPS",  tipKey = "SETUP_METHOD_STEPS_TIP" },
 }
 

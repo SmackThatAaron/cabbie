@@ -1770,8 +1770,216 @@ function Look.Window(spec)
     return win
 end
 
+
+
+
+
+
+
+
+
+local cabbieMenuStyle
+local shimMenuVariants
+
+local function hasMenuAtlas(name)
+    if type(name) ~= "string" then return false end
+    if type(C_Texture) ~= "table" or type(C_Texture.GetAtlasInfo) ~= "function" then return true end
+    local ok, info = pcall(C_Texture.GetAtlasInfo, name)
+    return ok and type(info) == "table" and (info.width or 0) > 0 and (info.height or 0) > 0
+end
+
+local function plainMenuStyle()
+    if cabbieMenuStyle then return cabbieMenuStyle end
+    local base = type(MenuStyleMixin) == "table" and MenuStyleMixin or {}
+    local style = type(CreateFromMixins) == "function" and CreateFromMixins(base) or {}
+    local inset = { left = 8, top = 8, right = 8, bottom = 10 }
+    local padding = { width = 20, height = 0 }
+    function style:Generate()
+        if type(self.AttachTexture) ~= "function" then return end
+        local bg = self:AttachTexture()
+        bg:SetColorTexture(0.05, 0.05, 0.07, 0.95)
+        bg:SetPoint("TOPLEFT", 0, 0)
+        bg:SetPoint("BOTTOMRIGHT", 0, 0)
+    end
+    function style:GetInset() return inset end
+    function style:GetChildExtentPadding() return padding end
+    cabbieMenuStyle = style
+    return style
+end
+
+function Look.MenuStyle()
+    if type(MenuStyle1Mixin) == "table" and hasMenuAtlas("common-dropdown-bg") then
+        return MenuStyle1Mixin
+    end
+    if type(MenuStyle2Mixin) == "table" and hasMenuAtlas("common-dropdown-c-bg") then
+        return MenuStyle2Mixin
+    end
+    if type(MenuStyleMixin) == "table" and type(CreateFromMixins) == "function" then
+        return plainMenuStyle()
+    end
+    return MenuStyle1Mixin or MenuStyle2Mixin or MenuStyleMixin
+end
+
+local function isBlizzardMenuOwner(owner)
+    if type(owner) ~= "table" then return true end
+    if owner == UIParent or owner == WorldMapFrame or owner == Minimap or owner == ObjectiveTrackerFrame then
+        return true
+    end
+    if type(owner.GetName) == "function" then
+        local ok, name = pcall(owner.GetName, owner)
+        if ok and type(name) == "string" and name ~= "" and not name:find("^Cabbie") then
+            return true
+        end
+    end
+    return false
+end
+
+
+
+
+
+function Look.MenuOwner(owner)
+    shimMenuVariants()
+    if isBlizzardMenuOwner(owner) then
+        return owner
+    end
+    if not owner.menuMixin then
+        owner.menuMixin = Look.MenuStyle()
+    end
+    return owner
+end
+
+local function attachMenuLabel(frame, anchor, offsetX, text)
+    if type(frame) ~= "table" or type(frame.AttachFontString) ~= "function" then return nil end
+    local fontString = frame:AttachFontString()
+    frame.fontString = fontString
+    fontString:SetPoint("LEFT", anchor, "RIGHT", offsetX, 0)
+    if fontString.SetHeight then fontString:SetHeight(20) end
+    if fontString.SetTextToFit then
+        fontString:SetTextToFit(text)
+    elseif fontString.SetText then
+        fontString:SetText(text)
+    end
+    return fontString
+end
+
+local function evalSelected(isSelected, data)
+    if type(isSelected) ~= "function" then return isSelected and true or false end
+    local ok, yes = pcall(isSelected, data)
+    return ok and yes and true or false
+end
+
+local function shimCreateCheckbox(text, frame, isSelected, data)
+    local templates = _G.MenuTemplates
+    if type(templates) == "table" and type(templates.CreateSelectionTextures) == "function"
+        and hasMenuAtlas("common-dropdown-ticksquare") and hasMenuAtlas("common-dropdown-icon-checkmark-yellow") then
+        local left1, left2 = templates.CreateSelectionTextures(frame, isSelected, data,
+            "common-dropdown-ticksquare", "common-dropdown-icon-checkmark-yellow")
+        left1:SetPoint("LEFT")
+        if left2 then left2:SetPoint("CENTER", left1, "CENTER", 2, 1) end
+        attachMenuLabel(frame, left1, 7, text)
+        return left1, left2
+    end
+    if type(frame) ~= "table" or type(frame.AttachTexture) ~= "function" then return nil end
+    local left1 = frame:AttachTexture()
+    frame.leftTexture1 = left1
+    left1:SetPoint("LEFT")
+    left1:SetSize(16, 16)
+    local checked = evalSelected(isSelected, data)
+    local checkFile = "Interface\\Buttons\\UI-CheckBox-Check"
+    local boxFile = "Interface\\Buttons\\UI-CheckBox-Up"
+    if checked and Look.HasFile(checkFile) then
+        left1:SetTexture(checkFile)
+    elseif not checked and Look.HasFile(boxFile) then
+        left1:SetTexture(boxFile)
+    elseif checked then
+        local r, g, b = Look.Color("match")
+        left1:SetColorTexture(r, g, b, 1)
+    else
+        left1:SetColorTexture(0.35, 0.35, 0.35, 0.6)
+    end
+    attachMenuLabel(frame, left1, 6, text)
+    return left1
+end
+
+local function shimCreateRadio(text, frame, isSelected, data)
+    local templates = _G.MenuTemplates
+    if type(templates) == "table" and type(templates.CreateSelectionTextures) == "function"
+        and hasMenuAtlas("common-dropdown-tickradial") and hasMenuAtlas("common-dropdown-icon-radialtick-yellow") then
+        local left1, left2 = templates.CreateSelectionTextures(frame, isSelected, data,
+            "common-dropdown-tickradial", "common-dropdown-icon-radialtick-yellow")
+        left1:SetPoint("LEFT", -3, 0)
+        if left2 then left2:SetPoint("TOPLEFT", left1, "TOPLEFT") end
+        attachMenuLabel(frame, left1, 1, text)
+        return left1, left2
+    end
+    if type(frame) ~= "table" or type(frame.AttachTexture) ~= "function" then return nil end
+    local left1 = frame:AttachTexture()
+    frame.leftTexture1 = left1
+    left1:SetPoint("LEFT")
+    left1:SetSize(16, 16)
+    local checked = evalSelected(isSelected, data)
+    local radioFile = "Interface\\Buttons\\UI-RadioButton"
+    if Look.HasFile(radioFile) then
+        left1:SetTexture(radioFile)
+        if left1.SetTexCoord then
+            if checked then left1:SetTexCoord(0.25, 0.5, 0, 1) else left1:SetTexCoord(0, 0.25, 0, 1) end
+        end
+    elseif checked then
+        local r, g, b = Look.Color("match")
+        left1:SetColorTexture(r, g, b, 1)
+    else
+        left1:SetColorTexture(0.35, 0.35, 0.35, 0.6)
+    end
+    attachMenuLabel(frame, left1, 6, text)
+    return left1
+end
+
+local function shimCreateSearchEntry(text, frame)
+    if type(frame) ~= "table" or type(frame.AttachTexture) ~= "function" then return nil end
+    local left1 = frame:AttachTexture()
+    frame.leftTexture1 = left1
+    if hasMenuAtlas("common-search-magnifyingglass") and left1.SetAtlas then
+        left1:SetAtlas("common-search-magnifyingglass")
+    elseif Look.HasFile(ICONS.search.file) then
+        left1:SetTexture(ICONS.search.file)
+    else
+        local r, g, b = Look.Color("grey")
+        left1:SetColorTexture(r, g, b, 0.8)
+    end
+    left1:SetSize(12, 12)
+    left1:SetPoint("LEFT", -1, 1)
+    local fontString = attachMenuLabel(frame, left1, 7, text)
+    if fontString and fontString.SetAlpha then fontString:SetAlpha(0.5) end
+    return left1
+end
+
+shimMenuVariants = function()
+    if type(MenuVariants) ~= "table" then return end
+    local okContext, resContext = pcall(MenuVariants.GetDefaultContextMenuMixin)
+    if not okContext or not resContext then
+        rawset(MenuVariants, "GetDefaultContextMenuMixin", Look.MenuStyle)
+    end
+    local okMenu, resMenu = pcall(MenuVariants.GetDefaultMenuMixin)
+    if not okMenu or not resMenu then
+        rawset(MenuVariants, "GetDefaultMenuMixin", Look.MenuStyle)
+    end
+    if type(MenuVariants.CreateCheckbox) ~= "function" then
+        rawset(MenuVariants, "CreateCheckbox", shimCreateCheckbox)
+    end
+    if type(MenuVariants.CreateRadio) ~= "function" then
+        rawset(MenuVariants, "CreateRadio", shimCreateRadio)
+    end
+    if type(MenuVariants.CreateSearchEntry) ~= "function" then
+        rawset(MenuVariants, "CreateSearchEntry", shimCreateSearchEntry)
+    end
+end
+shimMenuVariants()
+Look.ShimMenuVariants = shimMenuVariants
+
 if FGPS.Events then
     FGPS.Events:Register("ADDON_READY", function()
+        shimMenuVariants()
         Look.NoteClientAnswers()
         Look.NoteTomeAnswers()
     end, Look)

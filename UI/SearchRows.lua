@@ -53,7 +53,7 @@ local SERVICE_TYPES = {
 -- Sections the Places page groups Destinations.Search results under (1 Places, 2 Quest places,
 -- nil Other), so GuardedResultsLast keeps moved service rows inside their own section.
 local PLACE_SECTIONS = {
-    town = 1, landmark = 1, dungeon = 1, raid = 1, capital = 1, room = 1,
+    town = 1, landmark = 1, dungeon = 1, raid = 1, capital = 1, room = 1, boss = 1,
     zone = 1, area = 1, questplace = 2,
 }
 local SIDE_WORDS = { [1] = "Alliance", [2] = "Horde" }
@@ -119,7 +119,7 @@ end
 
 -- One result of the place search as a row. A place of the kind a service word asks for is a
 -- service row; it and a town or a capital the text names lead the list.
-local function placeRow(result, base)
+local function placeRow(result, base, activeInside)
     local dest = type(result) == "table" and result.dest or nil
     if type(dest) ~= "table" or type(dest.name) ~= "string" then return nil end
     local zone = dest.zoneName
@@ -128,13 +128,16 @@ local function placeRow(result, base)
         zone = (zone and zone ~= "" and (zone .. ", ") or "") .. L[SIDE_WORDS[dest.faction]]
     end
     local score = type(result.score) == "number" and result.score or 0
+    local fav = result.favorite == true
+    local inDungeon = activeInside ~= nil and dest.kind == "inside" and dest.inst == activeInside
     local service = base ~= nil and SERVICE_TYPES[base] ~= nil and SERVICE_TYPES[base][dest.type] == true
     return {
         kind = service and "service" or "place",
         icon = TYPE_ICON[dest.type] or "place",
         name = dest.name, zone = zone, yards = result.distance, score = score, dest = dest,
-        lead = service or (LEADING[dest.type] == true and score >= 60),
-        group = service and 0 or (LEADING[dest.type] and 1 or 3),
+        favorite = fav or nil,
+        lead = fav or inDungeon or service or (LEADING[dest.type] == true and score >= 60),
+        group = fav and -1 or ((service or inDungeon) and 0 or (LEADING[dest.type] and 1 or 3)),
     }
 end
 
@@ -201,12 +204,13 @@ function Rows.For(text, minLetters)
                 -- graveyards of one name in one city): the first the engine gave stays. A service row
                 -- is kept: the nearest of a service often share a name ("Mailbox", Stormwind City),
                 -- and their distances tell them apart.
+                local activeInside = FGPS.Inside and FGPS.Inside.Map and FGPS.Inside.Map() or nil
                 local listed = {}
                 for _, result in ipairs(found) do
-                    local row = placeRow(result, base)
+                    local row = placeRow(result, base, activeInside)
                     local key = row and row.kind ~= "service" and (row.name .. "\0" .. (row.zone or "")) or nil
                     local twin = row and ((row.dest.type == "zone" and cities[row.name]) or (key and listed[key]))
-                    local otherTrade = row and class and row.dest.type == "trainer" and trainerKind(row.name) ~= class
+                    local otherTrade = row and class and not row.favorite and row.dest.type == "trainer" and trainerKind(row.name) ~= class
                     if row and not twin and not otherTrade then
                         rows[#rows + 1] = row
                         if key then listed[key] = true end
@@ -248,7 +252,7 @@ function Rows.GuardedLast(rows)
     for _, row in ipairs(rows) do
         local d = row.dest
         local own = type(d) == "table" and (not d.learned or d.questie) and d.faction or nil
-        if row.kind == "service" and type(d) == "table" and Services.GuardedLeftOut(index, d.inst, d.x, d.y, own) then
+        if not row.favorite and row.kind == "service" and type(d) == "table" and Services.GuardedLeftOut(index, d.inst, d.x, d.y, own) then
             row.guarded = true
             back[#back + 1] = row
         else
@@ -298,7 +302,7 @@ function Rows.GuardedResultsLast(results, text)
                 local entry = results[i]
                 local d = type(entry) == "table" and (entry.dest or entry) or nil
                 local own = type(d) == "table" and (not d.learned or d.questie) and d.faction or nil
-                if type(d) == "table" and types[d.type] and Services.GuardedLeftOut(index, d.inst, d.x, d.y, own) then
+                if not entry.favorite and type(d) == "table" and types[d.type] and Services.GuardedLeftOut(index, d.inst, d.x, d.y, own) then
                     back[#back + 1] = entry
                 else
                     front[#front + 1] = entry

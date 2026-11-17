@@ -10,7 +10,7 @@ FGPS.Cost = Cost
 
 local L = FGPS.L
 local Const = FGPS.Const
-local floor, ceil, sqrt = math.floor, math.ceil, math.sqrt
+local floor, ceil, sqrt, abs = math.floor, math.ceil, math.sqrt, math.abs
 local type = type
 
 
@@ -32,8 +32,16 @@ Const.PREFER_ROADS_SURFACE = 1.20
 
 
 
-Const.ROADS_ONLY_SURFACE = 3.0
-Const.ROADS_ONLY_FACTOR = 4.0
+
+
+Const.ROADS_ONLY_SURFACE = 4.5
+Const.ROADS_ONLY_FACTOR = 6.0
+
+
+
+
+Const.ROAD_EXIT_SECONDS = 1.5
+Const.PREFER_ROADS_EXIT_SECONDS = 1.5
 Const.TELEPORT_MAX_WAIT = 120
 
 
@@ -312,6 +320,24 @@ function Cost.RoadFactor(variant, kind)
         if kind == Cost.KIND_MESH then return Const.MESH_SEARCH_BIAS end
     end
     return 1.0
+end
+
+local ROAD_EXIT_KINDS = {
+    [1] = true,
+    [2] = true,
+    [3] = true,
+    [14] = true,
+    [Cost.KIND_MESH] = true,
+    [Cost.KIND_TERRAIN_GRID] = true,
+    [Cost.KIND_SURFACE] = true,
+}
+
+
+function Cost.RoadExitSeconds(variant, kind, onFoot, fromRoad, toRoad)
+    if onFoot or not fromRoad or toRoad or not ROAD_EXIT_KINDS[kind] then return 0 end
+    if variant == "roads_only" then return Const.ROAD_EXIT_SECONDS end
+    if variant == "prefer_roads" then return Const.PREFER_ROADS_EXIT_SECONDS end
+    return 0
 end
 
 
@@ -658,26 +684,40 @@ function Cost.WaterShare(inst, x1, y1, x2, y2)
     local layer = data and data.water and data.water[inst]
     if not layer or x1 == nil or x2 == nil then return 0 end
     local grid = layer.c
-    if type(grid) ~= "table" then return 0 end
+    local s = layer.s
+    local sGrid = type(s) == "table" and type(s.c) == "table" and s.c or nil
+    if type(grid) ~= "table" and not sGrid then return 0 end
     local dx, dy = x2 - x1, y2 - y1
     local d = sqrt(dx * dx + dy * dy)
     if d < WATER_MIN_YARDS then return 0 end
     local cell = layer.cell or WATER_CELL_DEFAULT
     local w, h = layer.w or 0, layer.h or 0
+    local sCell = sGrid and (s.cell or 50) or nil
+    local sw, sh = sGrid and (s.w or 0) or 0, sGrid and (s.h or 0) or 0
 
 
 
-    local steps = ceil(d / cell)
+
+    local sampleCell = (type(grid) == "table" and next(grid) ~= nil) and cell or (sCell or cell)
+    local steps = ceil(d / sampleCell)
     if steps > WATER_MAX_SAMPLES then steps = WATER_MAX_SAMPLES end
     if steps < 1 then steps = 1 end
     local hits = 0
     for i = 0, steps do
         local t = i / steps
-        local col = floor((x1 + dx * t - layer.ox) / cell)
-        local row = floor((y1 + dy * t - layer.oy) / cell)
-        if col >= 0 and row >= 0 and col < w and row < h and grid[row * w + col + 1] then
-            hits = hits + 1
+        local px, py = x1 + dx * t, y1 + dy * t
+        local wet = false
+        if type(grid) == "table" then
+            local col = floor((px - layer.ox) / cell)
+            local row = floor((py - layer.oy) / cell)
+            wet = col >= 0 and row >= 0 and col < w and row < h and grid[row * w + col + 1] ~= nil
         end
+        if not wet and sGrid then
+            local scol = floor((px - layer.ox) / sCell)
+            local srow = floor((py - layer.oy) / sCell)
+            wet = scol >= 0 and srow >= 0 and scol < sw and srow < sh and sGrid[srow * sw + scol + 1] ~= nil
+        end
+        if wet then hits = hits + 1 end
     end
     return hits / (steps + 1)
 end
@@ -729,25 +769,27 @@ function Cost.OverSwim(inst, x1, y1, x2, y2)
     local s = layer and layer.s
     if not s or type(s.c) ~= "table" or x1 == nil or x2 == nil then return false end
     local cell = s.cell or 50
-    local dx, dy = x2 - x1, y2 - y1
-    local d = sqrt(dx * dx + dy * dy)
-    if d <= 2 * cell then return false end
+    local ox, oy = layer.ox, layer.oy
+    local ac, ar = floor((x1 - ox) / cell), floor((y1 - oy) / cell)
+    local zc, zr = floor((x2 - ox) / cell), floor((y2 - oy) / cell)
+    if abs(zc - ac) + abs(zr - ar) <= 1 then return false end
     local slot = swimSlot(inst, x1, y1, x2, y2)
     if swimGrid[slot] == s and swimInst[slot] == inst and swimX1[slot] == x1 and swimY1[slot] == y1 and swimX2[slot] == x2 and swimY2[slot] == y2 then
         return swimHit[slot]
     end
+    local dx, dy = x2 - x1, y2 - y1
+    local d = sqrt(dx * dx + dy * dy)
     local w, h, grid = s.w or 0, s.h or 0, s.c
     local lo, hi = swimSpans(s)
-    local ox, oy = layer.ox, layer.oy
 
-    local steps = ceil(d / cell)
+
+    local steps = ceil((d <= 4 * cell and 4 or 2) * d / cell)
     local hit = false
     for i = 1, steps - 1 do
-        local along = d * i / steps
-        if along >= cell and along <= d - cell then
-            local t = i / steps
-            local col = floor((x1 + dx * t - ox) / cell)
-            local row = floor((y1 + dy * t - oy) / cell)
+        local t = i / steps
+        local col = floor((x1 + dx * t - ox) / cell)
+        local row = floor((y1 + dy * t - oy) / cell)
+        if not (col == ac and row == ar) and not (col == zc and row == zr) then
             local span = lo[row + 1]
             if span and col >= span and col <= hi[row + 1] and col >= 0 and row >= 0 and col < w and row < h
                 and grid[row * w + col + 1] then

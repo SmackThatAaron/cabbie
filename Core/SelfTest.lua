@@ -110,8 +110,6 @@ local REQUIRED_MEMBERS = {
 
 local OPTIONAL_MEMBERS = {
     { "C_TaxiMap", "GetTaxiNodesForMap", "GetAllTaxiNodes" },
-    { "C_VoiceChat", "SpeakText", "GetTtsVoices" },
-    { "C_TTSSettings", "GetVoiceOptionID" },
     { "C_SuperTrack", "SetSuperTrackedUserWaypoint" },
     { "C_Map", "SetUserWaypoint", "GetUserWaypoint", "CanSetUserWaypointOnMap", "GetMapChildrenInfo" },
     { "WorldMapFrame", "GetCanvasScale", "GetViewRect" },
@@ -418,29 +416,6 @@ end
 
 
 
-local function checkVoice()
-    local Voice = FGPS.UI and FGPS.UI.Voice
-    if not Voice then return "skip", "UI/Voice.lua is not installed" end
-    if not Voice:IsEnabled() then return "skip", "voice is turned off in the settings" end
-
-
-    if Voice:UsesClips() then
-        if not Voice:IsAvailable() then return "fail", "voice is on, but the client has no PlaySoundFile for the recorded voice" end
-        local s = Voice.stats or {}
-        if (s.clipsFailed or 0) > 0 and (s.clipsPlayed or 0) == 0 then
-            return "fail", format("the game refused all %d recorded clip(s) this session (last %s: %s)", s.clipsFailed,
-                tostring(s.lastFailedClip), tostring(s.lastFailure))
-        end
-        return "pass", format("Cabbie's recorded voice speaks: %d clip(s) played, %d refused this session", s.clipsPlayed or 0, s.clipsFailed or 0)
-    end
-    local voices = Voice:GetVoices() or {}
-    local id = Voice:GetVoiceID()
-    return "pass", format("the game's text-to-speech speaks: %d voice(s) available, using %s", #voices, tostring(Voice:GetVoiceName(id) or id))
-end
-
-
-
-
 
 
 
@@ -669,7 +644,6 @@ SelfTest.checks = {
     { id = "data",      label = "bundled data", fn = checkData },
     { id = "coords",    label = "coordinates",  fn = checkCoords },
     { id = "access",    label = "access",       fn = checkAccess },
-    { id = "voice",     label = "voice",        fn = checkVoice },
     { id = "saved",     label = "saved vars",   fn = checkSaved },
     { id = "positions", label = "frames",       fn = checkPositions },
     { id = "route",     label = "sample route", fn = checkRoute, async = true },
@@ -981,16 +955,6 @@ local function perfCounters()
         frameBudgetMs = report.frameBudgetMs,
         uptimeSeconds = round1(report.uptime),
     }
-end
-
-
-
-local function voiceRecord()
-    local Voice = FGPS.UI and FGPS.UI.Voice
-    if not (Voice and Voice.Report) then return nil end
-    local ok, report = pcall(Voice.Report, Voice)
-    if ok and type(report) == "table" then return report end
-    return nil
 end
 
 local function compactResult(result)
@@ -1374,7 +1338,6 @@ local function onLogout()
         routes = keptRoutes,
         loads = keptLoads,
         perf = perfCounters(),
-        voice = voiceRecord(),
         trainers = trainerRecord(),
         questSearch = questRecord(),
 
@@ -1390,9 +1353,6 @@ local function onLogout()
 
         showOnMapTaint = FGPS.UI and FGPS.UI.Menus and FGPS.UI.Menus.showOnMapTaint
             and Util.DeepCopy(FGPS.UI.Menus.showOnMapTaint) or nil,
-
-        ttsStatus = FGPS.UI and FGPS.UI.Voice and FGPS.UI.Voice.ttsStatus
-            and Util.DeepCopy(FGPS.UI.Voice.ttsStatus) or nil,
     }
 end
 

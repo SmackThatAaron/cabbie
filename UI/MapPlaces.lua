@@ -117,9 +117,9 @@ local MapPlaces = {
         { key = "inns", types = { 7 }, texture = MEDIA .. "place_inn", game = tracking("Innkeeper"), default = false,
           label = "Show inns on the world map",
           tooltip = "Inns of the zone you are looking at get a small icon on the world map. Left-click one to route there." },
-        { key = "dungeons", types = { 3, 4 }, texture = MEDIA .. "place_dungeon", default = false,
-          label = "Show dungeon and raid entrances on the world map",
-          tooltip = "Dungeon and raid entrances of the zone you are looking at get a small icon on the world map. Left-click one to route there." },
+        { key = "dungeons", types = { 3 }, texture = MEDIA .. "place_dungeon", default = false,
+          label = "Show dungeon entrances on the world map",
+          tooltip = "Dungeon entrances of the zone you are looking at get a small icon on the world map. Left-click one to route there." },
         { key = "banks", types = { 11 }, texture = MEDIA .. "place_bank", game = tracking("Banker"), default = false,
           label = "Show banks on the world map",
           tooltip = "Banks of the zone you are looking at get a small icon on the world map. Left-click one to route there." },
@@ -263,19 +263,49 @@ end
 
 
 local indexCache = {}
+local function isHiddenPOI(index, P)
+    local D = FGPS.Destinations
+    if D and D.IsLockedRaidPOI and D.IsLockedRaidPOI(index, P) then return true end
+    local SS = FGPS.ServiceSearch
+    if SS and SS.IsShadowedPOI and SS.IsShadowedPOI(index) then return true end
+    return false
+end
+local function shadowedToken()
+    local SS = FGPS.ServiceSearch
+    local q = SS and SS.questie
+    if type(q) ~= "table" or type(q.shadowedPOI) ~= "table" then return nil end
+    if q.shadowedForRows ~= nil and q.rows ~= q.shadowedForRows then return nil end
+    if next(q.shadowedPOI) == nil then return nil end
+    return q.shadowedPOI
+end
+function MapPlaces.InvalidateCache()
+    wipe(indexCache)
+end
 local function indicesFor(row)
     local P = poi()
     if not P then return {} end
+    local shadowed = shadowedToken()
     local cached = indexCache[row.key]
-    if cached and cached.source == P then return cached.list end
+    if cached and cached.source == P and cached.shadowed == shadowed then return cached.list end
     local wanted = {}
     for _, code in ipairs(row.types) do wanted[code] = true end
     local list = {}
     for i = 1, P.n or 0 do
-        if wanted[P.type[i]] and not (row.skip and row.skip(i, P)) then list[#list + 1] = i end
+        if wanted[P.type[i]] and not isHiddenPOI(i, P) and not (row.skip and row.skip(i, P)) then
+            list[#list + 1] = i
+        end
     end
-    indexCache[row.key] = { source = P, list = list }
+    indexCache[row.key] = { source = P, shadowed = shadowed, list = list }
     return list
+end
+
+
+
+function MapPlaces.CategoryHasPlaces(row)
+    if type(row) ~= "table" or type(row.types) ~= "table" then return false end
+    local P = poi()
+    if not P then return true end
+    return #indicesFor(row) > 0
 end
 
 
@@ -354,7 +384,7 @@ function MapPlaces.PlacesFor(mapID)
     if not P then return out end
     local lists, total = {}, 0
     for _, row in ipairs(MapPlaces.CATEGORIES) do
-        if MapPlaces.CategoryEnabled(row) then
+        if MapPlaces.CategoryEnabled(row) and MapPlaces.CategoryHasPlaces(row) then
             local list = {}
             for _, i in ipairs(indicesFor(row)) do
                 local belongs = P.map[i] == mapID
@@ -439,6 +469,60 @@ end
 
 
 
+function MapPlaces.StartBoss(dest)
+    if type(dest) ~= "table" then return false end
+    local WorldMap = FGPS.UI.WorldMap
+    local Search = FGPS.UI.Search
+    if WorldMap and WorldMap.GoTo then
+        if Search and Search.addStopMode == true then
+            return WorldMap.GoTo(dest, { addStop = true, start = false })
+        end
+        return WorldMap.GoTo(dest, { start = true, quiet = true })
+    end
+    local Go = FGPS.UI.Go
+    if Go and Go.Start then return Go.Start(dest) end
+    if Search and Search.GoTo then return Search.GoTo(dest, "start", { quiet = true }) end
+    return false
+end
+
+local function bossEntriesForMap(instMap, fallbackToRooms)
+    local Destinations = FGPS.Destinations
+    if type(instMap) ~= "number" or not Destinations then return nil end
+    local rows
+    if Destinations.InsideBosses then
+        local ok, list = pcall(Destinations.InsideBosses, instMap)
+        if ok and type(list) == "table" and #list > 0 then rows = list end
+    end
+    if not rows and fallbackToRooms and Destinations.InsideBossesFirst then
+        local ok, list = pcall(Destinations.InsideBossesFirst, instMap)
+        if ok and type(list) == "table" and #list > 0 then rows = list end
+    end
+    if not rows then return nil end
+    local entries = {}
+    for _, row in ipairs(rows) do
+        local dest = row.dest
+        if type(dest) == "table" and type(dest.name) == "string" then
+            entries[#entries + 1] = {
+                label = dest.name,
+                onClick = function() MapPlaces.StartBoss(dest) end,
+            }
+        end
+    end
+    return #entries > 0 and entries or nil
+end
+
+function MapPlaces.OpenBossMenu(owner)
+    local Inside = FGPS.Inside
+    local Menus = FGPS.UI.Menus
+    local instMap = Inside and Inside.Map and Inside.Map() or nil
+    local rec = instMap and FGPS.Data and FGPS.Data.insideMaps and FGPS.Data.insideMaps[instMap] or nil
+    if not (rec and Menus and Menus.OpenRowMenu) then return nil end
+    local entries = bossEntriesForMap(instMap, true)
+    if not entries then return nil end
+    local title = type(rec.name) == "string" and rec.name ~= "" and rec.name or L["Bosses"]
+    return Menus.OpenRowMenu(owner or MapPlaces.bossButton, { title = title, entries = entries })
+end
+
 function MapPlaces.OpenIconMenu(icon)
     local index = type(icon) == "table" and icon.poiIndex or nil
     local Destinations = FGPS.Destinations
@@ -477,13 +561,21 @@ function MapPlaces.OpenIconMenu(icon)
             }
         end
     end
+    local P = FGPS.Data and FGPS.Data.poi
+    local code = P and P.type and P.type[index] or nil
+    if (code == 3 or code == 4) and Destinations.DungeonMapForPOI then
+        local okMap, instMap = pcall(Destinations.DungeonMapForPOI, index)
+        local bossEntries = okMap and instMap and bossEntriesForMap(instMap, false) or nil
+        if bossEntries then
+            entries[#entries + 1] = { label = L["Bosses"], entries = bossEntries }
+        end
+    end
     if Search and Search.ToggleFavorite then
         entries[#entries + 1] = {
             label = favorite and L["Remove from Favorites"] or L["Add to Favorites"],
             onClick = function() Search:ToggleFavorite(dest) end,
         }
     end
-    local P = FGPS.Data and FGPS.Data.poi
     local title = type(dest.name) == "string" and dest.name or (P and P.name and P.name[index]) or nil
     return Menus.OpenRowMenu(icon, { title = title, entries = entries })
 end
@@ -630,8 +722,89 @@ local function positionIcon(icon, canvas, w, h, scale)
     icon:SetPoint("CENTER", canvas, "TOPLEFT", (icon.normalizedX * w) * scale, -(icon.normalizedY * h) * scale)
 end
 
+local function hideBossButton()
+    local btn = MapPlaces.bossButton
+    if not btn then return end
+    if GameTooltip and (not GameTooltip.IsOwned or GameTooltip:IsOwned(btn)) then GameTooltip:Hide() end
+    btn:Hide()
+end
+
+local function ensureBossButton()
+    if MapPlaces.bossButton then return MapPlaces.bossButton end
+    if not MapPlaces.layer or type(CreateFrame) ~= "function" then return nil end
+    local Look = FGPS.UI.Look
+    local btn = CreateFrame("Button", nil, MapPlaces.layer)
+    btn:Hide()
+    btn:EnableMouse(true)
+    btn:EnableMouseWheel(false)
+    btn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    btn.Bg = btn:CreateTexture(nil, "BACKGROUND")
+    btn.Bg:SetAllPoints(btn)
+    btn.Bg:SetColorTexture(0.06, 0.06, 0.08, 0.88)
+    btn.Icon = btn:CreateTexture(nil, "ARTWORK")
+    btn.Icon:SetSize(16, 16)
+    btn.Icon:SetPoint("LEFT", btn, "LEFT", 8, 0)
+    btn.Icon:SetTexture(MEDIA .. "place_dungeon")
+    btn.Label = Look and Look.FontString and Look.FontString(btn, "OVERLAY", "row")
+        or btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    btn.Label:SetPoint("LEFT", btn.Icon, "RIGHT", 6, 0)
+    btn.Label:SetJustifyH("LEFT")
+    if Look and Look.Color then btn.Label:SetTextColor(Look.Color("header")) end
+    btn:SetScript("OnClick", function(self) MapPlaces.OpenBossMenu(self) end)
+    btn:SetScript("OnEnter", function(self)
+        self.Bg:SetColorTexture(0.12, 0.11, 0.15, 0.95)
+        if Look and Look.Tooltip then
+            Look.Tooltip(self, self.fgpsTitle or L["Bosses"], nil, L["Click to open"], "ANCHOR_TOPLEFT")
+        end
+    end)
+    btn:SetScript("OnLeave", function(self)
+        self.Bg:SetColorTexture(0.06, 0.06, 0.08, 0.88)
+        if GameTooltip and (not GameTooltip.IsOwned or GameTooltip:IsOwned(self)) then GameTooltip:Hide() end
+    end)
+    MapPlaces.bossButton = btn
+    return btn
+end
+
+function MapPlaces:UpdateBossButton()
+    local map = WorldMapFrame
+    local Inside = FGPS.Inside
+    local instMap = Inside and Inside.Map and Inside.Map() or nil
+    local rec = instMap and FGPS.Data and FGPS.Data.insideMaps and FGPS.Data.insideMaps[instMap] or nil
+    if not (map and self.layer and rec and (not map.IsShown or map:IsShown()))
+        or (FGPS.Perf and FGPS.Perf.guidanceEnabled == false) then
+        hideBossButton()
+        return false
+    end
+    local entries = bossEntriesForMap(instMap, true)
+    if not entries then
+        hideBossButton()
+        return false
+    end
+    local btn = ensureBossButton()
+    if not btn then return false end
+    local hasBosses = type(rec.bosses) == "table" and #rec.bosses > 0
+    local text = type(rec.name) == "string" and rec.name ~= ""
+        and (hasBosses and format(L["%s: %s"], rec.name, L["Bosses"]) or rec.name)
+        or L["Bosses"]
+    btn.fgpsTitle = type(rec.name) == "string" and rec.name ~= "" and rec.name or L["Bosses"]
+    btn.Label:SetText(text)
+    local tw = btn.Label.GetStringWidth and btn.Label:GetStringWidth() or 90
+    if tw <= 0 then tw = #text * 6.5 end
+    btn:SetSize(max(96, 8 + 16 + 6 + tw + 10), 26)
+    local scale = canvasScale()
+    btn:SetScale(1 / scale)
+    local baseLevel = self.layer:GetFrameLevel() or 1
+    btn:SetFrameLevel(baseLevel + MapPlaces.MAX_ICONS + 2)
+    local picture = map.ScrollContainer or (map.GetCanvasContainer and map:GetCanvasContainer()) or self.layer
+    btn:ClearAllPoints()
+    btn:SetPoint("BOTTOMLEFT", picture, "BOTTOMLEFT", 14, 14)
+    btn:Show()
+    return true
+end
+
 function MapPlaces:ClearDrawing()
     if self.pool then self.pool:ReleaseAll() end
+    hideBossButton()
     self.lastCount = 0
     self.lastDrawMapID = nil
 end
@@ -687,17 +860,21 @@ function MapPlaces:Redraw()
         icon:Show()
     end
     self.lastCount, self.lastDrawMapID = count, mapID
+    self:UpdateBossButton()
     if Perf then Perf:End("mapPlaces") end
 end
 
 
 function MapPlaces:OnScaleChanged()
+    local scale = canvasScale()
+    if self.bossButton and self.bossButton:IsShown() then
+        self.bossButton:SetScale(1 / scale)
+    end
     if not self.pool or self.lastCount == 0 then return end
     local map = WorldMapFrame
     local canvas = map and map:GetCanvas()
     if not canvas then return end
     local w, h = canvas:GetWidth(), canvas:GetHeight()
-    local scale = canvasScale()
     for icon in self.pool:EnumerateActive() do
         if icon.normalizedX then positionIcon(icon, canvas, w, h, scale) end
     end
@@ -789,6 +966,7 @@ function MapPlaces:Init()
         self.eventsBound = true
         local Events = FGPS.Events
         Events:Register("SETTINGS_CHANGED", onSettingsChanged, self)
+        Events:Register("WORLD_ENTERED", function() MapPlaces:Redraw() end, self)
 
 
         Events:Register("ADDON_READY", function() MapPlaces:Attach() end, self)

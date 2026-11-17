@@ -21,9 +21,8 @@ Contents
   7. Blizzard game data obtained through wago.tools (no licence; statement)
   8. warcraft.wiki.gg zone geography prose (CC BY-SA 4.0)
   9. Carbonite zone connections (GPL-3.0)
- 10. Recorded voice (Kokoro-82M, Apache-2.0)
- 11. Components that are NOT included
- 12. Full text of the GNU General Public License, version 3
+ 10. Components that are NOT included
+ 11. Full text of the GNU General Public License, version 3
 
 
 1. Cabbie
@@ -39,7 +38,7 @@ Cabbie is distributed in the hope that it will be useful, but WITHOUT ANY WARRAN
 without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
 PURPOSE. See the GNU General Public License for more details.
 
-The full text of the licence is in section 12 of this file and in the file LICENSE at the
+The full text of the licence is in section 11 of this file and in the file LICENSE at the
 root of the source repository.
 
 The licence covers the Cabbie code, its data-generation tooling and the selection and
@@ -343,18 +342,7 @@ is a judgement about somebody else's licensing, not a fact Cabbie can establish;
 taken is six coordinates in Cabbie/Data/Chokepoints.lua (marked with evidence bit 8).
 
 
-10. Recorded voice (Kokoro-82M, Apache-2.0)
--------------------------------------------
-
-The spoken clips in Media/Voice/ were made for Cabbie with the Kokoro-82M text-to-speech
-model by hexgrad (https://huggingface.co/hexgrad/Kokoro-82M), voice "am_michael", run
-offline through kokoro-onnx (MIT). The model and its voices are released under the Apache
-License, version 2.0 (https://www.apache.org/licenses/LICENSE-2.0). The model itself is not
-part of the addon; only the audio it produced is. The clips are distributed with Cabbie
-under the GPL-3.0-or-later like the rest of the addon.
-
-
-11. Components that are NOT included
+10. Components that are NOT included
 ------------------------------------
 
 For the avoidance of doubt, Cabbie does not contain code or data from TomTom
@@ -366,7 +354,7 @@ https://github.com/Gethe/wow-ui-source, branch "forever") was read to learn the 
 API and frame behaviour; nothing from it was copied.
 
 
-12. GNU General Public License, version 3
+11. GNU General Public License, version 3
 -----------------------------------------
 
                     GNU GENERAL PUBLIC LICENSE

@@ -25,7 +25,6 @@
 
 
 
-
 local ADDON_NAME, FGPS = ...
 
 local L = FGPS.L
@@ -68,10 +67,8 @@ function UISettings.MapClickLabel(modifier)
     return nil
 end
 
-local COMBAT_MODES = { { "all", "Keep All Guidance" },
-                       { "visuals_only", "Visuals only, no voice" },
+local COMBAT_MODES = { { "visuals_only", "Keep All Guidance" },
                        { "hide_all", "Hide all guidance" } }
-local VERBOSITY = { { "minimal", "Minimal" }, { "normal", "Normal" }, { "detailed", "Detailed" } }
 local ASSUME_MOUNT = { { "auto", "Detect automatically" }, { "none", "Never mounted" },
                        { "60", "60% mount" }, { "100", "100% mount" } }
 
@@ -154,20 +151,9 @@ local function optionsFunction(entries)
     end
 end
 
-local function dropdown(category, path, name, tooltip, entries, kind)
-    local setting = proxy(category, path, kind or "string", L[name])
+local function dropdown(category, path, name, tooltip, entries, kind, proxyOpts)
+    local setting = proxy(category, path, kind or "string", L[name], proxyOpts)
     return Settings.CreateDropdown(category, setting, optionsFunction(entries), L[tooltip or name])
-end
-
-local function voiceOptions()
-    local container = Settings.CreateControlTextContainer()
-    local Voice = FGPS.UI.Voice
-    local voices = Voice and Voice.RefreshVoices and Voice:RefreshVoices() or {}
-    if #voices == 0 then
-        container:Add(0, L["None reported by the game"])
-    end
-    for _, v in ipairs(voices) do container:Add(v.voiceID, tostring(v.name)) end
-    return container:GetData()
 end
 
 
@@ -384,7 +370,11 @@ local function registerGuidance(category)
 
     checkbox(category, "askCorpseRun", "Ask to take me back to my body when I die",
         "When you release your spirit, Cabbie asks whether to guide you back to your body. With this off, nothing is asked: as a ghost, pick Go to My Corpse at the top of the Places page, in your route's menu, or in the menu you get by right-clicking Cabbie beside the minimap.")
-    dropdown(category, "combatMode", "In combat", "What guidance keeps doing while you are in combat.", COMBAT_MODES)
+    dropdown(category, "combatMode", "In combat", "What guidance keeps doing while you are in combat.", COMBAT_MODES, "string", {
+        get = function()
+            return FGPS.DB:Get("combatMode") == "hide_all" and "hide_all" or "visuals_only"
+        end,
+    })
 end
 
 local function registerTextAndColours(category)
@@ -431,85 +421,6 @@ local function registerTransport(category)
     checkbox(category, "transports.spells", "Consider teleport spells")
 end
 
-
-
-
-
-
-
-
-function UISettings.GameHasVoices()
-    local Voice = FGPS.UI.Voice
-    return Voice ~= nil and Voice.HasSystemVoice ~= nil and Voice:HasSystemVoice() == true
-end
-
-local function onlyWithGameVoices(initializer)
-    if type(initializer) == "table" and initializer.AddModifyPredicate then
-        initializer:AddModifyPredicate(UISettings.GameHasVoices)
-    end
-    return initializer
-end
-
-
-local function playSample()
-    local Voice = FGPS.UI.Voice
-    if Voice and Voice.PlaySample then Voice:PlaySample() end
-end
-
-
-
-local function addSampleRow(category, name, tooltip, shownWhen)
-    local initializer = buttonInitializer(name, "Play a sample", playSample, tooltip)
-    if not initializer then return nil end
-    if initializer.AddShownPredicate then
-        initializer:AddShownPredicate(shownWhen)
-    elseif not shownWhen() then
-        return nil
-    end
-    Settings.RegisterInitializer(category, initializer)
-    return initializer
-end
-
-local function registerVoice(category)
-    checkbox(category, "voice.enabled", "Voice guidance", "Speak turn instructions out loud.")
-
-
-    UISettings.noVoicesLine = addSampleRow(category, "Speaking with Cabbie's recorded voice",
-        "The game reports no text-to-speech voice on this computer, so the game voice settings below are greyed out. Cabbie's recorded voice needs nothing installed. Play a sample says one short sentence in it.",
-        function() return not UISettings.GameHasVoices() end)
-    UISettings.sampleLine = addSampleRow(category, "Voice sample",
-        "Says one short sentence in the voice chosen on this page, with voice guidance on or off.", UISettings.GameHasVoices)
-    onlyWithGameVoices(checkbox(category, "voice.systemVoice", "Use the game's text-to-speech voice", "Off (the default): Cabbie's own recorded voice, the same on every computer. On: the voice chosen in the game's text-to-speech settings, which also says place names. Greyed out while the game reports no text-to-speech voice; the recorded one speaks then."))
-    local Voice = FGPS.UI.Voice
-    local defaultVoice = Voice and Voice.GetVoiceID and Voice:GetVoiceID() or 0
-    local setting = proxy(category, "voice.voiceID", "number", L["Voice"], {
-        default = defaultVoice,
-        get = function()
-            local vs = FGPS.DB:Get("voice")
-            local id = vs and tonumber(vs.voiceID)
-            if id == nil then
-                if Voice and Voice.GetVoiceID then return Voice:GetVoiceID() end
-                return defaultVoice
-            end
-            return id
-        end,
-        set = function(value) FGPS.DB:Set("voice.voiceID", tonumber(value)) end,
-    })
-    onlyWithGameVoices(Settings.CreateDropdown(category, setting, voiceOptions, L["Voice used for spoken guidance."]))
-    onlyWithGameVoices(slider(category, "voice.rate", "Speech rate", nil, -10, 10, 1, function(value) return format("%d", value) end))
-    onlyWithGameVoices(slider(category, "voice.volume", "Speech volume", nil, 0, 100, 5, function(value) return format("%d", value) end))
-    dropdown(category, "voice.verbosity", "Verbosity", "Minimal: turns only. Normal: advance notices and turns. Detailed: every step and zone change.", VERBOSITY)
-
-
-    checkbox(category, "cues.enabled", "Audio cues instead of speech",
-        "Short sounds the game already ships, played before a turn, for a transport action and on arrival. They work with voice guidance on or off.")
-    slider(category, "cues.volume", "Cue volume", "Zero is silence. Clients without a per-sound volume play cues at the game's own sound effect volume.",
-        0, 100, 5, function(value) return format("%d", value) end)
-    checkbox(category, "cues.turn", "Cue before a turn")
-    checkbox(category, "cues.transport", "Cue for a transport action", "Boarding a boat or zeppelin, taking a flight, getting off again.")
-    checkbox(category, "cues.arrival", "Cue on arrival")
-end
-
 local function registerRouting(category)
     addHeader(category, L["Routing"])
     local preferInit = checkbox(category, "routing.preferRoads", "Prefer roads",
@@ -527,6 +438,8 @@ local function registerRouting(category)
         "Routes go round the towns and outposts the other side holds, off the road where they must. A route still goes in when you start or stop there, or when there is no other way. Off: routes take the road through them.")
     checkbox(category, "routing.allowUnverified", "Allow straight guesses",
         "Where Cabbie knows no ground it may draw a straight line. Off: a place far from any known ground gets no route. To stay on roads use \"Prefer roads\".")
+    checkbox(category, "routing.highRes", "High-resolution navigation",
+        "Checks more nearby path points, smooths bends more finely, and updates arrows, dots and map lines faster. Uses a little more work while moving.")
     slider(category, "routing.arrivalRadius", "Arrival radius (yards)", "How close to the place you need to be for Cabbie to say you've arrived.", 5, 100, 1,
         function(value) return format("%d", value) end)
     slider(category, "routing.offRouteYards", "Off-route distance (yards)", "How far you can stray from the route before Cabbie finds a new one.", 15, 150, 5,
@@ -627,9 +540,8 @@ function UISettings:Register()
         local category = Settings.RegisterVerticalLayoutCategory(L[CATEGORY_NAME])
         self.category = category
         local general = Settings.RegisterVerticalLayoutSubcategory(category, L["General"])
-        local voice = Settings.RegisterVerticalLayoutSubcategory(category, L["Voice"])
         local advanced = Settings.RegisterVerticalLayoutSubcategory(category, L["Advanced"])
-        self.subcategories = { general = general, voice = voice, advanced = advanced }
+        self.subcategories = { general = general, advanced = advanced }
     end)
     if not ok then
         self.failed = true
@@ -641,7 +553,7 @@ function UISettings:Register()
 
     local sub = self.subcategories
     local pages = {
-        { "General", registerGeneral, sub.general }, { "Voice", registerVoice, sub.voice },
+        { "General", registerGeneral, sub.general },
         { "Advanced: guidance", registerGuidance, sub.advanced },
         { "Advanced: text and colours", registerTextAndColours, sub.advanced },
         { "Advanced: map", registerMap, sub.advanced },

@@ -811,6 +811,7 @@ end
 
 
 function SearchLine.FirstLogin()
+    if not (FGPS.UI and FGPS.UI.Look) then return false end
     local account = FGPS.DB and FGPS.DB.account
     if not account or account.guideSeenAtLogin then return false end
     if inFight() then

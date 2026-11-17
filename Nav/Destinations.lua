@@ -51,6 +51,57 @@ for code, name in pairs(TYPE_NAMES) do TYPE_CODES[name] = code end
 Destinations.TYPE_NAMES, Destinations.TYPE_CODES = TYPE_NAMES, TYPE_CODES
 
 
+
+
+
+local LOCKED_RAID_MAPS = {
+    [249] = true, [309] = true, [409] = true, [469] = true,
+    [509] = true, [531] = true, [533] = true,
+}
+local LOCKED_RAID_NAMES = {
+    ["Onyxia's Lair"] = true, ["Zul'Gurub"] = true, ["Molten Core"] = true,
+    ["Blackwing Lair"] = true, ["Ruins of Ahn'Qiraj"] = true,
+    ["Ahn'Qiraj Temple"] = true, ["Temple of Ahn'Qiraj"] = true, ["Naxxramas"] = true,
+}
+Destinations.LOCKED_RAID_MAPS = LOCKED_RAID_MAPS
+Destinations.LOCKED_RAID_NAMES = LOCKED_RAID_NAMES
+
+local function isLockedRaidMap(map)
+    return map ~= nil and LOCKED_RAID_MAPS[map] == true
+end
+Destinations.IsLockedRaidMap = isLockedRaidMap
+
+local function isLockedRaidPOI(i, P)
+    if not P then P = FGPS.Data and FGPS.Data.poi or nil end
+    if not P or not P.type or not P.type[i] then return false end
+    local code = P.type[i]
+    if code == 4 then return true end
+    if code ~= 3 then return false end
+    return LOCKED_RAID_NAMES[P.name and P.name[i]] == true
+end
+Destinations.IsLockedRaidPOI = isLockedRaidPOI
+
+local function isShadowedPOI(i)
+    local SS = FGPS.ServiceSearch
+    return SS ~= nil and SS.IsShadowedPOI ~= nil and SS.IsShadowedPOI(i) == true
+end
+Destinations.IsShadowedPOI = isShadowedPOI
+
+local function isHiddenPOI(i, P)
+    return isLockedRaidPOI(i, P) or isShadowedPOI(i)
+end
+
+local function isLockedRaidDest(d)
+    if type(d) ~= "table" then return false end
+    if d.type == "raid" or d.typeCode == 4 then return true end
+    if isLockedRaidMap(d.inst) then return true end
+    if (d.type == "dungeon" or d.typeCode == 3) and LOCKED_RAID_NAMES[d.name] then return true end
+    if d.kind == "inside" and LOCKED_RAID_NAMES[d.dungeon or d.zoneName] then return true end
+    return false
+end
+Destinations.IsLockedRaidDest = isLockedRaidDest
+
+
 local TYPE_LABELS = {
     town = "Town", landmark = "Landmark", dungeon = "Dungeon", raid = "Raid", capital = "Capital city",
     flightmaster = "Flight master", inn = "Inn", vendor = "Vendor", repair = "Repair", mailbox = "Mailbox",
@@ -90,6 +141,30 @@ local KIND_WORDS = {
     stable = "stable", ["stable master"] = "stable",
     mailbox = "mailbox", mail = "mailbox",
     dummy = "dummy", ["training dummy"] = "dummy", ["target dummy"] = "dummy",
+    boss = "boss", bosses = "boss",
+}
+
+
+
+local ROLE_TYPES = {
+    trainer = "trainer", trainers = "trainer",
+    vendor = "vendor", vendors = "vendor", supplier = "vendor", supplies = "vendor", merchant = "vendor",
+    repair = "repair", repairer = "repair",
+    bank = "bank", banker = "bank",
+    auction = "auction", auctioneer = "auction",
+    inn = "inn", innkeeper = "inn",
+    stable = "stable",
+    mail = "mailbox", mailbox = "mailbox",
+    flight = "flightmaster", flightmaster = "flightmaster",
+    dummy = "dummy",
+    boss = "boss", bosses = "boss",
+}
+
+
+
+local CLOSEST_FIRST_TYPES = {
+    trainer = true, vendor = true, repair = true, inn = true, bank = true, auction = true,
+    mailbox = true, stable = true, dummy = true, service = true,
 }
 
 
@@ -407,7 +482,7 @@ local function nearestPOI(inst, x, y, radius, filter)
     local bestI, bestD
     local px, py, pinst = P.x, P.y, P.inst
     for i = 1, P.n do
-        if pinst[i] == inst and (not filter or filter(i)) then
+        if pinst[i] == inst and not isHiddenPOI(i, P) and (not filter or filter(i)) then
             local dx, dy = px[i] - x, py[i] - y
             if dx > -radius and dx < radius and dy > -radius and dy < radius then
                 local d = sqrt(dx * dx + dy * dy)
@@ -421,7 +496,7 @@ Destinations.NearestPOI = nearestPOI
 
 local function destFromPOIIndex(i)
     local P = poi()
-    if not P or not P.name[i] then return nil end
+    if not P or not P.name[i] or isHiddenPOI(i, P) then return nil end
     local code = P.type[i]
     local dest = {
         kind = "poi", poiIndex = i, poiKey = poiKeyOf(i), name = P.name[i], inst = P.inst[i], x = P.x[i], y = P.y[i], map = P.map[i],
@@ -509,10 +584,11 @@ end
 
 local function scoreName(key, q)
     if key == q then return SCORE_EXACT end
-    if key:sub(1, #q) == q then return SCORE_PREFIX end
-    if key:find(" " .. q, 1, true) then return SCORE_WORD end
-    if key:find(q, 1, true) then return SCORE_SUBSTRING end
-    return 0
+    local at = key:find(q, 1, true)
+    if not at then return 0 end
+    if at == 1 then return SCORE_PREFIX end
+    if key:byte(at - 1) == 32 or key:find(" " .. q, at, true) then return SCORE_WORD end
+    return SCORE_SUBSTRING
 end
 
 
@@ -661,6 +737,7 @@ end
 
 
 function Destinations.EnteredByDoor(map)
+    if isLockedRaidMap(map) then return false end
     local inside = FGPS.Data and FGPS.Data.insideMaps
     return map ~= nil and type(inside) == "table" and inside[map] ~= nil and doorMaps()[map] == true
 end
@@ -675,8 +752,9 @@ local function buildStatic()
         local interiors = FGPS.Data and FGPS.Data.interiors
         if type(interiors) == "table" then
             for _, rec in ipairs(interiors) do
-                if type(rec) == "table" and rec.source and type(rec.aliases) == "table" then
-                    otherNames[(rec.kind == "raid" and "4|" or "3|") .. rec.source] = rec.aliases
+                if type(rec) == "table" and rec.source and type(rec.aliases) == "table"
+                    and rec.kind ~= "raid" and not isLockedRaidMap(rec.instanceMap) and not LOCKED_RAID_NAMES[rec.name] then
+                    otherNames["3|" .. rec.source] = rec.aliases
                 end
             end
         end
@@ -684,15 +762,17 @@ local function buildStatic()
         static.n = P.n
         for i = 1, P.n do
             local code, name, zone = P.type[i], P.name[i], P.zone[i] or 0
-            key[i] = fold(name)
-            fac[i] = sideOf(i) or 0
-            if not zoneKey[zone] then zoneKey[zone] = names[zone] and fold(names[zone]) or "" end
-            if code == 18 then zoneEntryNames[lower(name)] = true end
-            if code == 6 then flightNames[lower(name)] = true end
-            local other = (code == 3 or code == 4) and otherNames[code .. "|" .. tostring(P.src[i])] or nil
-            if type(other) == "table" then
-                for _, text in ipairs(other) do
-                    if type(text) == "string" and text ~= "" then alias[#alias + 1] = { row = i, key = fold(text) } end
+            if not isHiddenPOI(i, P) then
+                key[i] = fold(name)
+                fac[i] = sideOf(i) or 0
+                if not zoneKey[zone] then zoneKey[zone] = names[zone] and fold(names[zone]) or "" end
+                if code == 18 then zoneEntryNames[lower(name)] = true end
+                if code == 6 then flightNames[lower(name)] = true end
+                local other = code == 3 and otherNames["3|" .. tostring(P.src[i])] or nil
+                if type(other) == "table" then
+                    for _, text in ipairs(other) do
+                        if type(text) == "string" and text ~= "" then alias[#alias + 1] = { row = i, key = fold(text) } end
+                    end
                 end
             end
         end
@@ -727,7 +807,7 @@ local function buildStatic()
     if type(inside) == "table" then
         local doors, ids = doorMaps(), {}
         for map in pairs(inside) do
-            if doors[map] then ids[#ids + 1] = map end
+            if doors[map] and not isLockedRaidMap(map) then ids[#ids + 1] = map end
         end
         table.sort(ids)
         for _, map in ipairs(ids) do addInsideEntries(static.extra, map, inside[map], false) end
@@ -800,6 +880,15 @@ local function questieRev()
     return rev
 end
 
+local function shadowedToken()
+    local SS = FGPS.ServiceSearch
+    local q = SS and SS.questie
+    if type(q) ~= "table" or type(q.shadowedPOI) ~= "table" then return nil end
+    if q.shadowedForRows ~= nil and q.rows ~= q.shadowedForRows then return nil end
+    if next(q.shadowedPOI) == nil then return nil end
+    return q.shadowedPOI
+end
+
 function Destinations.InvalidateIndex(learnedOnly)
     if not learnedOnly then index.static = nil end
     index.learned = nil
@@ -811,11 +900,14 @@ local function ensureIndex()
     local interiors = FGPS.Data and FGPS.Data.interiors or nil
     local inside, links = FGPS.Data and FGPS.Data.insideMaps or nil, FGPS.Data and FGPS.Data.links or nil
     local locale = FGPS.Coords and FGPS.Coords.ClientLocale and FGPS.Coords.ClientLocale() or false
+    local shadowed = shadowedToken()
     if not index.static or index.srcPoi ~= P or index.srcPoiCount ~= (P and P.n) or index.srcMaps ~= all or index.srcTaxi ~= taxi
-        or index.srcInteriors ~= interiors or index.srcInside ~= inside or index.srcLinks ~= links or index.srcLocale ~= locale then
+        or index.srcInteriors ~= interiors or index.srcInside ~= inside or index.srcLinks ~= links or index.srcLocale ~= locale
+        or index.srcShadowed ~= shadowed then
         index.static = buildStatic()
         index.srcPoi, index.srcPoiCount, index.srcMaps, index.srcTaxi = P, P and P.n, all, taxi
         index.srcInteriors, index.srcInside, index.srcLinks, index.srcLocale = interiors, inside, links, locale
+        index.srcShadowed = shadowed
     end
     local learned, rev = learnedServices(), questieRev()
     if not index.learned or index.learnedCount ~= #learned or index.questieRev ~= rev then
@@ -876,14 +968,28 @@ local function typeFilter(types)
     return set
 end
 
+local function roleMatchesType(w, typeName)
+    local role = ROLE_TYPES[w]
+    if not role then return false end
+    if role == typeName then return true end
+    if role == "flightmaster" and typeName == "taxi" then return true end
+    if role == "vendor" and typeName == "repair" then return true end
+    return false
+end
 
 
 
 
-local function scoreEntry(key, zoneKey, words, whole)
+
+
+
+local function scoreEntry(key, zoneKey, words, whole, typeName)
     local total
+    local subtitleWord = typeName and CLOSEST_FIRST_TYPES[typeName]
     for _, w in ipairs(words) do
         local s = scoreName(key, w)
+        if s == SCORE_SUBSTRING and subtitleWord and key:find("(" .. w, 1, true) then s = SCORE_WORD end
+        if s < SCORE_WORD and typeName and roleMatchesType(w, typeName) then s = SCORE_WORD end
         if s == 0 and zoneKey ~= "" and (zoneKey:find(w, 1, true)) then s = SCORE_ZONE end
         if s == 0 then return 0 end
         if not total or s < total then total = s end
@@ -916,8 +1022,10 @@ function Destinations.Search(text, opts)
 
 
     local words, seenWord = {}, {}
+    local hasRoleWord = false
     for i = 1, #split do
         local w = WORD_SYNONYMS[split[i]] or split[i]
+        if ROLE_TYPES[w] then hasRoleWord = true end
         if not seenWord[w] then
             seenWord[w] = true
             words[#words + 1] = w
@@ -930,11 +1038,13 @@ function Destinations.Search(text, opts)
     local allFactions = opts.allFactions or opts.faction == "all"
     local types = typeFilter(opts.types)
 
-    if types and (types.dungeon or types.raid) then types.room, types.boss = true, true end
+    if types and types.dungeon then types.room, types.boss = true, true end
     local first = typeFilter(opts.first)
     local kindOf = KIND_WORDS[q] and typeFilter({ KIND_WORDS[q] }) or nil
     local kinds = opts.kinds and typeFilter(opts.kinds) or nil
     local pos = Destinations.PlayerPos()
+    local activeInside = FGPS.Inside and FGPS.Inside.Map and FGPS.Inside.Map() or nil
+    if isLockedRaidMap(activeInside) then activeInside = nil end
     local static, learned = ensureIndex()
 
 
@@ -943,7 +1053,7 @@ function Destinations.Search(text, opts)
 
 
 
-    local hE, hScore, hDist, hSide, hRank = {}, {}, {}, {}, {}
+    local hE, hScore, hDist, hSide, hRank, hPrio = {}, {}, {}, {}, {}, {}
     local nHits = 0
 
 
@@ -957,11 +1067,15 @@ function Destinations.Search(text, opts)
         local side = not allFactions and otherSide(fac, playerCode) or nil
         if side and isLearned then return end
         if side and not ANY_SIDE_TYPES[typeName] and not ITEM_TYPES[typeName] then return end
-        local s, tier = scoreEntry(key, zoneKey, words, whole), 1
+        local s, tier = scoreEntry(key, zoneKey, words, whole, typeName), 1
 
 
         if isAlias and s < SCORE_PREFIX then return end
-        if kindOf and kindOf[typeName] then
+        local inActiveDungeon = activeInside ~= nil and kind == "inside" and type(e) == "table" and e.inst == activeInside
+        if inActiveDungeon then
+            tier = 0
+            if kindOf and kindOf[typeName] then s = SCORE_EXACT end
+        elseif kindOf and kindOf[typeName] then
             s, tier = SCORE_EXACT, 0
         elseif first and first[typeName] and s >= SCORE_WORD then
             tier = 0
@@ -972,19 +1086,29 @@ function Destinations.Search(text, opts)
             if pos and pos.inst == inst then d = dist(pos.x, pos.y, x, y) else d = 1e9 end
             local item = 0
             if ITEM_TYPES[typeName] then
-                if side then item = 2 elseif not kindOf and fac ~= 1 and fac ~= 2 then item = 1 end
+                if side then item = 2 elseif not kindOf and not hasRoleWord and fac ~= 1 and fac ~= 2 then item = 1 end
+            end
+            local prio = TYPE_PRIORITY[typeName] or 18
+            if inActiveDungeon and typeName == "boss" then prio = 17 end
+            local rankScore = s
+            local rankPrio = prio
+            if CLOSEST_FIRST_TYPES[typeName] and s >= SCORE_WORD then
+                if s < SCORE_EXACT then rankScore = SCORE_WORD end
+                rankPrio = 12
             end
             nHits = nHits + 1
-            hE[nHits], hScore[nHits], hDist[nHits], hSide[nHits] = e, s, d, side
-            hRank[nHits] = (((tier * 3 + item) * 128 + (SCORE_EXACT - s)) * 2 + (side ~= nil and 1 or 0)) * 32
-                + (TYPE_PRIORITY[typeName] or 18)
+            hE[nHits], hScore[nHits], hDist[nHits], hSide[nHits], hPrio[nHits] = e, s, d, side, prio
+            hRank[nHits] = (((tier * 3 + item) * 128 + (SCORE_EXACT - rankScore)) * 2 + (side ~= nil and 1 or 0)) * 32
+                + rankPrio
         end
     end
     if static.n > 0 then
         local P, keys, facs, zoneKeys = static.poi, static.key, static.fac, static.zoneKey
         local ptype, pzone = P.type, P.zone
         for i = 1, static.n do
-            consider(i, "poi", TYPE_NAMES[ptype[i]] or "landmark", facs[i], keys[i], zoneKeys[pzone[i] or 0], false)
+            if keys[i] then
+                consider(i, "poi", TYPE_NAMES[ptype[i]] or "landmark", facs[i], keys[i], zoneKeys[pzone[i] or 0], false)
+            end
         end
         local alias = static.alias
         for j = 1, #alias do
@@ -997,6 +1121,18 @@ function Destinations.Search(text, opts)
         local e = extra[i]
         consider(e, e.kind, e.type, e.fac, e.key, e.zoneKey, false)
     end
+    if activeInside and not doorMaps()[activeInside] then
+        local inside = FGPS.Data and FGPS.Data.insideMaps
+        local rec = type(inside) == "table" and inside[activeInside] or nil
+        if type(rec) == "table" then
+            local localInside = {}
+            addInsideEntries(localInside, activeInside, rec, false)
+            for i = 1, #localInside do
+                local e = localInside[i]
+                consider(e, e.kind, e.type, e.fac, e.key, e.zoneKey, false)
+            end
+        end
+    end
     for i = 1, #learned do
         local e = learned[i]
         consider(e, e.kind, e.type, e.fac, e.key, e.zoneKey, e.learned ~= nil)
@@ -1008,6 +1144,8 @@ function Destinations.Search(text, opts)
         if ra ~= rb then return ra < rb end
         local da, db = hDist[a], hDist[b]
         if da ~= db then return da < db end
+        local pa, pb = hPrio[a], hPrio[b]
+        if pa ~= pb then return pa < pb end
         return entryKey(static, hE[a]) < entryKey(static, hE[b])
     end)
 
@@ -1016,6 +1154,65 @@ function Destinations.Search(text, opts)
 
 
     local out, byName = {}, {}
+    local favRows
+    local rawFavs = FGPS.DB and FGPS.DB.account and FGPS.DB.account.favorites
+    local favs = (type(rawFavs) == "table" and #rawFavs > 0 and Destinations.Favorites) and Destinations.Favorites() or nil
+    if favs and #favs > 0 then
+        favRows = {}
+        for i = 1, #favs do
+            local fav = favs[i]
+            if type(fav) == "table" and type(fav.inst) == "number" and type(fav.x) == "number" and type(fav.y) == "number" then
+                local favType = fav.type or "custom"
+                local favKind = fav.kind or "custom"
+                if (not types or types[favType]) and (not kinds or kinds[favKind]) then
+                    local fKey = fold(fav.name or "")
+                    local fZone = fav.zoneName and fold(fav.zoneName) or ""
+                    local s = scoreEntry(fKey, fZone, words, whole, favType)
+                    if fav.poiIndex and static.key[fav.poiIndex] then
+                        local origScore = scoreEntry(static.key[fav.poiIndex], fZone, words, whole, favType)
+                        if origScore > s then s = origScore end
+                    end
+                    if kindOf and kindOf[favType] and s < SCORE_EXACT then s = SCORE_EXACT end
+                    if s > 0 then
+                        local d = (pos and pos.inst == fav.inst) and dist(pos.x, pos.y, fav.x, fav.y) or 1e9
+                        local favSide = not allFactions and otherSide(fav.faction, playerCode) or nil
+                        favRows[#favRows + 1] = {
+                            dest = fav,
+                            score = s,
+                            label = labelFor(fav.name or L["Unnamed location"], fav.zoneName, shownType(fav), nil, favSide),
+                            distance = d < 1e9 and d or nil,
+                            otherFaction = favSide ~= nil or nil,
+                            favorite = true,
+                            d = d,
+                            key = fKey,
+                            x = fav.x,
+                            y = fav.y,
+                            side = favSide,
+                        }
+                    end
+                end
+            end
+        end
+        if #favRows > 0 then
+            table.sort(favRows, function(a, b)
+                if a.d ~= b.d then return a.d < b.d end
+                if a.score ~= b.score then return a.score > b.score end
+                return a.key < b.key
+            end)
+            for i = 1, math.min(#favRows, limit) do
+                local row = favRows[i]
+                row.d, row.key = nil, nil
+                out[#out + 1] = row
+                local fname = row.dest.name or ""
+                local sameName = byName[fname]
+                if not sameName then
+                    sameName = {}
+                    byName[fname] = sameName
+                end
+                sameName[#sameName + 1] = row
+            end
+        end
+    end
     for i = 1, nHits do
         local h = hits[i]
         local e = hE[h]
@@ -1026,6 +1223,14 @@ function Destinations.Search(text, opts)
             for j = 1, #sameName do
                 local r = sameName[j]
                 if r.dest.inst == inst and r.x == x and r.y == y then kept = r break end
+            end
+        end
+        if not kept and favRows and #favRows > 0 then
+            local probe = type(e) == "number" and { poiIndex = e, poiKey = poiKeyOf(e), name = name, inst = inst, x = x, y = y }
+                or { name = name, inst = inst, x = x, y = y, taxiNodeID = e.kind == "taxi" and e.ref or nil }
+            for j = 1, #out do
+                local r = out[j]
+                if r.favorite and Destinations.Equal(r.dest, probe) then kept = r break end
             end
         end
         if kept then
@@ -1079,6 +1284,7 @@ end
 
 
 function Destinations.InsidePlaces(map)
+    if isLockedRaidMap(map) then return {} end
     local inside = FGPS.Data and FGPS.Data.insideMaps
     local rec = type(inside) == "table" and map ~= nil and inside[map] or nil
     if type(rec) ~= "table" then return {} end
@@ -1094,6 +1300,152 @@ function Destinations.InsidePlaces(map)
         out[i] = { dest = dest, score = 0, label = labelFor(dest.name, dest.zoneName, dest.type) }
     end
     return out
+end
+
+
+
+function Destinations.InsideBosses(map)
+    if isLockedRaidMap(map) then return {} end
+    local inside = FGPS.Data and FGPS.Data.insideMaps
+    local rec = type(inside) == "table" and map ~= nil and inside[map] or nil
+    if type(rec) ~= "table" or type(rec.bosses) ~= "table" then return {} end
+    local out = {}
+    for _, boss in ipairs(rec.bosses) do
+        if type(boss) == "table" and type(boss.name) == "string" and boss.name ~= "" then
+            local dest = {
+                kind = "inside", type = "boss", name = boss.name,
+                inst = map, x = boss.x, y = boss.y, z = boss.z,
+                dungeon = rec.name, zoneName = rec.name,
+            }
+            out[#out + 1] = { dest = dest, score = 0, label = labelFor(dest.name, dest.zoneName, "boss") }
+        end
+    end
+    return out
+end
+
+
+
+function Destinations.InsideBossesFirst(map)
+    if isLockedRaidMap(map) then return {} end
+    local inside = FGPS.Data and FGPS.Data.insideMaps
+    local rec = type(inside) == "table" and map ~= nil and inside[map] or nil
+    if type(rec) ~= "table" then return {} end
+    local out = Destinations.InsideBosses(map)
+    local rooms = {}
+    local LocalRoomName = FGPS.Coords and FGPS.Coords.LocalRoomName
+    for _, room in ipairs(rec.rooms or {}) do
+        local name = LocalRoomName and type(room.name) == "string" and LocalRoomName(room.name, room.area) or nil
+        if name then
+            rooms[#rooms + 1] = {
+                key = fold(name),
+                dest = {
+                    kind = "inside", type = "room", name = name,
+                    inst = map, x = room.x, y = room.y, z = room.z,
+                    dungeon = rec.name, zoneName = rec.name,
+                },
+            }
+        end
+    end
+    table.sort(rooms, function(a, b) return a.key < b.key end)
+    for _, r in ipairs(rooms) do
+        out[#out + 1] = { dest = r.dest, score = 0, label = labelFor(r.dest.name, r.dest.zoneName, "room") }
+    end
+    return out
+end
+
+
+function Destinations.InsideMapByName(name)
+    if type(name) ~= "string" then return nil end
+    local q = typed(name)
+    if q == "" then return nil end
+    local inside = FGPS.Data and FGPS.Data.insideMaps
+    if type(inside) ~= "table" then return nil end
+    for map, rec in pairs(inside) do
+        if not isLockedRaidMap(map) and type(rec) == "table" and type(rec.name) == "string"
+            and not LOCKED_RAID_NAMES[rec.name] and fold(rec.name) == q then
+            return map
+        end
+    end
+    local interiors = FGPS.Data and FGPS.Data.interiors
+    if type(interiors) == "table" then
+        for _, rec in ipairs(interiors) do
+            local map = type(rec) == "table" and rec.instanceMap or nil
+            if map and inside[map] and not isLockedRaidMap(map) and not LOCKED_RAID_NAMES[rec.name] then
+                if type(rec.name) == "string" and fold(rec.name) == q then return map end
+                if type(rec.aliases) == "table" then
+                    for _, alias in ipairs(rec.aliases) do
+                        if type(alias) == "string" and fold(alias) == q then return map end
+                    end
+                end
+            end
+        end
+    end
+    local stripped = name:match("^(.-)%s*%b()%s*$")
+    if stripped and stripped ~= name then return Destinations.InsideMapByName(stripped) end
+    return nil
+end
+
+
+function Destinations.DungeonMapForPOI(index)
+    local P = poi()
+    local inside = FGPS.Data and FGPS.Data.insideMaps
+    if type(index) ~= "number" or not P or type(inside) ~= "table" or isLockedRaidPOI(index, P) then return nil end
+    local code = P.type and P.type[index]
+    if code ~= 3 then return nil end
+    local src = P.src and P.src[index]
+    local interiors = FGPS.Data and FGPS.Data.interiors
+    if type(src) == "string" and src ~= "" and type(interiors) == "table" then
+        for _, rec in ipairs(interiors) do
+            if type(rec) == "table" and rec.source == src and rec.kind ~= "raid" then
+                local map = rec.instanceMap
+                if map and inside[map] and not isLockedRaidMap(map) then return map end
+            end
+        end
+    end
+    return Destinations.InsideMapByName(P.name and P.name[index])
+end
+
+
+function Destinations.BossByName(name, mapHint)
+    if type(name) ~= "string" then return nil end
+    local q = typed(name)
+    if q == "" then return nil end
+    local inside = FGPS.Data and FGPS.Data.insideMaps
+    if type(inside) ~= "table" then return nil end
+    local function matchInMap(map)
+        if isLockedRaidMap(map) then return nil end
+        local rec = map ~= nil and inside[map] or nil
+        if type(rec) ~= "table" or type(rec.bosses) ~= "table" then return nil end
+        for _, boss in ipairs(rec.bosses) do
+            if type(boss) == "table" and type(boss.name) == "string" and fold(boss.name) == q then
+                return {
+                    kind = "inside", type = "boss", name = boss.name,
+                    inst = map, x = boss.x, y = boss.y, z = boss.z,
+                    dungeon = rec.name, zoneName = rec.name,
+                }
+            end
+        end
+        return nil
+    end
+    if mapHint ~= nil then
+        local hit = matchInMap(mapHint)
+        if hit then return hit end
+    end
+    local active = FGPS.Inside and FGPS.Inside.Map and FGPS.Inside.Map() or nil
+    if active ~= nil and active ~= mapHint then
+        local hit = matchInMap(active)
+        if hit then return hit end
+    end
+    local mapsList = {}
+    for map in pairs(inside) do
+        if map ~= mapHint and map ~= active then mapsList[#mapsList + 1] = map end
+    end
+    table.sort(mapsList)
+    for _, map in ipairs(mapsList) do
+        local hit = matchInMap(map)
+        if hit then return hit end
+    end
+    return nil
 end
 
 
@@ -1122,8 +1474,10 @@ function Destinations.Browse(opts)
     end
     local P, facs = static.poi, static.fac
     for i = 1, static.n do
-        local typeName = TYPE_NAMES[P.type[i]] or "landmark"
-        if types[typeName] then consider(i, typeName, facs[i], P.inst[i], P.x[i], P.y[i]) end
+        if static.key[i] then
+            local typeName = TYPE_NAMES[P.type[i]] or "landmark"
+            if types[typeName] then consider(i, typeName, facs[i], P.inst[i], P.x[i], P.y[i]) end
+        end
     end
     local extra = static.extra
     for i = 1, #extra do
@@ -1212,7 +1566,10 @@ function Destinations.Equal(a, b)
 
     end
     if a.taxiNodeID and b.taxiNodeID then return a.taxiNodeID == b.taxiNodeID end
-    if a.inst ~= b.inst or not a.x or not b.x or not a.y or not b.y then return false end
+    if a.inst ~= b.inst or type(a.x) ~= "number" or type(b.x) ~= "number"
+        or type(a.y) ~= "number" or type(b.y) ~= "number" then
+        return false
+    end
     return dist(a.x, a.y, b.x, b.y) <= Destinations.EQUAL_YARDS
 end
 
@@ -1237,7 +1594,9 @@ local function personName(dest)
     end
     if dest.kind == "service" and dest.learned then
         local bare = name:match(QUESTIE_TITLE) or name:match(QUESTIE_PLAIN)
-        if bare or (dest.serviceKind or dest.type) ~= "trainer" then return bare end
+        if bare then return bare end
+        if dest.questie then return (name:match("^(.+) %([^()]+%)$")) or name end
+        if (dest.serviceKind or dest.type) ~= "trainer" then return nil end
         return (name:match("^(.+) %([^()]+ Trainer%)$"))
     end
     return nil
@@ -1410,11 +1769,26 @@ local function accountList(key)
     return list
 end
 
-function Destinations.Favorites() return accountList("favorites") end
-function Destinations.Recents() return accountList("recents") end
+local function visibleAccountList(key)
+    local list = accountList(key)
+    local hasLocked = false
+    for i = 1, #list do
+        if isLockedRaidDest(list[i]) then hasLocked = true break end
+    end
+    if not hasLocked then return list end
+    local out = {}
+    for i = 1, #list do
+        if not isLockedRaidDest(list[i]) then out[#out + 1] = list[i] end
+    end
+    return out
+end
+
+function Destinations.Favorites() return visibleAccountList("favorites") end
+function Destinations.Recents() return visibleAccountList("recents") end
 
 function Destinations.IsFavorite(dest)
-    local list = accountList("favorites")
+    if isLockedRaidDest(dest) then return false end
+    local list = visibleAccountList("favorites")
     for i = 1, #list do
         if Destinations.Equal(list[i], dest) then return i end
     end
@@ -1425,7 +1799,9 @@ end
 
 function Destinations.AddFavorite(dest)
     local plain = Destinations.Plain(dest)
-    if not plain or not plain.inst or not plain.x then return false, "invalid" end
+    if not plain or isLockedRaidDest(plain) or type(plain.inst) ~= "number" or type(plain.x) ~= "number" or type(plain.y) ~= "number" then
+        return false, "invalid"
+    end
     Destinations.Rekey(plain)
     if Destinations.IsFavorite(plain) then return false, "duplicate" end
     local list = accountList("favorites")
@@ -1438,7 +1814,20 @@ end
 
 function Destinations.RemoveFavorite(i)
     local list = accountList("favorites")
-    if type(i) == "table" then i = Destinations.IsFavorite(i) end
+    local target = i
+    if type(target) == "number" then
+        local visible = visibleAccountList("favorites")
+        target = visible[target]
+    end
+    if type(target) == "table" then
+        local rawIdx
+        for idx = 1, #list do
+            if Destinations.Equal(list[idx], target) then rawIdx = idx break end
+        end
+        i = rawIdx
+    else
+        i = nil
+    end
     if not i or not list[i] then return false end
     table.remove(list, i)
     Events:Fire("FAVORITES_CHANGED")
@@ -1447,7 +1836,9 @@ end
 
 function Destinations.AddRecent(dest)
     local plain = Destinations.Plain(dest)
-    if not plain or not plain.inst or not plain.x then return false end
+    if not plain or isLockedRaidDest(plain) or type(plain.inst) ~= "number" or type(plain.x) ~= "number" or type(plain.y) ~= "number" then
+        return false
+    end
     Destinations.Rekey(plain)
     local list = accountList("recents")
     for i = #list, 1, -1 do

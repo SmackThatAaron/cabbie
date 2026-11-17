@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.9.0 (2026-11-17)
+
+Restart the game completely after updating (a `/reload` will not load new or removed files).
+
+- **Purely visual navigation:** Spoken voice guidance, recorded voice clips, client text-to-speech, route audio cues, and all voice settings have been removed so Cabbie stays light and purely visual (book window click sounds remain).
+- **Sharper roads & wider 20-yard road corridor:** Updated outdoor roads and capital-city street crossings across all 50 maps so routes follow bends, bridges, canyons, mountain switchbacks, and valley floors cleanly without cutting corners or snapping through cave walls, and widened road tracking to 20 yards on either side of the road so you never have to run down the dead centre.
+- **Smoother live guidance + High-resolution mode:** Road curves and open-ground paths smooth out choppy zig-zags, the 3D Road beacon glides smoothly across hills and bends while staying grounded on roads and shorelines, the turn arrow tracks curves continuously, minimap dots stay planted on the road, and an optional **High-resolution navigation** toggle under `Settings > Cabbie > Advanced` adds finer curve detail and faster live updates.
+- **Clear "Above" & "Below" height cues:** The 3D Road beacon and turn arrow now show **Above** / **Below** height badges with the vertical distance, flat roads show a grounded centre dot inside the beacon ring, and minimap markers add up/down chevrons when a turn or stop is on another level.
+- **5-man dungeon boss routing & Forever updates:** Added room-by-room boss routing across all 5-man dungeons (search a boss's name, right-click a dungeon entrance icon on the world map for **Bosses**, or pick from the **Bosses** button on the map and the list at the top of **Places** once inside), hid locked raids while raids are closed in WoW Forever, updated airship and flight timings, put **Favorites** first in search with closest-first distance badges on services and trainers, and improved right-click menus everywhere.
+
 ## 1.8.0 (2026-11-13)
 
 Restart the game completely after updating (a `/reload` will not load new files).

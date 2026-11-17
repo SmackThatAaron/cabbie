@@ -425,6 +425,179 @@ local function hookPOIButtonInstance(button)
     hookScriptOnce(button, "OnClick", handlePOIButton)
 end
 
+local function isPlainRightClick(mouseButton)
+    if mouseButton ~= "RightButton" then return false end
+    if (IsShiftKeyDown and IsShiftKeyDown()) or (IsControlKeyDown and IsControlKeyDown())
+        or (IsAltKeyDown and IsAltKeyDown()) then
+        return false
+    end
+    return true
+end
+
+local function startPinDest(dest)
+    if type(dest) ~= "table" then return false end
+    local MapPlaces = FGPS.UI.MapPlaces
+    if MapPlaces and MapPlaces.StartBoss then return MapPlaces.StartBoss(dest) end
+    local WorldMap = FGPS.UI.WorldMap
+    if WorldMap and WorldMap.GoTo then return WorldMap.GoTo(dest, { start = true, quiet = true }) end
+    local Go = FGPS.UI.Go
+    if Go and Go.Start then return Go.Start(dest) end
+    return false
+end
+
+local function ejInstanceName(instanceID)
+    instanceID = tonumber(instanceID)
+    if not (instanceID and instanceID > 0) then return nil end
+    local fn = rawget(_G, "EJ_GetInstanceInfo")
+    if type(fn) ~= "function" then return nil end
+    local ok, name = pcall(fn, instanceID)
+    return (ok and type(name) == "string" and name ~= "") and name or nil
+end
+
+local function ejEncounterName(encounterID)
+    encounterID = tonumber(encounterID)
+    if not (encounterID and encounterID > 0) then return nil end
+    local fn = rawget(_G, "EJ_GetEncounterInfo")
+    if type(fn) ~= "function" then return nil end
+    local ok, name = pcall(fn, encounterID)
+    return (ok and type(name) == "string" and name ~= "") and name or nil
+end
+
+local function bossDestFromPin(pin)
+    local Destinations = FGPS.Destinations
+    if type(pin) ~= "table" or not (Destinations and Destinations.BossByName) then return nil end
+    local name = (type(pin.tooltipTitle) == "string" and pin.tooltipTitle ~= "" and pin.tooltipTitle)
+        or (type(pin.name) == "string" and pin.name ~= "" and pin.name)
+        or ejEncounterName(pin.encounterID)
+    if not name then return nil end
+    local instName = ejInstanceName(pin.journalInstanceID or pin.instanceID)
+    local mapHint = instName and Destinations.InsideMapByName and Destinations.InsideMapByName(instName) or nil
+    local ok, dest = pcall(Destinations.BossByName, name, mapHint)
+    return (ok and type(dest) == "table") and dest or nil
+end
+
+local function openDestRowMenu(owner, title, dest, extraEntries)
+    local Menus = FGPS.UI.Menus
+    local Search = FGPS.UI.Search
+    local Destinations = FGPS.Destinations
+    if not (Menus and Menus.OpenRowMenu) then return nil end
+    local entries = {}
+    if type(dest) == "table" then
+        entries[#entries + 1] = {
+            label = L["Go"],
+            onClick = function() startPinDest(dest) end,
+        }
+        if Search and (Search.addStopMode or (Search.JourneyRunning and Search.JourneyRunning())) then
+            local WorldMap = FGPS.UI.WorldMap
+            entries[#entries + 1] = {
+                label = L["Add as a Stop"],
+                onClick = function()
+                    if WorldMap and WorldMap.GoTo then
+                        WorldMap.GoTo(dest, { addStop = true, start = false })
+                    elseif Search.GoTo then
+                        Search.GoTo(dest, "addStop")
+                    end
+                end,
+            }
+        end
+    end
+    if type(extraEntries) == "table" then
+        for _, e in ipairs(extraEntries) do entries[#entries + 1] = e end
+    end
+    if type(dest) == "table" and Search and Search.ToggleFavorite then
+        local fav = Destinations and Destinations.IsFavorite and Destinations.IsFavorite(dest) and true or false
+        entries[#entries + 1] = {
+            label = fav and L["Remove from Favorites"] or L["Add to Favorites"],
+            onClick = function() Search:ToggleFavorite(dest) end,
+        }
+    end
+    if #entries == 0 then return nil end
+    return Menus.OpenRowMenu(owner or UIParent, { title = title, entries = entries })
+end
+
+local function handleEncounterPin(pin, mouseButton)
+    if type(pin) ~= "table" then return end
+    if isPlainRightClick(mouseButton) then
+        local dest = bossDestFromPin(pin)
+        if not dest then return end
+        openDestRowMenu(UIParent, dest.name, dest)
+        return
+    end
+    if not QuestClicks.IsGoClick(mouseButton) then return end
+    local dest = bossDestFromPin(pin)
+    if not dest then return end
+    markMapClick()
+    local Go = FGPS.UI.Go
+    if Go and Go.Start then Go.Start(dest) else startPinDest(dest) end
+end
+
+local function dungeonEntranceInfo(pin)
+    local Destinations = FGPS.Destinations
+    if type(pin) ~= "table" or not Destinations then return nil, nil, nil end
+    local name = (type(pin.name) == "string" and pin.name ~= "" and pin.name)
+        or (type(pin.tooltipTitle) == "string" and pin.tooltipTitle ~= "" and pin.tooltipTitle)
+        or ejInstanceName(pin.journalInstanceID)
+    if not name then return nil, nil, nil end
+    local instMap = Destinations.InsideMapByName and Destinations.InsideMapByName(name) or nil
+    local entranceDest
+    if Destinations.Search then
+        local ok, hits = pcall(Destinations.Search, name, { types = { 3, 4 }, limit = 3 })
+        if ok and type(hits) == "table" and hits[1] and type(hits[1].dest) == "table" then
+            entranceDest = hits[1].dest
+        end
+    end
+    local bossSub
+    if instMap and Destinations.InsideBosses then
+        local ok, rows = pcall(Destinations.InsideBosses, instMap)
+        if ok and type(rows) == "table" and #rows > 0 then
+            local list = {}
+            for _, r in ipairs(rows) do
+                local b = r.dest
+                if type(b) == "table" and type(b.name) == "string" then
+                    list[#list + 1] = { label = b.name, onClick = function() startPinDest(b) end }
+                end
+            end
+            if #list > 0 then bossSub = { { label = L["Bosses"], entries = list } } end
+        end
+    end
+    return name, entranceDest, bossSub
+end
+
+local function handleDungeonEntrancePin(pin, mouseButton)
+    if type(pin) ~= "table" then return end
+    if isPlainRightClick(mouseButton) then
+        local name, entranceDest, bossSub = dungeonEntranceInfo(pin)
+        if not name or (not entranceDest and not bossSub) then return end
+        openDestRowMenu(UIParent, name, entranceDest, bossSub)
+        return
+    end
+    if not QuestClicks.IsGoClick(mouseButton) then return end
+    local _, entranceDest = dungeonEntranceInfo(pin)
+    if not entranceDest then return end
+    markMapClick()
+    local Go = FGPS.UI.Go
+    if Go and Go.Start then Go.Start(entranceDest) else startPinDest(entranceDest) end
+end
+
+local function hookPinAction(pin, mixinName, hookKey, handler)
+    local mixin = rawget(_G, mixinName)
+    if type(pin.OnMouseClickAction) == "function" then
+        if QuestClicks.hooks[hookKey] and type(mixin) == "table"
+            and pin.OnMouseClickAction == mixin.OnMouseClickAction then
+            return true
+        end
+        if type(hooksecurefunc) == "function" and pcall(hooksecurefunc, pin, "OnMouseClickAction", handler) then
+            hookedFrames[pin] = true
+            return true
+        end
+    end
+    if type(pin.HookScript) == "function" then
+        hookScriptOnce(pin, "OnClick", handler)
+        return hookedFrames[pin] == true
+    end
+    return false
+end
+
 local function hookMapPin(pin)
     if type(pin) ~= "table" then return end
     local inner = rawget(pin, "icon")
@@ -442,14 +615,16 @@ local function hookMapPin(pin)
         hookPOIButtonInstance(pin)
         return
     end
-    local offerMixin = rawget(_G, "QuestOfferPinMixin")
+    if pin.pinTemplate == "EncounterJournalPinTemplate" or pin.encounterID ~= nil then
+        hookPinAction(pin, "EncounterJournalPinMixin", "ejPin", handleEncounterPin)
+        return
+    end
+    if pin.pinTemplate == "DungeonEntrancePinTemplate" or pin.journalInstanceID ~= nil then
+        hookPinAction(pin, "DungeonEntrancePinMixin", "dungeonPin", handleDungeonEntrancePin)
+        return
+    end
     if type(pin.OnMouseClickAction) == "function" then
-        if QuestClicks.hooks.offerPin and type(offerMixin) == "table" and pin.OnMouseClickAction == offerMixin.OnMouseClickAction then
-            return
-        end
-        if type(hooksecurefunc) == "function" and pcall(hooksecurefunc, pin, "OnMouseClickAction", handleOfferPin) then
-            hookedFrames[pin] = true
-        end
+        hookPinAction(pin, "QuestOfferPinMixin", "offerPin", handleOfferPin)
     end
 end
 
@@ -631,6 +806,19 @@ function QuestClicks.HookAll()
         end)
     end
     hook("offerPin", rawget(_G, "QuestOfferPinMixin"), "OnMouseClickAction", handleOfferPin)
+    hook("ejPin", rawget(_G, "EncounterJournalPinMixin"), "OnMouseClickAction", handleEncounterPin)
+    hook("dungeonPin", rawget(_G, "DungeonEntrancePinMixin"), "OnMouseClickAction", handleDungeonEntrancePin)
+    hookGlobal("ejEncounter", "EncounterJournal_DisplayEncounter", function(encounterID)
+        if not QuestClicks.IsGoClick("LeftButton") then return end
+        local name = ejEncounterName(encounterID)
+        local Destinations = FGPS.Destinations
+        if not (name and Destinations and Destinations.BossByName) then return end
+        local ok, dest = pcall(Destinations.BossByName, name)
+        if ok and type(dest) == "table" then
+            local Go = FGPS.UI.Go
+            if Go and Go.Start then Go.Start(dest) else startPinDest(dest) end
+        end
+    end)
 
 
     local wmf = rawget(_G, "WorldMapFrame")

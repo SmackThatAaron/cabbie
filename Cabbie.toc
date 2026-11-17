@@ -2,7 +2,7 @@
 ## Title: Cabbie
 ## Notes: Turn-by-turn directions to any place by the fastest practical route.
 ## Author: Cabbie contributors
-## Version: 1.8.0
+## Version: 1.9.0
 ## SavedVariables: CabbieDB
 ## SavedVariablesPerCharacter: CabbieCharDB
 ## X-License: GPL-3.0-or-later
@@ -93,12 +93,10 @@ UI\Search.lua
 UI\Preview.lua
 UI\Favorites.lua
 UI\Itinerary.lua
-UI\Voice.lua
 UI\InWorldPin.lua
 UI\Settings.lua
 UI\Setup.lua
 UI\WhatsNew.lua
-UI\Cues.lua
 UI\Bindings.lua
 UI\Compat.lua
 UI\QuestClicks.lua

@@ -79,9 +79,11 @@ local WorldMap = {
 
 
     PROGRESS_REDRAW_SECONDS = 1,
+    HIGHRES_PROGRESS_REDRAW_SECONDS = 0.25,
 
 
     PROGRESS_MOVE_YARDS = 10,
+    HIGHRES_PROGRESS_MOVE_YARDS = 4,
     progressRedrawAt = nil,
     progress = nil,
     drawnFromLeg = nil,
@@ -107,7 +109,9 @@ FGPS.UI.WorldMap = WorldMap
 
 
 local MAX_SEGMENTS = 400
+WorldMap.HIGHRES_MAX_SEGMENTS = 700
 WorldMap.SIMPLIFY_TOLERANCE_YARDS = 2
+WorldMap.HIGHRES_TOLERANCE_YARDS = 0.75
 
 
 
@@ -504,13 +508,21 @@ end
 
 
 
-local function levelOf(seg, a, b, levelZ, info)
+function WorldMap._floorLevelZ(mapID)
+    local floors = mapID and FGPS.Data and FGPS.Data.floors
+    local fl = type(floors) == "table" and floors[mapID] or nil
+    if type(fl) == "table" and type(fl.z) == "number" then return fl.z end
+    if type(fl) == "number" then return fl end
+    return nil
+end
+
+local function levelOf(seg, a, b, levelZ, info, insideLeg)
     local bz = b.z
     seg.z = bz
-    if not (a.stacked and b.stacked) then return end
-    seg.stacked = true
+    if a.stacked and b.stacked then seg.stacked = true end
     local az = a.z
-    if b.k ~= 22 or type(az) ~= "number" or type(bz) ~= "number" then return end
+    local levelable = (seg.stacked and (b.k == 22 or b.k == 23 or b.k == 16)) or insideLeg
+    if not levelable or type(az) ~= "number" or type(bz) ~= "number" then return end
     seg.z0 = az
     if not levelZ then return end
     local yards = WorldMap.OTHER_LEVEL_YARDS
@@ -571,9 +583,16 @@ function WorldMap.ComputeSegments(route, mapID, opts)
         return segments, info
     end
     opts = opts or {}
-    local levelZ = type(opts.levelZ) == "number" and opts.levelZ or nil
-    local maxSegments = opts.maxSegments or MAX_SEGMENTS
-    local tolerance = opts.tolerance or WorldMap.SIMPLIFY_TOLERANCE_YARDS
+    local levelZ = type(opts.levelZ) == "number" and opts.levelZ or WorldMap._floorLevelZ(mapID)
+    local s = settings()
+    local highRes
+    if opts.highRes ~= nil then
+        highRes = opts.highRes == true
+    else
+        highRes = (s and s.routing and s.routing.highRes == true) or false
+    end
+    local maxSegments = opts.maxSegments or (highRes and WorldMap.HIGHRES_MAX_SEGMENTS or MAX_SEGMENTS)
+    local tolerance = opts.tolerance or (highRes and WorldMap.HIGHRES_TOLERANCE_YARDS or WorldMap.SIMPLIFY_TOLERANCE_YARDS)
     local inst = mapInstance(mapID)
 
 
@@ -708,11 +727,13 @@ function WorldMap.ComputeSegments(route, mapID, opts)
 
 
     local UNVERIFIED = unverifiedKinds()
+    local insideMaps = FGPS.Data and FGPS.Data.insideMaps
     for _, entry in ipairs(prepared) do
         local leg = entry.leg
         local jump = entry.jump
         local pts = jump and entry.points or decimate(entry.points, stride)
         local legInst = entry.inst or leg.inst or inst
+        local insideLeg = type(insideMaps) == "table" and legInst ~= nil and insideMaps[legInst] ~= nil
         local crossesInstances = jump ~= nil and leg.toInst ~= nil and leg.toInst ~= leg.inst
         local legUnverified = leg.unverified == true
         local transport = TRANSPORT_KINDS[leg.kind or ""] == true
@@ -757,7 +778,7 @@ function WorldMap.ComputeSegments(route, mapID, opts)
                 if cx1 and (cx1 ~= cx2 or cy1 ~= cy2) then
                     local seg = { cx1, cy1, cx2, cy2, unverified = unverified, transport = transport,
                                   kind = leg.kind, edgeKind = p.k, legIndex = entry.index, crossing = crossing or nil }
-                    levelOf(seg, pp, p, levelZ, info)
+                    levelOf(seg, pp, p, levelZ, info, insideLeg)
                     segments[#segments + 1] = seg
                     if #segments >= maxSegments then
                         info.truncated = true
@@ -774,7 +795,7 @@ function WorldMap.ComputeSegments(route, mapID, opts)
                     if cx1 and (cx1 ~= cx2 or cy1 ~= cy2) then
                         local seg = { cx1, cy1, cx2, cy2, unverified = unverified, transport = transport,
                                       kind = leg.kind, edgeKind = p.k, legIndex = entry.index, crossing = crossing or nil }
-                        levelOf(seg, pp, p, levelZ, info)
+                        levelOf(seg, pp, p, levelZ, info, insideLeg)
                         segments[#segments + 1] = seg
                         if #segments >= maxSegments then
                             info.truncated = true
@@ -1460,8 +1481,8 @@ function WorldMap:Redraw()
     local w, h = canvas:GetWidth(), canvas:GetHeight()
     local scale = canvasScale()
     local Navigator = FGPS.Navigator
-    local levelZ
-    if drawRoute and not self.routeIsPreview and Navigator and Navigator.LevelZ then
+    local levelZ = drawRoute and WorldMap._floorLevelZ(mapID) or nil
+    if levelZ == nil and drawRoute and not self.routeIsPreview and Navigator and Navigator.LevelZ then
         local ok, z = pcall(Navigator.LevelZ, Navigator)
         if ok and type(z) == "number" then levelZ = z end
     end
@@ -1539,12 +1560,13 @@ function WorldMap:Redraw()
     self.drawnFromLeg, self.drawnFromPoint = fromLeg, fromPoint
     self.drawnFromInst, self.drawnFromX, self.drawnFromY = nil, nil, nil
     if fromPos then self.drawnFromInst, self.drawnFromX, self.drawnFromY = fromPos.inst, fromPos.x, fromPos.y end
+    local highRes = s and s.routing and s.routing.highRes == true or false
     local segments, segInfo = {}, nil
     if drawRoute then
 
 
 
-        if cache and cache.route == self.route and cache.mapID == mapID
+        if cache and cache.route == self.route and cache.mapID == mapID and cache.highRes == highRes
             and cache.startLeg == fromLeg and cache.startPoint == fromPoint
             and cache.inst == posInst and cache.x == posX and cache.y == posY then
             segments, segInfo = cache.segments, cache.info
@@ -1554,9 +1576,9 @@ function WorldMap:Redraw()
             end
         else
             segments, segInfo = WorldMap.ComputeSegments(self.route, mapID,
-                { levelZ = levelZ, startLeg = fromLeg, startPoint = fromPoint, startPos = fromPos })
+                { levelZ = levelZ, startLeg = fromLeg, startPoint = fromPoint, startPos = fromPos, highRes = highRes })
             self.segmentCache = {
-                route = self.route, mapID = mapID, levelZ = levelZ,
+                route = self.route, mapID = mapID, levelZ = levelZ, highRes = highRes,
                 startLeg = fromLeg, startPoint = fromPoint,
                 inst = posInst, x = posX, y = posY,
                 segments = segments, info = segInfo,
@@ -1568,7 +1590,7 @@ function WorldMap:Redraw()
     self.levelBandHigh = segInfo and segInfo.levelHigh
 
     local used = 0
-    local budget = MAX_SEGMENTS
+    local budget = highRes and self.HIGHRES_MAX_SEGMENTS or MAX_SEGMENTS
 
 
 
@@ -2550,12 +2572,17 @@ end
 
 
 local function hasLevels(route)
+    local insideMaps = FGPS.Data and FGPS.Data.insideMaps
     for _, leg in ipairs(route.legs or {}) do
         local points = type(leg) == "table" and leg.points
         if type(points) == "table" then
+            local insideLeg = type(insideMaps) == "table" and leg.inst ~= nil and insideMaps[leg.inst] ~= nil
             for i = 2, #points do
                 local p, q = points[i - 1], points[i]
-                if type(q) == "table" and q.k == 22 and q.stacked and type(p) == "table" and p.stacked then return true end
+                if type(q) == "table" and type(p) == "table" then
+                    if (q.k == 22 or q.k == 23 or q.k == 16) and q.stacked and p.stacked then return true end
+                    if insideLeg and type(p.z) == "number" and type(q.z) == "number" then return true end
+                end
             end
         end
     end
@@ -2568,9 +2595,10 @@ end
 local function levelChanged(route)
     if WorldMap.levelsRoute ~= route then WorldMap.levelsRoute, WorldMap.routeHasLevels = route, hasLevels(route) end
     if not WorldMap.routeHasLevels then return false end
+    local mapID = WorldMapFrame and WorldMapFrame.GetMapID and WorldMapFrame:GetMapID() or nil
+    local z = WorldMap._floorLevelZ(mapID)
     local Navigator = FGPS.Navigator
-    local z
-    if Navigator and Navigator.LevelZ then
+    if z == nil and Navigator and Navigator.LevelZ then
         local ok, got = pcall(Navigator.LevelZ, Navigator)
         if ok and type(got) == "number" then z = got end
     end
@@ -2587,7 +2615,10 @@ end
 local function movedOn(pos)
     local x, y = WorldMap.drawnFromX, WorldMap.drawnFromY
     if not pos or not x or pos.inst ~= WorldMap.drawnFromInst then return false end
-    local dx, dy, yards = pos.x - x, pos.y - y, WorldMap.PROGRESS_MOVE_YARDS
+    local s = settings()
+    local highRes = s and s.routing and s.routing.highRes == true
+    local yards = highRes and WorldMap.HIGHRES_PROGRESS_MOVE_YARDS or WorldMap.PROGRESS_MOVE_YARDS
+    local dx, dy = pos.x - x, pos.y - y
     return dx * dx + dy * dy >= yards * yards
 end
 
@@ -2614,7 +2645,9 @@ function WorldMap:OnRouteProgress(progress)
 
 
     if self.drawInUntil and t < self.drawInUntil then return end
-    if self.progressRedrawAt and t - self.progressRedrawAt < self.PROGRESS_REDRAW_SECONDS then return end
+    local minPeriod = (s and s.routing and s.routing.highRes == true)
+        and self.HIGHRES_PROGRESS_REDRAW_SECONDS or self.PROGRESS_REDRAW_SECONDS
+    if self.progressRedrawAt and t - self.progressRedrawAt < minPeriod then return end
     self.progressRedrawAt = t
     self:Redraw()
 end
@@ -2698,7 +2731,7 @@ end
 
 local function onSettingsChanged(_, key)
     if key == "worldMapLine" or key == "worldMapLegend" or key == "*" or key == "perf.guidanceEnabled"
-        or key == "accessibility.colorScheme" then
+        or key == "accessibility.colorScheme" or key == "routing.highRes" then
         WorldMap.segmentCache = nil
         WorldMap:Redraw()
     end

@@ -3,6 +3,6 @@
 local ADDON_NAME, ns = ...
 local core = Cabbie
 if type(core) == "table" and type(core.RegisterData) == "function" then
-    core.RegisterData(ADDON_NAME, "2026.11.12.3", ns.Data)
+    core.RegisterData(ADDON_NAME, "2026.11.17.24", ns.Data)
 end
 ns.Data = nil

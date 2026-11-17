@@ -62,6 +62,8 @@ local Graph = {
     ATTACH_RADII = { 150, 400, 800 },
     ATTACH_MAX = 8,
     ROAD_POINT_ATTACH_YARDS = 2,
+    ROAD_CORRIDOR_YARDS = 80,
+    ROAD_CORRIDOR_MAX = 4,
     MESH_ATTACH_MAX = 4,
     GRID_ATTACH_MAX = 4,
 
@@ -87,7 +89,7 @@ local Graph = {
 FGPS.Graph = Graph
 
 local KEY_BASE = 1048576
-local floor, ceil, sqrt, huge = math.floor, math.ceil, math.sqrt, math.huge
+local floor, ceil, sqrt, huge, abs = math.floor, math.ceil, math.sqrt, math.huge, math.abs
 local type, pairs, ipairs, next = type, pairs, ipairs, next
 local tsort = table.sort
 local strbyte = string.byte
@@ -285,6 +287,7 @@ function Graph:Reset()
         g._xsorted = nil
         g._lm, g._lmCells, g._lmRoads = nil, nil, nil
         g._hazardNodes = nil
+        g._roadNode = nil
     end
     self.loaded = {}
     self._links = nil
@@ -436,6 +439,19 @@ local function edgeAt(ep, e)
     if b3 > SKIPPED_CHAR then b3 = b3 - 1 end
     if b4 > SKIPPED_CHAR then b4 = b4 - 1 end
     return ((b1 - FIRST_CHAR) * HEIGHT_BASE + (b2 - FIRST_CHAR)) * HEIGHT_BASE + (b3 - FIRST_CHAR), b4 - FIRST_CHAR
+end
+
+local ROAD_CORRIDOR_KINDS = { [4] = true, [17] = true, [18] = true }
+
+local function hasRoadEdge(g, idx)
+    local eo, ep = g.eo, g._ep
+    local first, stop = eo and eo[idx], eo and eo[idx + 1]
+    if not (ep and first and stop) then return false end
+    for e = first, stop - 1 do
+        local _, kind = edgeAt(ep, e)
+        if kind and ROAD_CORRIDOR_KINDS[kind] then return true end
+    end
+    return false
 end
 
 
@@ -1118,6 +1134,51 @@ function Graph:IsSurfaceNode(key)
 end
 
 
+function Graph:IsRoadNode(key)
+    if type(key) ~= "number" or key < 0 then return false end
+    local inst, idx = splitKey(key)
+    local g = graphFor(inst)
+    if not g or idx < 1 or idx > (g.n or 0) then return false end
+    local mesh, tgrid = g._mesh, g._tgrid
+    if (mesh and idx >= mesh.first) or (tgrid and idx >= tgrid.first) then return false end
+    local cache = g._roadNode
+    if not cache then
+        cache = {}
+        g._roadNode = cache
+    end
+    local known = cache[idx]
+    if known ~= nil then return known end
+    local eo, ep = g.eo, g._ep
+    local first, stop = eo and eo[idx], eo and eo[idx + 1]
+    local found = false
+    if ep and first and stop and first < stop then
+        local rows, perRow = ep.a, ep.row
+        local slot = first - 1
+        local at = slot % perRow
+        local r = (slot - at) / perRow + 1
+        local row, rowEnd = rows[r], perRow * EDGE_CHARS
+        at = at * EDGE_CHARS
+        for _ = first, stop - 1 do
+            if at >= rowEnd then
+                r = r + 1
+                row, at = rows[r], 0
+            end
+            if type(row) ~= "string" then break end
+            local b4 = strbyte(row, at + EDGE_CHARS)
+            if not b4 then break end
+            local kind = DEC0[b4]
+            if kind == 4 or kind == 17 or kind == 18 then
+                found = true
+                break
+            end
+            at = at + EDGE_CHARS
+        end
+    end
+    cache[idx] = found
+    return found
+end
+
+
 
 
 local function placeOf(g, idx)
@@ -1686,20 +1747,81 @@ end
 
 
 
-function Graph:_nearestOne(g, inst, x, y, radiusSq, maxRing, filterFn)
-    local key, d = nearestKey(g, inst, x, y, radiusSq, maxRing, filterFn)
+function Graph:_nearestOne(g, inst, x, y, radiusSq, maxRing, filterFn, z)
+    local key, d = self:_nearestKey(g, inst, x, y, radiusSq, maxRing, filterFn, z)
     if not key then return {} end
     return { { key = key, dist = d } }
 end
 
+function Graph:_nearestKey(g, inst, x, y, radiusSq, maxRing, filterFn, z)
+    if type(z) ~= "number" then
+        return nearestKey(g, inst, x, y, radiusSq, maxRing, filterFn)
+    end
+    local grid, xs, ys = g._grid, g.x, g.y
+    local cx0, cy0 = floor(x / CELL), floor(y / CELL)
+    local base = inst * KEY_BASE
+    local bestScoreSq, bestDistSq, bestIdx
+    local function scanZ(cx, cy)
+        local x0, y0 = cx * CELL, cy * CELL
+        local gx, gy = 0, 0
+        if x < x0 then gx = x0 - x elseif x > x0 + CELL then gx = x - (x0 + CELL) end
+        if y < y0 then gy = y0 - y elseif y > y0 + CELL then gy = y - (y0 + CELL) end
+        local gsq = gx * gx + gy * gy
+        if gsq > radiusSq or (bestScoreSq and gsq > bestScoreSq) then return end
+        local k = cellKey(cx, cy)
+        local cell = grid[k]
+        if not cell then return end
+        local first, last = cellSpan(g, k, cell, x, x0, bestScoreSq and bestScoreSq < radiusSq and bestScoreSq or radiusSq)
+        for i = first, last do
+            local idx = cell[i]
+            local dx = xs[idx] - x
+            local dx2 = dx * dx
+            if dx2 <= radiusSq and (not bestScoreSq or dx2 <= bestScoreSq) then
+                local dy = ys[idx] - y
+                local dsq = dx2 + dy * dy
+                if dsq <= radiusSq then
+                    local nz = unpackHeight(g.z, idx)
+                    if nz == nil then nz = unpackHeight(g.zg, idx) end
+                    local scoreSq = dsq
+                    if nz ~= nil then
+                        local dz = abs(nz - z) - 6
+                        if dz > 0 then scoreSq = dsq + (dz * 3) * (dz * 3) end
+                    end
+                    if (not bestScoreSq or scoreSq < bestScoreSq or (scoreSq == bestScoreSq and idx < bestIdx))
+                        and (not filterFn or filterFn(base + idx, idx, g)) then
+                        bestScoreSq, bestDistSq, bestIdx = scoreSq, dsq, idx
+                    end
+                end
+            end
+        end
+    end
+    for r = 0, maxRing do
+        if r == 0 then
+            scanZ(cx0, cy0)
+        else
+            for i = -r, r do
+                scanZ(cx0 + i, cy0 - r)
+                scanZ(cx0 + i, cy0 + r)
+            end
+            for j = -r + 1, r - 1 do
+                scanZ(cx0 - r, cy0 + j)
+                scanZ(cx0 + r, cy0 + j)
+            end
+        end
+        if bestScoreSq and sqrt(bestScoreSq) <= r * CELL then break end
+    end
+    if not bestIdx then return nil end
+    return base + bestIdx, sqrt(bestDistSq)
+end
 
 
 
-function Graph:NearestKey(inst, x, y, radiusYards, filterFn)
+
+function Graph:NearestKey(inst, x, y, radiusYards, filterFn, z)
     local g = graphFor(inst)
     if not g or x == nil or y == nil then return nil end
     radiusYards = radiusYards or self.ATTACH_RADIUS
-    return nearestKey(g, inst, x, y, radiusYards * radiusYards, ceil(radiusYards / CELL), filterFn)
+    return self:_nearestKey(g, inst, x, y, radiusYards * radiusYards, ceil(radiusYards / CELL), filterFn, z)
 end
 
 
@@ -1707,7 +1829,8 @@ end
 
 
 
-function Graph:Nearest(inst, x, y, radiusYards, maxCount, filterFn)
+
+function Graph:Nearest(inst, x, y, radiusYards, maxCount, filterFn, z)
     local results = {}
     local g = graphFor(inst)
     if not g or x == nil or y == nil then return results end
@@ -1718,7 +1841,35 @@ function Graph:Nearest(inst, x, y, radiusYards, maxCount, filterFn)
     local cx0, cy0 = floor(x / CELL), floor(y / CELL)
     local base = inst * KEY_BASE
     local maxRing = ceil(radiusYards / CELL)
-    if maxCount == 1 then return self:_nearestOne(g, inst, x, y, radiusSq, maxRing, filterFn) end
+    if maxCount == 1 then return self:_nearestOne(g, inst, x, y, radiusSq, maxRing, filterFn, z) end
+    if type(z) == "number" then
+        local poolMax = maxCount * 4
+        if poolMax < 24 then poolMax = 24 end
+        local raw = self:Nearest(inst, x, y, radiusYards, poolMax, filterFn)
+        if #raw <= 1 then return raw end
+        for i = 1, #raw do
+            local e = raw[i]
+            local _, idx = splitKey(e.key)
+            local nz = unpackHeight(g.z, idx)
+            if nz == nil then nz = unpackHeight(g.zg, idx) end
+            local d = e.dist
+            local scoreSq = d * d
+            if nz ~= nil then
+                local dz = abs(nz - z) - 6
+                if dz > 0 then scoreSq = scoreSq + (dz * 3) * (dz * 3) end
+            end
+            e._scoreSq = scoreSq
+        end
+        tsort(raw, function(a, b)
+            if a._scoreSq ~= b._scoreSq then return a._scoreSq < b._scoreSq end
+            return a.key < b.key
+        end)
+        for i = 1, maxCount < #raw and maxCount or #raw do
+            local e = raw[i]
+            results[i] = { key = e.key, dist = e.dist }
+        end
+        return results
+    end
 
 
     local pool
@@ -1825,11 +1976,18 @@ end
 
 
 
-local function placeFilter(self, g, inst, x, y, list, place, isolated, out, told)
+local function placeFilter(self, g, inst, x, y, list, place, isolated, out, told, statedZ)
     local surf = g._surf
     if not surf then return list end
     local base = inst * KEY_BASE
     local first, last = surf.first, surf.last
+    local maxDz = self.MAX_ATTACH_DZ or 15
+    local heights, guesses, n = g.z, g.zg, g.n or 0
+    local function nodeZ(idx)
+        local z = unpackHeight(heights, idx)
+        if z == nil and idx <= n then z = unpackHeight(guesses, idx) end
+        return z
+    end
     local function inBlock(idx) return idx >= first and idx <= last end
     local function keep(test)
         local kept = {}
@@ -1841,20 +1999,32 @@ local function placeFilter(self, g, inst, x, y, list, place, isolated, out, told
 
 
 
+
+
     local reach = self.SURFACE_ATTACH_RADIUS
     local isoAt = g._isoAt
     local nearest = self:Nearest(inst, x, y, reach, 1, function(_, idx)
         local hit = isoAt and isoAt(idx) or nil
         if not isoAt then hit = isolated[idx] end
-        return inBlock(idx) and not hit
+        if not (inBlock(idx) and not hit) then return false end
+        if statedZ ~= nil then
+            local nz = nodeZ(idx)
+            if nz ~= nil and abs(nz - statedZ) > maxDz then return false end
+        end
+        return true
     end)[1]
     if nearest then
         local _, indoor, stacked = placeOf(g, nearest.key - base)
         if indoor or stacked then
             local xs, ys, reachSq = g.x, g.y, reach * reach
-            local kept = keep(function(_, idx)
+            local kept = keep(function(cand, idx)
                 local dx, dy = xs[idx] - x, ys[idx] - y
-                return inBlock(idx) and dx * dx + dy * dy <= reachSq
+                if not (inBlock(idx) and dx * dx + dy * dy <= reachSq) then return false end
+                if statedZ ~= nil then
+                    local cz = cand.footZ or cand.footZg or nodeZ(idx)
+                    if cz ~= nil and abs(cz - statedZ) > maxDz then return false end
+                end
+                return true
             end)
             if #kept > 0 then
                 list = kept
@@ -1867,11 +2037,21 @@ local function placeFilter(self, g, inst, x, y, list, place, isolated, out, told
 
 
 
+
     if type(place) ~= "table" or place.indoor == nil then
         if out.inSurface then return list end
-        local outside = keep(function(_, idx) return not select(2, placeOf(g, idx)) end)
+        local insideMap = statedZ ~= nil and FGPS.Data and FGPS.Data.insideMaps and FGPS.Data.insideMaps[inst] ~= nil
+        local outside = keep(function(cand, idx)
+            if not select(2, placeOf(g, idx)) then return true end
+            if insideMap then
+                local cz = cand.footZ or cand.footZg or nodeZ(idx)
+                if cz ~= nil and abs(cz - statedZ) <= maxDz then return true end
+            end
+            return false
+        end)
         return #outside > 0 and outside or list
     end
+
 
 
 
@@ -1897,14 +2077,31 @@ local function placeFilter(self, g, inst, x, y, list, place, isolated, out, told
             counts.unknown = counts.unknown + 1
             return nil
         end
-        local levels, kept, band = {}, {}, self.STACKED_NAME_YARDS
+        local levels, otherLevels, kept, band = {}, {}, {}, self.STACKED_NAME_YARDS
         for i = 1, #cands do
             local c = cands[i]
-            if placeOf(g, c.key - base) == name then levels[#levels + 1] = c.footZ or c.footZg end
+            if placeOf(g, c.key - base) == name then
+                local cz = c.footZ or c.footZg
+                if cz ~= nil then levels[#levels + 1] = cz end
+            end
         end
         for i = 1, #cands do
             local c = cands[i]
-            if placeOf(g, c.key - base) == name or onLevels(c.footZ or c.footZg, levels, band) then kept[#kept + 1] = c end
+            local cz = c.footZ or c.footZg
+            if cz ~= nil and not onLevels(cz, levels, band) then
+                local room, _, isStacked = placeOf(g, c.key - base)
+                if isStacked or (room ~= nil and room ~= name) then
+                    otherLevels[#otherLevels + 1] = cz
+                end
+            end
+        end
+        if #otherLevels == 0 then return nil end
+        for i = 1, #cands do
+            local c = cands[i]
+            local cz = c.footZ or c.footZg
+            if cz == nil or placeOf(g, c.key - base) == name or onLevels(cz, levels, band) or not onLevels(cz, otherLevels, band) then
+                kept[#kept + 1] = c
+            end
         end
         if #kept == #cands then return nil end
         counts[counter] = counts[counter] + 1
@@ -1921,7 +2118,11 @@ local function placeFilter(self, g, inst, x, y, list, place, isolated, out, told
             return list
         end
         if place.name then
-            local named = keep(function(_, idx) return placeOf(g, idx) == place.name end)
+            local named = {}
+            for i = 1, #indoors do
+                local c = indoors[i]
+                if placeOf(g, c.key - base) == place.name then named[#named + 1] = c end
+            end
             if #named > 0 then return named end
 
             out.placeLoose = true
@@ -1964,7 +2165,13 @@ function Graph:AttachCandidates(inst, x, y, opts)
     local allowUnverified = opts.allowUnverified ~= false
     local radius = allowUnverified and (opts.radius or self.ATTACH_RADIUS) or self.ATTACH_VERIFIED_RADIUS
     out.radius = radius
-    local maxCount = opts.maxCount or self.ATTACH_MAX
+    local highRes = opts.highRes == true
+    local maxCount = opts.maxCount or (highRes and self.ATTACH_MAX * 2 or self.ATTACH_MAX)
+    local roadCorridorMax = highRes and self.ROAD_CORRIDOR_MAX * 2 or self.ROAD_CORRIDOR_MAX
+    local meshMax = highRes and self.MESH_ATTACH_MAX * 2 or self.MESH_ATTACH_MAX
+    local gridMax = highRes and self.GRID_ATTACH_MAX * 2 or self.GRID_ATTACH_MAX
+    local freeMax = highRes and self.FREE_ATTACH_MAX * 2 or self.FREE_ATTACH_MAX
+    local targetZ = tonumber(opts.z) or tonumber(opts.zHint)
     local posFloor = opts.floor or floorFromMap(opts.map, g)
     local n = g.n or 0
 
@@ -2022,18 +2229,28 @@ function Graph:AttachCandidates(inst, x, y, opts)
         smallNodes = self:Nearest(inst, x, y, radius, self.SMALL_ATTACH_MAX, smallFilter)
         out.floorFallback = (#nodes > 0 or #smallNodes > 0) or nil
     end
+    local corridorEnabled = allowUnverified and opts.maxCount == nil and not (type(opts.place) == "table" and opts.place.indoor)
+    local denseWindow = corridorEnabled and #nodes >= maxCount * 3
+    if targetZ ~= nil then
+        local zReach = self.SURFACE_ATTACH_RADIUS * 2
+        if zReach > radius then zReach = radius end
+        local zNodes = self:Nearest(inst, x, y, zReach, maxCount, filter, targetZ)
+        for i = 1, #zNodes do nodes[#nodes + 1] = zNodes[i] end
+        local zSmall = self:Nearest(inst, x, y, zReach, self.SMALL_ATTACH_MAX, smallFilter, targetZ)
+        for i = 1, #zSmall do smallNodes[#smallNodes + 1] = zSmall[i] end
+    end
     for i = 1, #smallNodes do nodes[#nodes + 1] = smallNodes[i] end
 
 
     local meshNodes
     if meshFirst and allowUnverified then
-        meshNodes = self:Nearest(inst, x, y, radius, self.MESH_ATTACH_MAX, meshFilter)
+        meshNodes = self:Nearest(inst, x, y, radius, meshMax, meshFilter)
     end
 
 
     local gridNodes
     if gridFirst and allowUnverified then
-        gridNodes = self:Nearest(inst, x, y, radius, self.GRID_ATTACH_MAX, gridFilter)
+        gridNodes = self:Nearest(inst, x, y, radius, gridMax, gridFilter)
     end
     out.baseCount = 0
     if #nodes == 0 and not (meshNodes and #meshNodes > 0) and not (gridNodes and #gridNodes > 0) then return out end
@@ -2072,14 +2289,28 @@ function Graph:AttachCandidates(inst, x, y, opts)
 
     local function offer(cand)
         local cur = best[cand.key]
+        if cur and targetZ ~= nil then
+            local curZ = cur.footZ or cur.footZg
+            local candZ = cand.footZ or cand.footZg
+            if curZ and candZ then
+                local curOn = abs(curZ - targetZ) <= 6
+                local candOn = abs(candZ - targetZ) <= 6
+                if curOn and not candOn and abs(candZ - targetZ) > 8 then return end
+                if candOn and not curOn and abs(curZ - targetZ) > 8 then
+                    best[cand.key] = cand
+                    return
+                end
+            end
+        end
         if not cur or cand.attachYards < cur.attachYards or (cand.attachYards == cur.attachYards and cand.dist < cur.dist) then
             best[cand.key] = cand
         end
     end
 
     local _projShape = {}
-    local function project(idx, nb, kind, nodeDist, entryIndex)
+    local function project(idx, nb, kind, nodeDist, entryIndex, limitSq)
         if not floorMatches(g, nb, posFloor) then return end
+        local capSq = limitSq or radiusSq
         local ax, ay, bx, by = xs[idx], ys[idx], xs[nb], ys[nb]
         if not bx then return end
 
@@ -2098,7 +2329,7 @@ function Graph:AttachCandidates(inst, x, y, opts)
                     local fx, fy = qx + t * vx, qy + t * vy
                     local dx, dy = fx - x, fy - y
                     local perpSq = dx * dx + dy * dy
-                    if perpSq > radiusSq then return end
+                    if perpSq > capSq then return end
                     local perp = sqrt(perpSq)
                     if bestPerp and perp >= bestPerp then return end
                     bestPerp, bestFx, bestFy = perp, fx, fy
@@ -2138,7 +2369,7 @@ function Graph:AttachCandidates(inst, x, y, opts)
         local fx, fy = ax + t * vx, ay + t * vy
         local px, py = fx - x, fy - y
         local perpSq = px * px + py * py
-        if perpSq > radiusSq then return end
+        if perpSq > capSq then return end
         local perp = sqrt(perpSq)
         if perp >= nodeDist then return end
         local segLen = sqrt(len2)
@@ -2150,8 +2381,10 @@ function Graph:AttachCandidates(inst, x, y, opts)
                 segKind = kind, fx = fx, fy = fy, otherKey = base + idx, footZ = footZ, footZg = footZg, segDoubt = doubt })
     end
 
+    local seenNodes = denseWindow and {} or nil
     for i = 1, #nodes do
         local entry = nodes[i]
+        if seenNodes then seenNodes[entry.key] = true end
         local idx = entry.key - base
         offer({ key = entry.key, dist = entry.dist, kind = KIND_ATTACH, attachYards = entry.dist, segYards = 0, footZ = heightOf(idx),
                 footZg = guessOf(idx) })
@@ -2190,17 +2423,21 @@ function Graph:AttachCandidates(inst, x, y, opts)
     local gathered = {}
     for _, cand in pairs(best) do gathered[#gathered + 1] = cand end
     local place = opts.place
-    if place == nil and opts.poiIndex and g._surf then
+    local tagPoi = opts.poiIndex or opts.originPoi
+    if place == nil and tagPoi and g._surf then
 
 
-        local anchor = poiAnchor(g, opts.poiIndex)
+        local anchor = poiAnchor(g, tagPoi)
         if anchor and anchor >= g._surf.first and anchor <= g._surf.last then
-            local name, indoor = placeOf(g, anchor)
-            place = { indoor = indoor, name = name }
+            local az = guessOf(anchor)
+            if opts.poiIndex or targetZ == nil or az == nil or abs(az - targetZ) <= self.STACKED_NAME_YARDS then
+                local name, indoor = placeOf(g, anchor)
+                place = { indoor = indoor, name = name }
+            end
         end
     end
     local namedLevels
-    gathered, namedLevels = placeFilter(self, g, inst, x, y, gathered, place, isolated, out, opts.place ~= nil)
+    gathered, namedLevels = placeFilter(self, g, inst, x, y, gathered, place, isolated, out, opts.place ~= nil, tonumber(opts.z))
     for i = 1, #gathered do out[i] = gathered[i] end
 
 
@@ -2212,7 +2449,28 @@ function Graph:AttachCandidates(inst, x, y, opts)
     tsort(out, byDist)
 
 
+
+    if targetZ ~= nil and #out > maxCount then
+        local onLvl, offLvl = {}, {}
+        for i = 1, #out do
+            local cand = out[i]
+            local cz = cand.footZ or cand.footZg
+            if cz == nil or abs(cz - targetZ) <= 6 then
+                onLvl[#onLvl + 1] = cand
+            else
+                offLvl[#offLvl + 1] = cand
+            end
+        end
+        if #onLvl > 0 and #offLvl > 0 then
+            local idx = 0
+            for i = 1, #onLvl do idx = idx + 1; out[idx] = onLvl[i] end
+            for i = 1, #offLvl do idx = idx + 1; out[idx] = offLvl[i] end
+        end
+    end
+
+
     local kept, small = 0, 0
+    local tailStart = #out + 1
     for i = 1, #out do
         local cand = out[i]
         local keep = kept < maxCount
@@ -2223,9 +2481,100 @@ function Graph:AttachCandidates(inst, x, y, opts)
         if keep then
             kept = kept + 1
             out[kept] = cand
+        elseif kept >= maxCount and tailStart > i then
+            tailStart = i
+        end
+    end
+
+
+    if corridorEnabled and not out.inSurface then
+        local corridorReach = self.ROAD_CORRIDOR_YARDS
+        if corridorReach > radius then corridorReach = radius end
+        local maxDz = self.MAX_ATTACH_DZ or 15
+        local function roadCand(cand)
+            local d = cand.attachYards or cand.dist
+            if not d or d > corridorReach then return false end
+            if targetZ ~= nil then
+                local cz = cand.footZ or cand.footZg
+                if cz ~= nil and abs(cz - targetZ) > maxDz then return false end
+            end
+            if cand.segKind and ROAD_CORRIDOR_KINDS[cand.segKind] then return true end
+            return hasRoadEdge(g, cand.key - base)
+        end
+        local roadKept, haveKey = 0, {}
+        for i = 1, kept do
+            haveKey[out[i].key] = true
+            if roadCand(out[i]) then roadKept = roadKept + 1 end
+        end
+        if roadKept < roadCorridorMax and #out >= tailStart then
+            for i = tailStart, #out do
+                local cand = out[i]
+                local idx = cand.key - base
+                if not haveKey[cand.key] and not pieceSmall(idx) and onNamedLevel(idx) and roadCand(cand) then
+                    cand.road = true
+                    kept = kept + 1
+                    out[kept] = cand
+                    haveKey[cand.key] = true
+                    roadKept = roadKept + 1
+                    if roadKept >= roadCorridorMax then break end
+                end
+            end
+        end
+        if roadKept < roadCorridorMax and denseWindow then
+            local roadSearch = corridorReach + 60
+            if roadSearch > radius then roadSearch = radius end
+            local roadNodes = self:Nearest(inst, x, y, roadSearch, roadCorridorMax * 2, function(_, idx, graph)
+                if not hasRoadEdge(graph, idx) then return false end
+                return filter(nil, idx, graph) and onNamedLevel(idx) and not select(2, placeOf(graph, idx))
+            end)
+            if #roadNodes > 0 then
+                for k in pairs(best) do best[k] = nil end
+                local corridorSq = corridorReach * corridorReach
+                for i = 1, #roadNodes do
+                    local entry = roadNodes[i]
+                    if not seenNodes[entry.key] then
+                        seenNodes[entry.key] = true
+                        local idx = entry.key - base
+                        if entry.dist <= corridorReach then
+                            offer({ key = entry.key, dist = entry.dist, kind = KIND_ATTACH, attachYards = entry.dist,
+                                    segYards = 0, footZ = heightOf(idx), footZg = guessOf(idx) })
+                        end
+                        if idx <= n then
+                            local eo, ep = g.eo, g._ep
+                            local first, stop = eo[idx], eo[idx + 1]
+                            if ep and first and stop then
+                                for e = first, stop - 1 do
+                                    local nb, kind = edgeAt(ep, e)
+                                    if nb and ROAD_CORRIDOR_KINDS[kind] then
+                                        project(idx, nb, kind, entry.dist, e, corridorSq)
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+                local extra = {}
+                for _, cand in pairs(best) do
+                    local idx = cand.key - base
+                    if not haveKey[cand.key] and not pieceIso(idx) and not pieceSmall(idx)
+                        and onNamedLevel(idx) and not select(2, placeOf(g, idx)) and roadCand(cand) then
+                        extra[#extra + 1] = cand
+                    end
+                end
+                if #extra > 1 then tsort(extra, byDist) end
+                for i = 1, #extra do
+                    local cand = extra[i]
+                    cand.road = true
+                    kept = kept + 1
+                    out[kept] = cand
+                    roadKept = roadKept + 1
+                    if roadKept >= roadCorridorMax then break end
+                end
+            end
         end
     end
     for i = #out, kept + 1, -1 do out[i] = nil end
+    if targetZ ~= nil and kept > 1 then tsort(out, byDist) end
 
 
     if opts.poiIndex and g.pi then
@@ -2295,13 +2644,14 @@ function Graph:AttachCandidates(inst, x, y, opts)
     if opts.free and not (type(opts.place) == "table" and opts.place.indoor) and #out > 0 then
         local onLargest, stacked = false, false
         for i = 1, #out do
-            local idx = out[i].key - base
-            if not pieceOff(idx) then onLargest = true break end
+            local cand = out[i]
+            local idx = cand.key - base
+            if not cand.road and not pieceOff(idx) then onLargest = true break end
             if out.inSurface and not stacked then stacked = select(3, placeOf(g, idx)) end
         end
         if not onLargest and (stacked or not out.inSurface) then
             local surf = g._surf
-            local hits = self:Nearest(inst, x, y, self.FREE_ATTACH_YARDS, self.FREE_ATTACH_MAX, function(_, idx, graph)
+            local hits = self:Nearest(inst, x, y, self.FREE_ATTACH_YARDS, freeMax, function(_, idx, graph)
                 if pieceIso(idx) or pieceOff(idx) or not floorMatches(graph, idx, posFloor) or not onNamedLevel(idx) then return false end
                 return not (surf and idx >= surf.first and idx <= surf.last and select(2, placeOf(graph, idx)))
             end)

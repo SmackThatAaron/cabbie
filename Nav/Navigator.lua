@@ -405,10 +405,128 @@ local function alongSegment(leg, along)
 end
 
 
-local function project(leg, x, y)
+
+local function legHeightAt(leg, along)
+    local pts = leg and leg.points
+    if not pts or #pts == 0 then return nil end
+    if #pts == 1 or not along or along <= 0 then
+        if type(pts[1].z) == "number" then return pts[1].z end
+        return pts[2] and type(pts[2].z) == "number" and pts[2].z or nil
+    end
+    local s = alongSegment(leg, along)
+    local a, b = pts[s], pts[s + 1]
+    if not b then return a and type(a.z) == "number" and a.z or nil end
+    local az, bz = a and a.z, b.z
+    if type(az) == "number" and type(bz) == "number" then
+        local cum = cumulative(leg)
+        local span = (cum[s + 1] or cum[s]) - cum[s]
+        local t = span > 0 and (along - cum[s]) / span or 0
+        if t < 0 then t = 0 elseif t > 1 then t = 1 end
+        return az + t * (bz - az)
+    end
+    if type(az) == "number" then return az end
+    if type(bz) == "number" then return bz end
+    return nil
+end
+
+local _pzGraph, _pzIndoor
+local function matchPlayerIndoor(key)
+    if not _pzGraph or not _pzGraph.NodePlace then return true end
+    local _, isInd = _pzGraph:NodePlace(key)
+    if _pzIndoor == false then return not isInd end
+    return isInd == true
+end
+
+local function graphSurfaceZ(self, inst, qx, qy, hintZ)
+    local G = FGPS.Graph
+    if not (G and G.NearestKey and inst ~= nil and qx and qy) then return nil end
+    if G.IsLoaded and not G:IsLoaded(inst) then return nil end
+    local heightFn = G.NodeHeightGuess or G.NodeHeight
+    if not heightFn then return nil end
+    local indoor = self.place and self.place.indoor
+    if indoor == nil and IsIndoors then
+        local ok, ind = pcall(IsIndoors)
+        if ok and not (issecretvalue and issecretvalue(ind)) then indoor = ind and true or false end
+    end
+    local loaded = type(G.loaded) == "table" and G.loaded[inst] or G
+    local cx, cy = floor(qx * 0.5), floor(qy * 0.5)
+    local cache = self._pzCache
+    if cache and cache.g == loaded and cache.inst == inst and cache.cx == cx and cache.cy == cy and cache.ind == indoor then
+        return cache.z
+    end
+    local key
+    if indoor ~= nil and G.NodePlace then
+        _pzGraph, _pzIndoor = G, indoor
+        key = G:NearestKey(inst, qx, qy, 20, matchPlayerIndoor, hintZ)
+        _pzGraph, _pzIndoor = nil, nil
+        if not key and indoor == true then
+            key = G:NearestKey(inst, qx, qy, 20, nil, hintZ)
+        end
+    else
+        key = G:NearestKey(inst, qx, qy, 20, nil, hintZ)
+    end
+    local nz = key and heightFn(G, key) or nil
+    if type(nz) ~= "number" then nz = nil end
+    if not cache then
+        cache = {}
+        self._pzCache = cache
+    end
+    cache.g, cache.inst, cache.cx, cache.cy, cache.ind, cache.z = loaded, inst, cx, cy, indoor, nz
+    return nz
+end
+
+
+
+local function resolvePlayerRouteZ(self, leg, p, pos, levelZ)
+    if type(pos) ~= "table" or type(pos.x) ~= "number" or type(pos.y) ~= "number" then return nil end
+    if type(pos.z) == "number" and not pos.zInferred then return pos.z end
+    local hintZ = (type(pos.zHint) == "number" and pos.zHint)
+        or (self.place and self.place.inst == pos.inst and type(self.place.z) == "number" and self.place.z)
+        or nil
+    local pts = leg and leg.points
+    if leg and leg.kind == "walk" and pos.inst == leg.inst and type(pts) == "table" and #pts >= 1 then
+        if pts[1].z == nil and leg._originZ == nil and pts[1].x and pts[1].y then
+            leg._originZ = graphSurfaceZ(self, leg.inst, pts[1].x, pts[1].y, hintZ) or false
+        end
+        local corridor = Const.ROAD_CORRIDOR_YARDS or 20
+        if (self.offRouteTicks or 0) == 0 and (p.offRouteYards or 0) <= corridor then
+            local s = #pts >= 2 and alongSegment(leg, p.alongYards) or 1
+            local a, b = pts[s], pts[s + 1]
+            local az = a and (type(a.z) == "number" and a.z or (s == 1 and type(leg._originZ) == "number" and leg._originZ)) or nil
+            local bz = b and type(b.z) == "number" and b.z or nil
+            if type(az) == "number" and type(bz) == "number" then
+                if s == 1 and pts[1].z == nil and math.abs(bz - az) > 12 then
+                    local liveZ = graphSurfaceZ(self, pos.inst, pos.x, pos.y, az)
+                    if type(liveZ) == "number" then return liveZ end
+                end
+                local t = 0
+                if type(p.alongYards) == "number" then
+                    local cum = cumulative(leg)
+                    local span = (cum[s + 1] or cum[s]) - cum[s]
+                    t = span > 0 and (p.alongYards - cum[s]) / span or 0
+                elseif a and b and a.x and b.x then
+                    local vx, vy = b.x - a.x, b.y - a.y
+                    local len2 = vx * vx + vy * vy
+                    if len2 > 0 then t = ((pos.x - a.x) * vx + (pos.y - a.y) * vy) / len2 end
+                end
+                if t < 0 then t = 0 elseif t > 1 then t = 1 end
+                return az + t * (bz - az)
+            elseif type(az) == "number" and a and a.x and dist(pos.x, pos.y, a.x, a.y) <= 20 then
+                return az
+            elseif type(bz) == "number" and b and b.x and not (b.stacked or b.indoor or b.climbForm)
+                    and dist(pos.x, pos.y, b.x, b.y) <= 20 then
+                return bz
+            end
+        end
+    end
+    return graphSurfaceZ(self, pos.inst, pos.x, pos.y, hintZ or levelZ) or hintZ
+end
+
+
+local function project(leg, x, y, z)
     local R = FGPS.Route
     if R and R.Project then
-        local ok, i, t, d, along = pcall(R.Project, leg, x, y)
+        local ok, i, t, d, along = pcall(R.Project, leg, x, y, z)
         if ok and type(i) == "number" and i >= 1 and i <= #leg.points and type(d) == "number" then
             return i, t or 0, d, along or 0
         end
@@ -427,23 +545,23 @@ end
 
 
 
-local function projectNear(leg, x, y, fromIndex, sinceAlong, bandYards)
+local function projectNear(leg, x, y, fromIndex, sinceAlong, bandYards, z)
     local R = FGPS.Route
     if R and R.ProjectWindow then
         local band = R.WINDOW_BAND_YARDS
         if bandYards and not (band and band >= bandYards) then band = bandYards end
-        local ok, i, t, d, along = pcall(R.ProjectWindow, leg, x, y, fromIndex, R.WINDOW_AHEAD_YARDS, band, sinceAlong)
+        local ok, i, t, d, along = pcall(R.ProjectWindow, leg, x, y, fromIndex, R.WINDOW_AHEAD_YARDS, band, sinceAlong, z)
         if ok and type(i) == "number" and i >= 1 and i <= #leg.points and type(d) == "number" then
             local narrow = R.WINDOW_BAND_YARDS
 
             if narrow and d > narrow and d <= band then
-                local wi, wt, wd, walong = project(leg, x, y)
+                local wi, wt, wd, walong = project(leg, x, y, z)
                 if wi and wd and wd <= narrow then return wi, wt or 0, wd, walong or 0 end
             end
             return i, t or 0, d, along or 0
         end
     end
-    return project(leg, x, y)
+    return project(leg, x, y, z)
 end
 
 
@@ -468,7 +586,7 @@ end
 
 
 
-local function keepContinuous(self, leg, pos, segIndex, perp, along, held)
+local function keepContinuous(self, leg, pos, segIndex, perp, along, held, z)
     local p = self.progress
     local m = p.match
     local R = FGPS.Route
@@ -485,7 +603,7 @@ local function keepContinuous(self, leg, pos, segIndex, perp, along, held)
     if not accept then
         local mx, my = pos.x - m.x, pos.y - m.y
         local moved = sqrt(mx * mx + my * my)
-        ri, _, rd, ralong = R.ProjectRange(leg, pos.x, pos.y, m.along - reach, m.along + reach)
+        ri, _, rd, ralong = R.ProjectRange(leg, pos.x, pos.y, m.along - reach, m.along + reach, z)
 
 
         if not ri or rd > held or moved > reach then
@@ -665,9 +783,8 @@ function Navigator:GetRoute() return self.route end
 function Navigator:GetProgress() return self.progress end
 
 function Navigator:CombatPolicy()
-    local policy = setting("combatMode", "visuals_only")
-    if policy ~= "all" and policy ~= "visuals_only" and policy ~= "hide_all" then policy = "visuals_only" end
-    return policy
+    if setting("combatMode", "visuals_only") == "hide_all" then return "hide_all" end
+    return "visuals_only"
 end
 
 function Navigator:IsJourney()
@@ -677,15 +794,25 @@ end
 
 
 
+Navigator.HIGHRES_POS_HZ = 12
+
 function Navigator:UpdateTicker()
     local need = self:IsJourney()
+    local hz = setting("routing.highRes", false) == true and (self.HIGHRES_POS_HZ or 12) or (Const.POS_HZ or 4)
+    if need and self.ticker and self.tickerHz ~= hz then
+        self.ticker:Cancel()
+        self.ticker = nil
+        self.tickerHz = nil
+    end
     if need and not self.ticker then
         if C_Timer and C_Timer.NewTicker then
-            self.ticker = C_Timer.NewTicker(1 / (Const.POS_HZ or 4), function() Navigator:Tick() end)
+            self.tickerHz = hz
+            self.ticker = C_Timer.NewTicker(1 / hz, function() Navigator:Tick() end)
         end
     elseif not need and self.ticker then
         self.ticker:Cancel()
         self.ticker = nil
+        self.tickerHz = nil
     end
 end
 
@@ -1162,14 +1289,107 @@ end
 
 
 
-local function heightsNear(G, inst, x, y, reach, room)
+local function heightsNear(G, inst, x, y, reach)
     local out = {}
-    local function wanted(key) return G:NodeHeight(key) ~= nil and (room == nil or G:NodePlace(key) == room) end
+    local function wanted(key) return G:NodeHeight(key) ~= nil end
     for _, near in ipairs(G:Nearest(inst, x, y, reach, 32, wanted)) do
         local z = G:NodeHeight(near.key)
-        if z and (room == nil or G:NodePlace(near.key) == room) then out[#out + 1] = { z = z, d = near.dist } end
+        if z then out[#out + 1] = { z = z, d = near.dist } end
     end
     return out
+end
+
+
+
+
+
+local function roomHeightsNear(G, inst, x, y, reach, room, indoor)
+    local out = {}
+    if not (room and G.NodePlace) then return out, false end
+    local surfReach = math.max(reach, G.SURFACE_ATTACH_RADIUS or 25)
+    local function heightOf(key)
+        return G:NodeHeight(key) or (G.NodeHeightGuess and G:NodeHeightGuess(key)) or nil
+    end
+    if indoor == true then
+        local hasIndoor, anyIndoorNamed = false, false
+        local function isIndoorNode(key) return select(2, G:NodePlace(key)) == true end
+        for _, near in ipairs(G:Nearest(inst, x, y, surfReach, 128, isIndoorNode)) do
+            if isIndoorNode(near.key) then
+                hasIndoor = true
+                if (G:NodePlace(near.key)) ~= nil then anyIndoorNamed = true end
+            end
+        end
+        if hasIndoor then
+            if not anyIndoorNamed then return out, true end
+            local function wantedIndoor(key)
+                if G:NodeHeight(key) == nil then return false end
+                local r, isInd = G:NodePlace(key)
+                return isInd == true and r == room
+            end
+            for _, near in ipairs(G:Nearest(inst, x, y, reach, 32, wantedIndoor)) do
+                if wantedIndoor(near.key) then
+                    local z = G:NodeHeight(near.key)
+                    if z then out[#out + 1] = { z = z, d = near.dist } end
+                end
+            end
+            return out, false
+        end
+    end
+    local function wanted(key)
+        if G:NodeHeight(key) == nil then return false end
+        local r, isInd = G:NodePlace(key)
+        if indoor == false and isInd then return false end
+        return r == room
+    end
+    for _, near in ipairs(G:Nearest(inst, x, y, reach, 32, wanted)) do
+        if wanted(near.key) then
+            local z = G:NodeHeight(near.key)
+            if z then out[#out + 1] = { z = z, d = near.dist } end
+        end
+    end
+    if indoor == false then
+        local band = G.STACKED_NAME_YARDS or 12
+        local levels = {}
+        for _, h in ipairs(out) do levels[#levels + 1] = h.z end
+        if #levels == 0 then
+            local function wantedSurf(key)
+                if heightOf(key) == nil then return false end
+                local r, isInd = G:NodePlace(key)
+                return not isInd and r == room
+            end
+            for _, near in ipairs(G:Nearest(inst, x, y, surfReach, 32, wantedSurf)) do
+                if wantedSurf(near.key) then
+                    local z = heightOf(near.key)
+                    if z then levels[#levels + 1] = z end
+                end
+            end
+        end
+        if #levels > 0 then
+            local hasOther, otherStacked = false, false
+            local function wantedOutdoor(key)
+                return heightOf(key) ~= nil and not select(2, G:NodePlace(key))
+            end
+            for _, near in ipairs(G:Nearest(inst, x, y, surfReach, 128, wantedOutdoor)) do
+                if wantedOutdoor(near.key) then
+                    local z = heightOf(near.key)
+                    local onNamed = false
+                    for i = 1, #levels do
+                        if math.abs(z - levels[i]) <= band then onNamed = true break end
+                    end
+                    if not onNamed then
+                        hasOther = true
+                        local r, _, isStacked = G:NodePlace(near.key)
+                        if isStacked or (r ~= nil and r ~= room) then
+                            otherStacked = true
+                            break
+                        end
+                    end
+                end
+            end
+            if hasOther and not otherStacked then return {}, true end
+        end
+    end
+    return out, false
 end
 
 
@@ -1227,7 +1447,7 @@ local function trailLevel(self, origin, hint, room)
             nearest, seen, px, py = alive, (seen or 0) + 1, xs[k], ys[k]
         end
     end
-    local named = room and G.NodePlace and heightsNear(G, origin.inst, origin.x, origin.y, self.TRAIL_ROOM_YARDS, room) or nil
+    local named = room and G.NodePlace and (roomHeightsNear(G, origin.inst, origin.x, origin.y, self.TRAIL_ROOM_YARDS, room, origin.place and origin.place.indoor)) or nil
     if named and #named > 0 then
 
         local kept, agree = nil, false
@@ -1249,6 +1469,8 @@ end
 function Navigator:BuildRequest(reason, variant)
     local origin = playerPos()
     if origin then
+        local floorHint = origin.zHint
+        if origin.zInferred then origin.z, origin.zInferred = nil, nil end
         local place = readPlace(self, origin.inst)
         origin.place = { indoor = place.indoor, name = place.name }
 
@@ -1256,13 +1478,13 @@ function Navigator:BuildRequest(reason, variant)
 
         local hint
         if reason == "recalc" or reason == "reroute" then
-            hint = trailLevel(self, origin, levelHint(self), place.name)
+            hint = trailLevel(self, origin, levelHint(self), place.name) or floorHint
         elseif reason == "level" then
-            hint = trailLevel(self, origin, nil, place.name)
+            hint = trailLevel(self, origin, nil, place.name) or floorHint
         else
-            hint = freshHint(self, origin)
+            hint = floorHint or freshHint(self, origin)
         end
-        if hint then origin.zHint = hint end
+        origin.zHint = hint
     else
 
         origin = insideOrigin(self)
@@ -1461,7 +1683,7 @@ local legDepartStep
 
 function Navigator:Announce(step, isNew)
     if not step then return end
-    if self.inCombat and self:CombatPolicy() ~= "all" then
+    if self.inCombat and self:CombatPolicy() == "hide_all" then
         self.pendingAnnounce = true
 
 
@@ -1485,7 +1707,7 @@ function Navigator:OnCombat(inCombat)
     if inCombat then return end
 
 
-    local wanted = self.pendingAnnounce or self:CombatPolicy() ~= "all"
+    local wanted = self.pendingAnnounce or self:CombatPolicy() == "hide_all"
     local held = self.heldDepart
     self.pendingAnnounce, self.heldDepart = false, nil
     local p = self:IsJourney() and self.progress or nil
@@ -2103,6 +2325,7 @@ function Navigator:OnSettingsChanged(key)
         for _, route in ipairs(self.alternatives or {}) do Instructions.RewriteDistances(route) end
     end
     if key ~= "*" and key:sub(1, 10) ~= "transports" and key:sub(1, 7) ~= "routing" then return false end
+    if key == "routing.highRes" or key == "*" then self:UpdateTicker() end
     self:DropAlternatives()
     if self:IsJourney() then
 
@@ -2460,6 +2683,12 @@ function Navigator:UpdateProgress(pos)
         if pos and pos.inst == leg.inst and wayOut >= 2 then tp, targetInst = pts[wayOut], leg.inst end
     end
     p.pos = pos
+    local levelZ = self:LevelZ()
+    p.levelZ = levelZ
+    p.playerZ = resolvePlayerRouteZ(self, leg, p, pos, levelZ)
+    p.level = (pos and type(pos.z) == "number" and not pos.zInferred and pos.z) or p.playerZ or levelZ or (pos and pos.z) or nil
+    p.uiMapID = pos and (pos.uiMapID or pos.map) or nil
+    p.floor = p.uiMapID or (p.inside and p.inside.map) or nil
     p.state = self.state
     p.legKind = leg.kind
     p.nextX, p.nextY, p.nextInst = tp and tp.x or nil, tp and tp.y or nil, targetInst
@@ -2716,6 +2945,9 @@ end
 function Navigator:Resync(pos)
     local route, p = self.route, self.progress
     if not route or not p or not pos then return false end
+    local refZ = (type(pos.z) == "number" and not pos.zInferred and pos.z)
+        or (type(pos.zHint) == "number" and pos.zHint)
+        or freshHint(self, pos)
     local bestLeg, bestIdx, bestD, bestAlong
     for li = p.legIndex, #route.legs do
         local leg = route.legs[li]
@@ -2724,7 +2956,7 @@ function Navigator:Resync(pos)
 
         if leg.inst == pos.inst and #leg.points > 0 and not crossesInstances(leg) then
             if leg.kind == "walk" then
-                local i, _, d, along = project(leg, pos.x, pos.y)
+                local i, _, d, along = project(leg, pos.x, pos.y, refZ)
                 if i and d and (not bestD or d <= bestD) then
 
                     local target = i + 1
@@ -3010,8 +3242,13 @@ function Navigator:Advance(pos)
 
     local held, heldGuessed = self:OffRouteThreshold(leg, p.pointIndex > 1 and p.pointIndex - 1 or 1)
     if heldGuessed then held = self.FOLLOW_BAND_FACTOR * held end
-    local segIndex, _, perp, along = projectNear(leg, pos.x, pos.y, p.pointIndex, p.alongYards, held)
-    segIndex, perp, along = keepContinuous(self, leg, pos, segIndex, perp, along, held)
+    local prevAlong = (p.match and p.match.leg == p.legIndex and p.match.along) or p.alongYards
+    local refZ = (type(pos.z) == "number" and not pos.zInferred and pos.z)
+        or (type(pos.zHint) == "number" and pos.zHint)
+        or legHeightAt(leg, prevAlong)
+        or self:LevelZ()
+    local segIndex, _, perp, along = projectNear(leg, pos.x, pos.y, p.pointIndex, p.alongYards, held, refZ)
+    segIndex, perp, along = keepContinuous(self, leg, pos, segIndex, perp, along, held, refZ)
     local threshold, guessed = self:OffRouteThreshold(leg, segIndex)
     local onRoute = perp ~= nil and perp <= threshold
 
@@ -3059,7 +3296,14 @@ function Navigator:Advance(pos)
         local pointAlong = cum[target] or 0
         local alongOk = along ~= nil and pointAlong <= along + radius
         local passed = (not isLegEnd) and following and alongOk and segIndex ~= nil and segIndex >= target
-        if (d <= radius and alongOk) or passed then
+        local corridor = Const.ROAD_CORRIDOR_YARDS or 20
+        local inCorridor = (not isLegEnd) and following and alongOk and corridor > radius
+            and not (pt.indoor or pt.stacked or pt.climbForm or pt.door)
+            and perp ~= nil and perp <= corridor
+            and d * d <= corridor * corridor + radius * radius
+        local wrongDeck = (not isLegEnd) and (not passed) and pt.stacked and not pt.climbForm
+            and refZ ~= nil and type(pt.z) == "number" and math.abs(pt.z - refZ) > 10
+        if ((d <= radius or inCorridor) and alongOk and not wrongDeck) or passed then
             if isLegEnd then
                 if self:CompleteLeg(p.legIndex, pos) then return end
 
@@ -3277,6 +3521,39 @@ local function followRoomAhead(self, leg, idx, name, pos)
     return false
 end
 
+local function followHeightAhead(self, leg, idx, targetZ, pos)
+    local p = self.progress
+    local pts, cum = leg.points, cumulative(leg)
+    local band = self.TRAIL_LEVEL_YARDS
+    for s = idx, #pts - 1 do
+        local a, b = pts[s], pts[s + 1]
+        local az, bz = a.z, b.z
+        if type(az) == "number" or type(bz) == "number" then
+            local vx, vy = b.x - a.x, b.y - a.y
+            local len2 = vx * vx + vy * vy
+            local t = 0
+            if len2 > 0 then
+                t = ((pos.x - a.x) * vx + (pos.y - a.y) * vy) / len2
+                if t < 0 then t = 0 elseif t > 1 then t = 1 end
+            end
+            local segZ = (type(az) == "number" and type(bz) == "number") and (az + t * (bz - az))
+                or (type(az) == "number" and az) or bz
+            if segZ and math.abs(segZ - targetZ) <= band then
+                local d = dist(pos.x, pos.y, a.x + t * vx, a.y + t * vy)
+                if d <= self:OffRouteThreshold(leg, s) then
+                    local along = cum[s] + t * ((cum[s + 1] or cum[s]) - cum[s])
+                    p.pointIndex = t > 0 and s + 1 or s
+                    if along > (p.alongYards or 0) then p.alongYards = along end
+                    p.match = { leg = p.legIndex, along = along, at = now(), x = pos.x, y = pos.y, toward = 0 }
+                    self.lastAlong = along
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
+
 local function noteLevel(self, pos)
     local pt, idx, leg = matchedPoint(self)
     if not pt or leg.kind ~= "walk" then
@@ -3284,8 +3561,11 @@ local function noteLevel(self, pos)
         return
     end
     local place = self.place
+    local explicitZ = (type(pos.z) == "number" and not pos.zInferred and pos.z)
+        or (type(pos.zHint) == "number" and pos.zHint)
+        or nil
 
-    if type(pt.z) == "number" and self.offRouteTicks == 0 then
+    if type(pt.z) == "number" and self.offRouteTicks == 0 and (explicitZ == nil or math.abs(explicitZ - pt.z) <= 9) then
         place.z, place.at, place.x, place.y, place.inst = pt.z, now(), pos.x, pos.y, pos.inst
     end
 
@@ -3294,6 +3574,25 @@ local function noteLevel(self, pos)
 
     local room = pt.stacked and dataRoom(leg.inst or pos.inst, place.clientName or place.name) or nil
     if not room then
+        if pt.stacked and not pt.climbForm and explicitZ ~= nil then
+            local expectedZ = legHeightAt(leg, self.progress and self.progress.alongYards) or pt.z
+            if type(expectedZ) == "number" and math.abs(explicitZ - expectedZ) > 9 then
+                self.wrongLevelTicks = self.wrongLevelTicks + 1
+                if self.wrongLevelTicks < self.WRONG_LEVEL_TICKS then return end
+                self.wrongLevelTicks = 0
+                if followHeightAhead(self, leg, idx, explicitZ, pos) then return end
+                local zBucket = floor(explicitZ / 6 + 0.5)
+                local asked = self.levelAsked
+                if asked and asked.zBucket == zBucket and asked.route ~= nil and asked.route == self.route then return end
+                if self.inflight or not self:RecalcAllowed() then return end
+                self.lastRecalcAt = now()
+                self.levelAsked = { zBucket = zBucket }
+                self:Reroute("level")
+                return
+            elseif self.levelAsked and self.levelAsked.zBucket then
+                self.levelAsked = nil
+            end
+        end
         self.wrongLevelTicks = 0
         return
     end
@@ -3309,9 +3608,13 @@ local function noteLevel(self, pos)
     if followRoomAhead(self, leg, idx, room, pos) then return end
     local G = FGPS.Graph
     local inst = leg.inst or pos.inst
-    if type(pt.z) == "number" and G and G.Nearest and G.NodeHeight and G.NodePlace and (not G.IsLoaded or G:IsLoaded(inst)) then
-        for _, h in ipairs(heightsNear(G, inst, pos.x, pos.y, self.TRAIL_ROOM_YARDS, room)) do
-            if math.abs(h.z - pt.z) <= self.TRAIL_LEVEL_YARDS then return end
+    if G and G.Nearest and G.NodeHeight and G.NodePlace and (not G.IsLoaded or G:IsLoaded(inst)) then
+        local nearRoom, unstacked = roomHeightsNear(G, inst, pos.x, pos.y, self.TRAIL_ROOM_YARDS, room, place.indoor)
+        if unstacked then return end
+        if type(pt.z) == "number" then
+            for _, h in ipairs(nearRoom) do
+                if math.abs(h.z - pt.z) <= self.TRAIL_LEVEL_YARDS then return end
+            end
         end
     end
     local asked = self.levelAsked
@@ -3370,9 +3673,9 @@ end
 
 
 
-
 local function forgetWhere(p, map)
     p.pos, p.distToNext = nil, nil
+    p.level, p.levelZ, p.playerZ, p.uiMapID, p.floor = nil, nil, nil, nil, map
     p.nextX, p.nextY, p.nextInst = nil, nil, map
 end
 

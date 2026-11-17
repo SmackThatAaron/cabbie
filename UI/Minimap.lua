@@ -12,7 +12,7 @@
 local ADDON_NAME, FGPS = ...
 
 local L = FGPS.L
-local sqrt, floor, max, min = math.sqrt, math.floor, math.max, math.min
+local sqrt, floor, max, min, pi = math.sqrt, math.floor, math.max, math.min, math.pi
 local type, ipairs, pairs = type, ipairs, pairs
 
 local Minimap = {
@@ -28,20 +28,32 @@ local Minimap = {
     active = false,
     lastDotCount = 0,
     drawn = nil,
+    OTHER_LEVEL_YARDS = 8,
+    OTHER_LEVEL_ALPHA = 0.35,
 }
 FGPS.UI.Minimap = Minimap
 
 local MAX_DOTS = 40
+local HIGHRES_MAX_DOTS = 64
 local THROTTLE_SECONDS = 0.5
+local HIGHRES_THROTTLE_SECONDS = 0.2
 local RADIUS_FACTOR = 1.2
 local DEFAULT_VIEW_RADIUS = 233.3
 local MIN_SPACING = 8
+local HIGHRES_MIN_SPACING = 5
 local MAX_WALK_FACTOR = 4
 local MOVE_EPSILON_YARDS = 1
+local HIGHRES_MOVE_EPSILON_YARDS = 0.5
 local REF = "Cabbie"
 
 local function settings()
     return FGPS.DB and FGPS.DB.settings or nil
+end
+
+local function highResMode()
+    local s = settings()
+    local r = s and s.routing
+    return type(r) == "table" and r.highRes == true
 end
 
 local function now()
@@ -91,14 +103,17 @@ local DOT_SIZE = 5
 local DOT_SIZE_UNVERIFIED = 8
 local NEXT_PIN_SIZE = 9
 local NEXT_MARK_SIZE = 4
+local NEXT_LEVEL_SIZE = 7
 local DEST_PIN_SIZE = 15
 local DEST_MARK_SIZE = 10
+local DEST_LEVEL_SIZE = 9
 local HALO_GROWTH = 2
 
 
 
 
 local DOT_TEXTURE = "Interface\\AddOns\\Cabbie\\Media\\dot"
+local LEVEL_CHEVRON_TEXTURE = "Interface\\AddOns\\Cabbie\\Media\\arrow_chevron"
 local INK_ALPHA = 0.95
 
 local function makeDot()
@@ -126,7 +141,7 @@ end
 
 
 
-local function makeMark(size, markTexture, markSize)
+local function makeMark(size, markTexture, markSize, levelSize)
     local parent = _G and _G.Minimap or UIParent
     local icon = CreateFrame("Frame", nil, parent)
     local WorldMap = FGPS.UI.WorldMap
@@ -150,6 +165,16 @@ local function makeMark(size, markTexture, markSize)
     icon.Mark:SetPoint("CENTER", icon, "CENTER", 0, 0)
     icon.Mark:SetSize(markSize, markSize)
     icon.Mark:SetTexture(markTexture)
+    local lvSize = levelSize or NEXT_LEVEL_SIZE
+    icon.LevelHalo = icon:CreateTexture(nil, "OVERLAY", nil, 1)
+    icon.LevelHalo:SetSize(lvSize + 2, lvSize + 2)
+    icon.LevelHalo:SetTexture(DOT_TEXTURE)
+    icon.LevelHalo:Hide()
+    icon.LevelMark = icon:CreateTexture(nil, "OVERLAY", nil, 2)
+    icon.LevelMark:SetSize(lvSize, lvSize)
+    icon.LevelMark:SetTexture(LEVEL_CHEVRON_TEXTURE)
+    icon.LevelMark:Hide()
+    icon.fgpsLevelDir = false
     icon:Hide()
     return icon
 end
@@ -160,6 +185,32 @@ local function tintMark(icon, vr, vg, vb, pr, pg, pb)
     icon.Fill:SetVertexColor(pr, pg, pb, 1)
     icon.Ring:SetVertexColor(vr, vg, vb, INK_ALPHA)
     icon.Mark:SetVertexColor(vr, vg, vb, INK_ALPHA)
+    if icon.LevelHalo then icon.LevelHalo:SetVertexColor(pr, pg, pb, 1) end
+    if icon.LevelMark then icon.LevelMark:SetVertexColor(vr, vg, vb, INK_ALPHA) end
+end
+
+local function setLevelMark(icon, dir)
+    if not (icon and icon.LevelMark and icon.LevelHalo) then return end
+    dir = (dir == "up" or dir == "down") and dir or false
+    if icon.fgpsLevelDir == dir then return end
+    icon.fgpsLevelDir = dir
+    if not dir then
+        icon.LevelHalo:Hide()
+        icon.LevelMark:Hide()
+        return
+    end
+    icon.LevelMark:ClearAllPoints()
+    icon.LevelHalo:ClearAllPoints()
+    if dir == "up" then
+        icon.LevelMark:SetPoint("BOTTOM", icon, "TOP", 0, -1)
+        if icon.LevelMark.SetRotation then icon.LevelMark:SetRotation(0) end
+    else
+        icon.LevelMark:SetPoint("TOP", icon, "BOTTOM", 0, 1)
+        if icon.LevelMark.SetRotation then icon.LevelMark:SetRotation(pi) end
+    end
+    icon.LevelHalo:SetPoint("CENTER", icon.LevelMark, "CENTER", 0, 0)
+    icon.LevelHalo:Show()
+    icon.LevelMark:Show()
 end
 
 
@@ -217,13 +268,14 @@ local function ensureIcons()
     if Minimap.dotPool then return true end
     if not CreateObjectPool then return false end
     Minimap.dotPool = CreateObjectPool(makeDot, function(_, icon)
+        icon:SetAlpha(1)
         icon:Hide()
     end)
     local Look = FGPS.UI.Look
     local vr, vg, vb = Look.RouteColor("routeVerified")
     local pr, pg, pb = Look.Color("paleRing")
-    Minimap.nextPin = makeMark(NEXT_PIN_SIZE, DOT_TEXTURE, NEXT_MARK_SIZE)
-    Minimap.destPin = makeMark(DEST_PIN_SIZE, FGPS.UI.WorldMap.MAP_X, DEST_MARK_SIZE)
+    Minimap.nextPin = makeMark(NEXT_PIN_SIZE, DOT_TEXTURE, NEXT_MARK_SIZE, NEXT_LEVEL_SIZE)
+    Minimap.destPin = makeMark(DEST_PIN_SIZE, FGPS.UI.WorldMap.MAP_X, DEST_MARK_SIZE, DEST_LEVEL_SIZE)
     tintMark(Minimap.nextPin, vr, vg, vb, pr, pg, pb)
     tintMark(Minimap.destPin, vr, vg, vb, pr, pg, pb)
     return true
@@ -369,12 +421,33 @@ end
 
 
 
+local function activeLevelZ(progress, pos)
+    if pos and not pos.zInferred and type(pos.z) == "number" then return pos.z end
+    if type(progress) == "table" then
+        if type(progress.playerZ) == "number" then return progress.playerZ end
+        if type(progress.levelZ) == "number" then return progress.levelZ end
+        if type(progress.level) == "number" then return progress.level end
+    end
+    return nil
+end
+
+local function levelDirForDelta(targetZ, levelZ)
+    if type(targetZ) ~= "number" or type(levelZ) ~= "number" then return false end
+    local dz = targetZ - levelZ
+    local limit = Minimap.OTHER_LEVEL_YARDS
+    if dz > limit then return "up" end
+    if dz < -limit then return "down" end
+    return false
+end
+
 function Minimap.SampleDots(route, progress, pos, radius, maxDots, out)
     local dots = out or {}
     local count = 0
     if type(route) ~= "table" or type(route.legs) ~= "table" or not pos then return dots, count end
-    maxDots = maxDots or MAX_DOTS
-    local spacing = max(MIN_SPACING, (radius * 2) / maxDots)
+    local useHighRes = maxDots == nil and highResMode()
+    maxDots = maxDots or (useHighRes and HIGHRES_MAX_DOTS or MAX_DOTS)
+    local minSpacing = useHighRes and HIGHRES_MIN_SPACING or MIN_SPACING
+    local spacing = max(minSpacing, (radius * 2) / maxDots)
     local walkLimit = radius * MAX_WALK_FACTOR
     local legStart = progress and progress.legIndex or 1
     local pointStart = progress and progress.pointIndex or 1
@@ -384,6 +457,9 @@ function Minimap.SampleDots(route, progress, pos, radius, maxDots, out)
     local first = true
     local UNVERIFIED = unverifiedKinds()
     local inst = pos.inst
+    local levelZ = activeLevelZ(progress, pos)
+    local insideMaps = levelZ ~= nil and FGPS.Data and FGPS.Data.insideMaps or nil
+    local levelLimit = Minimap.OTHER_LEVEL_YARDS
 
     for legIndex = legStart, #route.legs do
         local leg = route.legs[legIndex]
@@ -408,12 +484,29 @@ function Minimap.SampleDots(route, progress, pos, radius, maxDots, out)
             if first then
                 from = Minimap.PointAhead(leg, legIndex == legStart and pointStart or nil, progress and progress.alongYards, pos)
             end
+            local insideLeg = type(insideMaps) == "table" and leg.inst ~= nil and insideMaps[leg.inst] ~= nil
 
-            local cx, cy
-            if first then cx, cy = px, py else
+
+
+            local cx, cy, cz, cStacked
+            if first then
+                cx, cy, cz, cStacked = px, py, levelZ, true
+                if kind == "walk" and not leg.split and FGPS.Route and FGPS.Route.Cumulative
+                    and #points >= 2 and points[1].x ~= nil then
+                    local cum = FGPS.Route.Cumulative(leg)
+                    local pf = points[from]
+                    if pf and cum and type(cum[from]) == "number" then
+                        local fdx, fdy = (pf.x or pf[1]) - px, (pf.y or pf[2]) - py
+                        local firstSegLen = sqrt(fdx * fdx + fdy * fdy)
+                        carry = (cum[from] - firstSegLen) % spacing
+                        if carry >= spacing - 1e-9 then carry = 0 end
+                    end
+                end
+            else
                 local p0 = points[from]
-                cx, cy = p0.x or p0[1], p0.y or p0[2]
+                cx, cy, cz, cStacked = p0.x or p0[1], p0.y or p0[2], p0.z, p0.stacked
                 from = from + 1
+                if kind == "walk" and not leg.split then carry = 0 end
             end
             first = false
             for i = from, to do
@@ -430,6 +523,14 @@ function Minimap.SampleDots(route, progress, pos, radius, maxDots, out)
                 else
                     local segUnverified = legUnverified
                     if p.k ~= nil then segUnverified = UNVERIFIED[p.k] == true end
+                    local segOtherLevel = nil
+                    if levelZ ~= nil and (insideLeg or (cStacked and p.stacked and (p.k == 22 or p.k == 23 or p.k == 16)))
+                            and type(cz) == "number" and type(p.z) == "number" then
+                        local d0, d1 = cz - levelZ, p.z - levelZ
+                        if (d0 > levelLimit or d0 < -levelLimit) and (d1 > levelLimit or d1 < -levelLimit) then
+                            segOtherLevel = true
+                        end
+                    end
                     local dx, dy = nx - cx, ny - cy
                     local segLen = sqrt(dx * dx + dy * dy)
                     if segLen > 0 then
@@ -446,6 +547,7 @@ function Minimap.SampleDots(route, progress, pos, radius, maxDots, out)
                                 end
                                 entry.inst, entry.x, entry.y = inst, sx, sy
                                 entry.unverified = segUnverified
+                                entry.otherLevel = segOtherLevel
                                 entry.k = p.k
                                 if count >= maxDots then return dots, count end
                             end
@@ -456,7 +558,7 @@ function Minimap.SampleDots(route, progress, pos, radius, maxDots, out)
                         if walked > walkLimit then return dots, count end
                     end
                 end
-                cx, cy = nx, ny
+                cx, cy, cz, cStacked = nx, ny, p.z, p.stacked
             end
 
             if leg.toInst ~= nil and leg.toInst ~= pos.inst then return dots, count end
@@ -469,17 +571,53 @@ function Minimap.SampleDots(route, progress, pos, radius, maxDots, out)
 end
 
 local function destinationOf(route)
+    local legs = route.legs
+    local lastLeg = type(legs) == "table" and legs[#legs] or nil
+    local lastPt = lastLeg and lastLeg.points and lastLeg.points[#lastLeg.points] or nil
     local stops = route.stops
     if type(stops) == "table" and #stops > 0 then
         local last = stops[#stops]
         local dest = last.dest or last
-        if type(dest) == "table" and dest.x and dest.y and dest.inst then return dest.inst, dest.x, dest.y end
+        if type(dest) == "table" and dest.x and dest.y and dest.inst then
+            local dz = type(dest.z) == "number" and dest.z or nil
+            if dz == nil and lastPt and lastLeg.inst == dest.inst and type(lastPt.z) == "number" then
+                local px, py = lastPt.x or lastPt[1], lastPt.y or lastPt[2]
+                if type(px) == "number" and type(py) == "number" then
+                    local ex, ey = px - dest.x, py - dest.y
+                    if ex * ex + ey * ey <= 6400 then dz = lastPt.z end
+                end
+            end
+            return dest.inst, dest.x, dest.y, dz
+        end
     end
-    local legs = route.legs
-    local leg = type(legs) == "table" and legs[#legs] or nil
-    local p = leg and leg.points and leg.points[#leg.points]
-    if p and leg.inst then return leg.inst, p.x or p[1], p.y or p[2] end
+    if lastPt and lastLeg.inst then
+        return lastLeg.inst, lastPt.x or lastPt[1], lastPt.y or lastPt[2],
+            type(lastPt.z) == "number" and lastPt.z or nil
+    end
     return nil
+end
+
+local function stepVerticalDir(step)
+    if step.kind == "level" or step.kind == "ramp" then
+        if step.up ~= nil or type(step.dz) == "number" then
+            local down = step.up == false or (step.up == nil and type(step.dz) == "number" and step.dz < 0)
+            return down and "down" or "up"
+        end
+    elseif type(step.joined) == "table" and #step.joined > 0 then
+        local j1 = step.joined[1]
+        if type(j1) == "table" and (j1.kind == "level" or j1.kind == "ramp") and j1.up ~= nil then
+            return j1.up == false and "down" or "up"
+        end
+    end
+    return nil
+end
+
+local function legPointZ(route, legIndex, pointIndex)
+    local legs = type(route) == "table" and route.legs or nil
+    local leg = type(legs) == "table" and type(legIndex) == "number" and legs[legIndex] or nil
+    local pts = type(leg) == "table" and leg.points or nil
+    local pt = type(pts) == "table" and type(pointIndex) == "number" and pts[pointIndex] or nil
+    return type(pt) == "table" and type(pt.z) == "number" and pt.z or nil
 end
 
 local function nextPointOf(route, progress, pos)
@@ -489,13 +627,16 @@ local function nextPointOf(route, progress, pos)
     if onLegWithoutWay(route, progress) then return nil end
     local step = progress.currentStep
     if type(step) == "table" and step.x and step.y and (step.inst == nil or step.inst == pos.inst) then
-        return pos.inst, step.x, step.y
+        local nz = type(step.z) == "number" and step.z
+            or legPointZ(route, step.legIndex or progress.legIndex, step.pointIndex)
+        return pos.inst, step.x, step.y, nz, stepVerticalDir(step)
     end
 
 
 
     if progress.nextX and progress.nextY and (progress.nextInst == nil or progress.nextInst == pos.inst) then
-        return pos.inst, progress.nextX, progress.nextY
+        local nz = legPointZ(route, progress.legIndex, progress.pointIndex)
+        return pos.inst, progress.nextX, progress.nextY, nz, nil
     end
     return nil
 end
@@ -512,8 +653,14 @@ function Minimap:Clear()
         self.pins:RemoveAllMinimapIcons(REF)
     end
     if self.dotPool then self.dotPool:ReleaseAll() end
-    if self.nextPin then self.nextPin:Hide() end
-    if self.destPin then self.destPin:Hide() end
+    if self.nextPin then
+        setLevelMark(self.nextPin, false)
+        self.nextPin:Hide()
+    end
+    if self.destPin then
+        setLevelMark(self.destPin, false)
+        self.destPin:Hide()
+    end
     self.placedDots, self.placedNext, self.placedDest, self.placedWith = nil, nil, nil, nil
     self.active = false
     self.lastDotCount = 0
@@ -584,14 +731,17 @@ function Minimap:Refresh()
     if type(progress) == "table" then
         drawn.leg, drawn.point, drawn.step = progress.legIndex, progress.pointIndex, progress.currentStep
     end
+    local levelZ = activeLevelZ(progress, pos)
+    drawn.levelBucket = levelZ ~= nil and floor(levelZ / 4 + 0.5) or nil
     drawn.inst, drawn.x, drawn.y = nil, nil, nil
     if pos then drawn.inst, drawn.x, drawn.y = pos.inst, pos.x, pos.y end
     if pos and pos.inst then
 
 
         self.dotBuffer = self.dotBuffer or {}
-        local dots, dotCount = Minimap.SampleDots(route, self.progress, pos, radius, MAX_DOTS, self.dotBuffer)
+        local dots, dotCount = Minimap.SampleDots(route, self.progress, pos, radius, nil, self.dotBuffer)
         local vr, vg, vb, ur, ug, ub, pr, pg, pb = dotColors()
+        local otherAlpha = Minimap.OTHER_LEVEL_ALPHA
         for i = 1, dotCount do
             local dot = dots[i]
             local icon = placedDots[i]
@@ -600,29 +750,36 @@ function Minimap:Refresh()
                 placedDots[i] = icon
             end
             styleDot(icon, dot.unverified, vr, vg, vb, ur, ug, ub, pr, pg, pb)
+            icon:SetAlpha(dot.otherLevel and otherAlpha or 1)
             pins:AddMinimapIconWorld(REF, icon, dot.inst, dot.x, dot.y, false)
             placed = placed + 1
         end
         trimDots(pins, pool, placedDots, dotCount)
-        local ninst, nx, ny = nextPointOf(route, self.progress, pos)
+        local ninst, nx, ny, nz, nstepDir = nextPointOf(route, self.progress, pos)
         if ninst then
+            setLevelMark(self.nextPin, nstepDir or levelDirForDelta(nz, levelZ))
             pins:AddMinimapIconWorld(REF, self.nextPin, ninst, nx, ny, false)
             raiseOverDots(self.nextPin, 2)
             self.placedNext = true
             placed = placed + 1
         else
+            setLevelMark(self.nextPin, false)
             if self.placedNext then pins:RemoveMinimapIcon(REF, self.nextPin) end
             self.placedNext = nil
             self.nextPin:Hide()
         end
     else
         trimDots(pins, pool, placedDots, 0)
+        setLevelMark(self.nextPin, false)
         if self.placedNext then pins:RemoveMinimapIcon(REF, self.nextPin) end
         self.placedNext = nil
+        self.nextPin:Hide()
     end
-    local dinst, dx, dy = destinationOf(route)
+    local dinst, dx, dy, dz = destinationOf(route)
     local was = self.placedDest
     if dinst then
+        local destDir = (pos and pos.inst == dinst) and levelDirForDelta(dz, levelZ) or false
+        setLevelMark(self.destPin, destDir)
 
         if not (was and was.inst == dinst and was.x == dx and was.y == dy) then
             pins:AddMinimapIconWorld(REF, self.destPin, dinst, dx, dy, true)
@@ -631,6 +788,7 @@ function Minimap:Refresh()
         raiseOverDots(self.destPin, 3)
         placed = placed + 1
     else
+        setLevelMark(self.destPin, false)
         if was then pins:RemoveMinimapIcon(REF, self.destPin) end
         self.placedDest = nil
         self.destPin:Hide()
@@ -642,14 +800,15 @@ end
 
 
 function Minimap:RequestRefresh()
+    local throttle = highResMode() and HIGHRES_THROTTLE_SECONDS or THROTTLE_SECONDS
     local elapsed = now() - self.lastRefresh
-    if elapsed >= THROTTLE_SECONDS then
+    if elapsed >= throttle then
         self:Refresh()
         return
     end
     if self.pendingTimer then return end
     if C_Timer and C_Timer.NewTimer then
-        self.pendingTimer = C_Timer.NewTimer(THROTTLE_SECONDS - elapsed, function() Minimap:Refresh() end)
+        self.pendingTimer = C_Timer.NewTimer(throttle - elapsed, function() Minimap:Refresh() end)
     end
 end
 
@@ -705,10 +864,13 @@ local function needsRefresh(progress)
     if drawn.leg ~= progress.legIndex or drawn.point ~= progress.pointIndex or drawn.step ~= progress.currentStep then return true end
     if drawn.radius ~= viewRadius() * RADIUS_FACTOR then return true end
     local pos = playerPos(progress)
+    local levelZ = activeLevelZ(progress, pos)
+    if drawn.levelBucket ~= (levelZ ~= nil and floor(levelZ / 4 + 0.5) or nil) then return true end
     if not pos or not pos.x or not pos.y then return drawn.x ~= nil end
     if drawn.inst ~= pos.inst or not drawn.x then return true end
     local dx, dy = pos.x - drawn.x, pos.y - drawn.y
-    return dx * dx + dy * dy >= MOVE_EPSILON_YARDS * MOVE_EPSILON_YARDS
+    local eps = highResMode() and HIGHRES_MOVE_EPSILON_YARDS or MOVE_EPSILON_YARDS
+    return dx * dx + dy * dy >= eps * eps
 end
 
 
@@ -794,7 +956,8 @@ end
 
 local function onSettingsChanged(_, key)
     if key == "*" then applyColors() end
-    if key == "minimapLine" or key == "combatMode" or key == "*" or key == "perf.guidanceEnabled" then
+    if key == "minimapLine" or key == "combatMode" or key == "*" or key == "perf.guidanceEnabled"
+        or key == "routing.highRes" then
         if Minimap.route then Minimap:Refresh() end
     elseif key == "accessibility.colorScheme" then
         applyColors()

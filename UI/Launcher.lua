@@ -218,8 +218,18 @@ end
 
 
 
-
 function Launcher:OpenMenu(owner)
+    local btn = self.button
+    local menuOwner = owner or (btn and btn.IsVisible and btn:IsVisible() and btn) or UIParent
+    local Menus = FGPS.UI.Menus
+    if Menus and Menus.OpenContextMenu then
+        return Menus.OpenContextMenu(menuOwner, generateMenu, {
+            noteKey = "launcher:menu",
+            noteMessage = "Launcher: no MenuUtil in this client; using Cabbie popup menu",
+            errorFlag = "launcherMenuFailed",
+            errorLabel = "The launcher menu failed to open",
+        })
+    end
     local Look = FGPS.UI.Look
     if not (Look and Look.TomeHas and Look.TomeHas("global", "MenuUtil")) then
         if Look and Look.NoteOnce then
@@ -228,8 +238,9 @@ function Launcher:OpenMenu(owner)
         return nil
     end
     if type(MenuUtil) ~= "table" or type(MenuUtil.CreateContextMenu) ~= "function" then return nil end
-    if GameTooltip and owner and GameTooltip.IsOwned and GameTooltip:IsOwned(owner) then GameTooltip:Hide() end
-    return MenuUtil.CreateContextMenu(owner, generateMenu)
+    if GameTooltip and menuOwner and GameTooltip.IsOwned and GameTooltip:IsOwned(menuOwner) then GameTooltip:Hide() end
+    local safeOwner = Look and Look.MenuOwner and Look.MenuOwner(menuOwner) or menuOwner
+    return MenuUtil.CreateContextMenu(safeOwner, generateMenu)
 end
 
 local function createButton()

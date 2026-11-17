@@ -25,10 +25,6 @@
 		if Cabbie and Cabbie.UI and Cabbie.UI.Bindings then Cabbie.UI.Bindings.Run("repeat") end
 	</Binding>
 
-	<Binding name="CABBIE_MUTE" category="BINDING_HEADER_CABBIE">
-		if Cabbie and Cabbie.UI and Cabbie.UI.Bindings then Cabbie.UI.Bindings.Run("mute") end
-	</Binding>
-
 	<Binding name="CABBIE_CANCEL" category="BINDING_HEADER_CABBIE">
 		if Cabbie and Cabbie.UI and Cabbie.UI.Bindings then Cabbie.UI.Bindings.Run("cancel") end
 	</Binding>

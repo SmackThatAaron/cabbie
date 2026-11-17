@@ -28,7 +28,7 @@ local type, pairs, ipairs = type, pairs, ipairs
 -- own defaults at file scope, which runs before ADDON_LOADED and therefore before DB:Init applies
 -- them; a reset picks them up through the same table. Nothing overwrites a key that already
 -- exists, so Core/DB.lua always wins when a preference later moves into the schema proper.
---   FGPS.UI.AddSettingDefault("cues", { enabled = false, ... })
+--   FGPS.UI.AddSettingDefault("compat", { wayCommand = true })
 function FGPS.UI.AddSettingDefault(key, value)
     local defaults = FGPS.DB and FGPS.DB.defaults
     local settings = defaults and defaults.settings

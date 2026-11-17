@@ -24,9 +24,6 @@
 
 
 
-
-
-
 local ADDON_NAME, FGPS = ...
 
 local Instructions = {
@@ -147,20 +144,6 @@ local function distanceUnits()
     local s = FGPS.DB and FGPS.DB.settings
     return s and s.units or "yards"
 end
-
-local function spokenDistance(yards)
-    local exact = yards or 0
-    yards = floor(exact + 0.5)
-    if yards >= 100 then yards = floor(yards / 10 + 0.5) * 10 end
-    if distanceUnits() == "metric" then
-
-        local metres = floor(exact * (FGPS.Const.METERS_PER_YARD or 0.9144) + 0.5)
-        if metres >= 100 then metres = floor(metres / 10 + 0.5) * 10 end
-        return format(L["%d metres"], metres)
-    end
-    return format(L["%d yards"], yards)
-end
-Instructions.SpokenDistance = spokenDistance
 
 local function shortTime(seconds)
     return Util.FormatTime(seconds or 0)
@@ -388,7 +371,7 @@ local function turnTexts(kind, landmark)
     local t = TURN_TEXT[kind]
     local text = t.text
     if landmark then text = format(L["%s at %s"], text, landmark) end
-    return text, t.short, text .. "."
+    return text, t.short
 end
 
 
@@ -401,42 +384,33 @@ end
 
 
 
-
-
 local function addZone(step)
     local name = step.zoneName
     if not name then return end
     step.text = format(L["%s, entering %s"], step.text, name)
-    step.zoneVoice = format(L["Entering %s."], name)
 end
 
 
 
 
-
 local function describeTurn(step)
-    local text, short, voice
+    local text, short
     local landmark = step.landmark and (step.landmarkSaid or step.landmark)
     if step.kind == "ramp" then
         text, short = L["Follow the ramp"], L["Follow the ramp"]
-        voice = text .. "."
     elseif step.toward then
-
-
         local base = turnTexts(step.kind, nil)
         text = format(L["%s toward %s"], base, step.toward)
         short = text
-        voice = select(3, turnTexts(step.kind, landmark))
     else
-        text, short, voice = turnTexts(step.kind, landmark)
+        text, short = turnTexts(step.kind, landmark)
     end
     local guess = step.guess
     if guess then
         text = format(L["%s, then continue %s across open ground for %s"], text, guess.compass, guess.distance)
         if guess.steepNote and not guess.checked then text = text .. " " .. guess.steepNote end
     end
-    step.text, step.shortText, step.voiceText = text, short, voice
-    step.guessVoice = guess and guess.voiceText or nil
+    step.text, step.shortText = text, short
     addZone(step)
 end
 
@@ -560,10 +534,8 @@ end
 
 
 
-
 local JOIN_HOSTS = { depart = true, turn_slight_left = true, turn_slight_right = true, turn_left = true, turn_right = true,
                      turn_sharp_left = true, turn_sharp_right = true, uturn = true, ramp = true, enter = true, level = true }
-
 
 
 
@@ -584,7 +556,6 @@ local function joinSamePlace(steps, from, li, cum)
             host.joined = joined
             joined[#joined + 1] = step
             host.text = format(L["%s, then %s"], host.text, Util.Lower(step.text:sub(1, 1)) .. step.text:sub(2))
-            host.voiceText = host.voiceText .. " " .. step.voiceText
             table.remove(steps, k)
         else
             k = k + 1
@@ -668,12 +639,34 @@ local function walkSteps(route, steps, leg, li, state, endsAtStop)
                 prev = i
             end
         end
-        if candIdx then startFrom = candIdx end
+        if candIdx then
+            startFrom = candIdx
+        elseif n >= 3 and pts[2].k == 14 and WAY[pts[3].k]
+            and not (pts[1].indoor or pts[2].indoor or pts[3].indoor or pts[2].stacked or pts[3].stacked
+                or pts[1].door or pts[2].door or pts[3].door or pts[2].room or pts[3].room)
+            and cum[2] <= (FGPS.Const and FGPS.Const.ROAD_CORRIDOR_YARDS or 20)
+            and dist(pts[1], pts[2]) >= 1 then
+            local j = ahead(2)
+            if dist(pts[2], pts[j]) >= minSeg and cum[j] - cum[2] >= math.max(cum[2], Instructions.MIN_REVERSAL_YARDS) then
+                local v2 = Coords.AngleDelta(Coords.Bearing(pts[1].x, pts[1].y, pts[2].x, pts[2].y),
+                    Coords.Bearing(pts[2].x, pts[2].y, pts[j].x, pts[j].y)) * 180 / pi
+                if abs(v2) >= Instructions.SLIGHT_DEGREES then startFrom = 2 end
+            end
+        end
     end
 
 
     local function at(i, d)
         local target = cum[i] + d
+        if startFrom == 1 and d < 0 and pts[2] and pts[2].corridorX and target < cum[2] then
+            local cdx, cdy = pts[2].x - pts[2].corridorX, pts[2].y - pts[2].corridorY
+            local clen = sqrt(cdx * cdx + cdy * cdy)
+            if clen > 0 then
+                local back = cum[2] - target
+                if back > clen then back = clen end
+                return pts[2].x - cdx * (back / clen), pts[2].y - cdy * (back / clen)
+            end
+        end
         if target <= cum[startFrom] then return pts[startFrom].x, pts[startFrom].y end
         if target >= legYards then return pts[n].x, pts[n].y end
         local j = i
@@ -709,6 +702,7 @@ local function walkSteps(route, steps, leg, li, state, endsAtStop)
         for j = i - 1, 1, -1 do
             if pts[j].node then before = pts[j].node break end
         end
+        if not before then before = pts[i].corridorBefore end
         for j = i + 1, n do
             if pts[j].node then after = pts[j].node break end
         end
@@ -729,12 +723,15 @@ local function walkSteps(route, steps, leg, li, state, endsAtStop)
         local reach, prev = Instructions.HOOK_YARDS, startFrom
         for i = startFrom + 1, n - 1 do
             local p = pts[i]
-            if not (CHECKED[p.k] and CHECKED[pts[i + 1].k]) and dist(pts[prev], p) >= minSeg then
+            local inX, inY = pts[prev].x, pts[prev].y
+            if prev == 1 and i == 2 and p.corridorX then inX, inY = p.corridorX, p.corridorY end
+            local inLen = Coords.Distance(inX, inY, p.x, p.y)
+            if not (CHECKED[p.k] and CHECKED[pts[i + 1].k]) and inLen >= minSeg then
                 local j = ahead(i)
                 if dist(p, pts[j]) >= minSeg then
-                    local vertex = Coords.AngleDelta(Coords.Bearing(pts[prev].x, pts[prev].y, p.x, p.y),
+                    local vertex = Coords.AngleDelta(Coords.Bearing(inX, inY, p.x, p.y),
                         Coords.Bearing(p.x, p.y, pts[j].x, pts[j].y)) * 180 / pi
-                    if abs(vertex) >= Instructions.SHARP_DEGREES and (cum[i] - cum[prev] < reach or cum[j] - cum[i] < reach) then
+                    if abs(vertex) >= Instructions.SHARP_DEGREES and (inLen < reach or cum[j] - cum[i] < reach) then
                         local k = i
                         while k >= startFrom and cum[i] - cum[k] <= reach do inHook[k] = true k = k - 1 end
                         k = i + 1
@@ -788,26 +785,28 @@ local function walkSteps(route, steps, leg, li, state, endsAtStop)
     local legStart = state.dist
     local departStep
     local function setDepartBearing(dStep, fromIdx)
-        local j = ahead(fromIdx)
-        local bearing = Coords.Bearing(pts[fromIdx].x, pts[fromIdx].y, pts[j].x, pts[j].y)
+        local bearX, bearY, j = pts[fromIdx].x, pts[fromIdx].y, ahead(fromIdx)
+        if fromIdx == 1 and pts[2] and pts[2].corridorX then
+            bearX, bearY, j = pts[2].corridorX, pts[2].corridorY, 2
+        end
+        local bearing = Coords.Bearing(bearX, bearY, pts[j].x, pts[j].y)
 
         local compass = L[Coords.CompassName(bearing)]
         local text = format(L["Head %s"], compass)
         if dStep.landmark then text = format(L["Head %s from %s"], compass, dStep.landmarkSaid) end
         local shortText = format(L["Head %s"], compass)
-        local voiceText = text .. "."
         if dStep.toward then
             text = format(L["Follow the road toward %s"], dStep.toward)
             shortText = text
         end
-        dStep.bearing, dStep.text, dStep.shortText, dStep.voiceText = bearing, text, shortText, voiceText
+        dStep.bearing, dStep.text, dStep.shortText = bearing, text, shortText
         if dStep.zoneName then addZone(dStep) end
     end
 
     if n >= 2 and state.needDepart then
         local landmark, _, landmarkIndex = Instructions.LandmarkNear(leg.inst, pts[1].x, pts[1].y, nil, skip, pts[1].z)
         local said = landmark and landmarkSaid(route, landmark, landmarkIndex) or nil
-        local toward = townAhead(leg, 1)
+        local toward = townAhead(leg, startFrom)
         departStep = { kind = "depart", legIndex = li, pointIndex = 1, inst = leg.inst, x = pts[1].x, y = pts[1].y,
                        distanceFromStart = state.dist, seconds = state.secs, landmark = landmark, landmarkSaid = said, toward = toward }
         setDepartBearing(departStep, startFrom)
@@ -832,7 +831,7 @@ local function walkSteps(route, steps, leg, li, state, endsAtStop)
             else
                 addStep(steps, { kind = "zone", legIndex = li, pointIndex = 1, inst = leg.inst, x = pts[1].x, y = pts[1].y,
                                  distanceFromStart = state.dist, seconds = state.secs, text = format(L["Entering %s"], startName),
-                                 shortText = startName, voiceText = format(L["Entering %s."], startName), zone = startZone })
+                                 shortText = startName, zone = startZone })
             end
         end
     end
@@ -845,12 +844,12 @@ local function walkSteps(route, steps, leg, li, state, endsAtStop)
         if guess then
             step.kind = "continue"
 
-            step.text, step.shortText, step.voiceText, step.guessVoice = guess.text, guess.shortText, guess.voiceText, nil
+            step.text, step.shortText = guess.text, guess.shortText
             addZone(step)
         elseif step.zoneName then
             step.kind = "zone"
-            step.text, step.shortText, step.voiceText = format(L["Entering %s"], step.zoneName), step.zoneName, format(L["Entering %s."], step.zoneName)
-            step.zoneName, step.zoneVoice = nil, nil
+            step.text, step.shortText = format(L["Entering %s"], step.zoneName), step.zoneName
+            step.zoneName = nil
         else
             removeStep(steps, step)
         end
@@ -893,7 +892,7 @@ local function walkSteps(route, steps, leg, li, state, endsAtStop)
         local text = format(L["Enter %s"], name)
         addStep(steps, { kind = "enter", legIndex = li, pointIndex = atIndex, inst = leg.inst, x = q.x, y = q.y,
                          distanceFromStart = state.dist + cum[atIndex], seconds = eta(cum[atIndex]), text = text, shortText = text,
-                         voiceText = text .. ".", room = english })
+                         room = english })
     end
 
     local lastSig = startFrom
@@ -920,7 +919,7 @@ local function walkSteps(route, steps, leg, li, state, endsAtStop)
             local q = pts[i - 1]
             addStep(steps, { kind = "hazard", legIndex = li, pointIndex = i - 1, inst = leg.inst, x = q.x, y = q.y,
                              distanceFromStart = state.dist + cum[i - 1], seconds = eta(cum[i - 1]), text = hazard[1],
-                             shortText = hazard[2], voiceText = hazard[1] .. ".", liquid = p.hazard })
+                             shortText = hazard[2], liquid = p.hazard })
         end
         local q = pts[i - 1]
         local roundAt, guardedAt = leg.guardedRoundAt and leg.guardedRoundAt[i - 1], leg.guardedAt and leg.guardedAt[i - 1]
@@ -929,25 +928,38 @@ local function walkSteps(route, steps, leg, li, state, endsAtStop)
             local text, short = Instructions.GuardedText(round, round and roundAt or guardedAt)
             addStep(steps, { kind = round and "guarded_round" or "guarded", legIndex = li, pointIndex = i - 1, inst = leg.inst,
                              x = q.x, y = q.y, distanceFromStart = state.dist + cum[i - 1], seconds = eta(cum[i - 1]), text = text,
-                             shortText = short, voiceText = text .. "." })
+                             shortText = short })
         end
         local way = p.climbForm and climbWay(pts, i) or nil
         if way and way ~= climbing then
             local top = i
             while top < n and pts[top + 1].climbForm and climbWay(pts, top + 1) == way do top = top + 1 end
+            local z0, z1 = pts[i - 1].z, pts[top].z
+            local dz = (type(z0) == "number" and type(z1) == "number") and (z1 - z0) or nil
+            local callLevel = (pts[i - 1].stacked or pts[top].stacked)
+                or ((inside or pts[i - 1].indoor or pts[top].indoor) and dz ~= nil and abs(dz) >= 4)
+                or (p.climbForm == "stairs" and dz ~= nil and abs(dz) >= 12)
 
 
 
             if lastClimb and lastClimb.way == way and cum[i - 1] - lastClimb.top < Instructions.MERGE_YARDS then
                 lastClimb.top = cum[top]
-            elseif pts[i - 1].stacked or pts[top].stacked then
-                lastClimb = { way = way, top = cum[top] }
+                if lastClimb.step then
+                    lastClimb.step.z = z1
+                    if type(z1) == "number" and type(lastClimb.z0) == "number" then
+                        lastClimb.step.dz = z1 - lastClimb.z0
+                    end
+                end
+            elseif callLevel then
                 local texts = LEVEL_TEXT[p.climbForm] or LEVEL_TEXT.climb
                 local text = way > 0 and texts.up or texts.down
                 local q = pts[i - 1]
-                addStep(steps, { kind = "level", legIndex = li, pointIndex = i - 1, inst = leg.inst, x = q.x, y = q.y,
-                                 distanceFromStart = state.dist + cum[i - 1], seconds = eta(cum[i - 1]), text = text,
-                                 shortText = text, voiceText = text .. ".", climbForm = p.climbForm, up = way > 0 })
+                local lvlStep = { kind = "level", legIndex = li, pointIndex = i - 1, inst = leg.inst, x = q.x, y = q.y,
+                                  z = z1, dz = dz,
+                                  distanceFromStart = state.dist + cum[i - 1], seconds = eta(cum[i - 1]), text = text,
+                                  shortText = text, climbForm = p.climbForm, up = way > 0 }
+                lastClimb = { way = way, top = cum[top], z0 = z0, step = lvlStep }
+                addStep(steps, lvlStep)
             end
         end
         climbing = way
@@ -982,28 +994,28 @@ local function walkSteps(route, steps, leg, li, state, endsAtStop)
             if stretch >= Instructions.MIN_UNVERIFIED_YARDS or (steepNote and stretch > 0) then
                 local bearing = Coords.Bearing(p.x, p.y, pts[i + 1].x, pts[i + 1].y)
                 local compass = L[Coords.CompassName(bearing)]
-                local distance, spoken = Util.FormatDistance(stretch, distanceUnits()), spokenDistance(stretch)
+                local distance = Util.FormatDistance(stretch, distanceUnits())
                 local text = format(L["Continue %s across open ground for %s"], compass, distance)
-                local voiceText = format(L["Continue %s across open ground for %s."], compass, spoken)
                 if steepNote then
                     text = text .. " " .. steepNote
-                    voiceText = voiceText .. " " .. steepNote
                 end
                 guess = { compass = compass, distance = distance, steepNote = steepNote, text = text, checked = checked or nil,
-                          shortText = format(L["Continue %s"], compass), voiceText = voiceText, yards = stretch, spoken = spoken }
+                          shortText = format(L["Continue %s"], compass), yards = stretch }
             end
             local turnHere
 
 
             local insideChecked = CHECKED[p.k] and CHECKED[pts[i + 1].k]
-            if i > startFrom and not insideChecked and dist(pts[lastSig], p) >= minSeg then
+            local inX, inY = pts[lastSig].x, pts[lastSig].y
+            if lastSig == 1 and i == 2 and p.corridorX then inX, inY = p.corridorX, p.corridorY end
+            if i > startFrom and not insideChecked and Coords.Distance(inX, inY, p.x, p.y) >= minSeg then
                 if firstTurn and cum[i] >= Instructions.MIN_REVERSAL_YARDS
                     and state.dist + cum[i] - firstTurn.lastAt > Instructions.HOOK_YARDS then
                     finishStartHook()
                 end
                 local j = ahead(i)
                 if dist(p, pts[j]) >= minSeg then
-                    local bIn = Coords.Bearing(pts[lastSig].x, pts[lastSig].y, p.x, p.y)
+                    local bIn = Coords.Bearing(inX, inY, p.x, p.y)
                     local bOut = Coords.Bearing(p.x, p.y, pts[j].x, pts[j].y)
                     local vertex = Coords.AngleDelta(bIn, bOut) * 180 / pi
                     local deg, how = judged(i, vertex)
@@ -1110,7 +1122,7 @@ local function walkSteps(route, steps, leg, li, state, endsAtStop)
             if guess and not turnHere then
                 addStep(steps, { kind = "continue", legIndex = li, pointIndex = i, inst = leg.inst, x = p.x, y = p.y,
                                  distanceFromStart = state.dist + cum[i], seconds = eta(cum[i]), text = guess.text,
-                                 shortText = guess.shortText, voiceText = guess.voiceText, guess = guess,
+                                 shortText = guess.shortText, guess = guess,
                                  unverified = not guess.checked or nil, steep = guess.steepNote ~= nil or nil })
             end
         end
@@ -1130,7 +1142,7 @@ local function walkSteps(route, steps, leg, li, state, endsAtStop)
                 else
                     addStep(steps, { kind = "zone", legIndex = li, pointIndex = i, inst = leg.inst, x = p.x, y = p.y,
                                      distanceFromStart = state.dist + cum[i], seconds = eta(cum[i]), text = format(L["Entering %s"], zoneName),
-                                     shortText = zoneName, voiceText = format(L["Entering %s."], zoneName), zone = zoneID })
+                                     shortText = zoneName, zone = zoneID })
                 end
             end
         end
@@ -1223,7 +1235,7 @@ local function transportSteps(route, steps, leg, li, state)
 
     local rideSpoken = spokenDuration(rideSeconds)
     local boardKind, leaveKind = "board", "disembark"
-    local text, short, voice, leaveText, leaveShort, leaveVoice, door
+    local text, short, leaveText, leaveShort
     if kind == "taxi" then
         boardKind, leaveKind = "fly", "land"
         local dest = leg.taxiTo and FGPS.Data and FGPS.Data.taxi and FGPS.Data.taxi.nodes and FGPS.Data.taxi.nodes[leg.taxiTo]
@@ -1232,10 +1244,8 @@ local function transportSteps(route, steps, leg, li, state)
         local srcName = srcNode and srcNode.name or fromName
         text = format(L["Take the flight from %s to %s (%s)"], srcName, destName, rideSpoken)
         short = format(L["Fly to %s"], destName)
-        voice = format(L["Talk to the flight master and take the flight to %s. The flight takes %s."], destName, rideSpoken)
         leaveText = format(L["Land at %s"], destName)
         leaveShort = format(L["Land at %s"], destName)
-        leaveVoice = format(L["You land at %s."], destName)
     elseif kind == "boat" or kind == "zeppelin" or kind == "ferry" then
 
         local vehicle = kind == "zeppelin" and L["zeppelin"] or L["boat"]
@@ -1243,22 +1253,17 @@ local function transportSteps(route, steps, leg, li, state)
 
 
             text, short = format(L["Stay aboard at %s"], fromName), L["Stay aboard"]
-            voice = text .. "."
         else
             text = format(L["Board the %s to %s at %s (%s)"], vehicle, toName, fromName, rideSpoken)
             short = format(L["Board %s"], vehicle)
-            voice = format(L["Board the %s to %s. The crossing takes %s."], vehicle, toName, rideSpoken)
         end
         leaveText = format(L["Disembark at %s"], toName)
         leaveShort = L["Disembark"]
-        leaveVoice = format(L["Disembark at %s."], toName)
     elseif kind == "tram" then
         text = format(L["Board the tram at %s (%s)"], fromName, rideSpoken)
         short = L["Board tram"]
-        voice = format(L["Board the tram. The ride takes %s."], rideSpoken)
         leaveText = format(L["Leave the tram at %s"], toName)
         leaveShort = L["Leave tram"]
-        leaveVoice = format(L["Leave the tram at %s."], toName)
     elseif kind == "elevator" then
 
 
@@ -1270,10 +1275,8 @@ local function transportSteps(route, steps, leg, li, state)
         else
             text, short = format(L["Take the elevator to %s"], toName), L["Take elevator"]
         end
-        voice = text .. "."
         leaveText = format(L["Leave the elevator at %s"], toName)
         leaveShort = L["Leave elevator"]
-        leaveVoice = leaveText .. "."
     else
 
 
@@ -1286,40 +1289,34 @@ local function transportSteps(route, steps, leg, li, state)
         if within then
             local room = landingRoom(route, li)
             text = room and format(L["Take the teleporter to %s"], room) or L["Take the teleporter"]
-            short, voice = L["Take teleporter"], text .. "."
-            door = true
+            short = L["Take teleporter"]
         elseif into or outOf then
             if into then
                 text = format(L["Enter %s"], leg.label and leg.label ~= "" and leg.label or into.name)
             else
                 text = format(L["Leave %s"], outOf.name)
             end
-            short, voice = text, text .. "."
-
-            door = true
+            short = text
         else
             local label = leg.label and leg.label ~= "" and leg.label or L["the portal"]
             text = format(L["Go through %s"], label)
             short = L["Take portal"]
-            voice = format(L["Go through %s."], label)
         end
-
         local asks = needSentence(leg.need)
         if asks then
-            text, voice, door = text .. ". " .. asks, voice .. " " .. asks, true
+            text = text .. ". " .. asks
         end
     end
     addStep(steps, { kind = boardKind, legIndex = li, pointIndex = 1, inst = leg.inst, x = first.x, y = first.y,
-                     distanceFromStart = state.dist, seconds = state.secs, text = text, shortText = short, voiceText = voice,
+                     distanceFromStart = state.dist, seconds = state.secs, text = text, shortText = short,
                      transportID = leg.transportID, taxiFrom = leg.taxiFrom, taxiTo = leg.taxiTo, duration = rideSeconds, wait = leg.wait,
-                     label = leg.label, mode = kind, way = kind == "elevator" and liftDirection(leg) or nil, aboard = leg.aboard,
-                     door = door })
+                     label = leg.label, mode = kind, way = kind == "elevator" and liftDirection(leg) or nil, aboard = leg.aboard })
     state.dist = state.dist + (leg.yards or 0)
     state.secs = state.secs + (leg.seconds or 0)
     local onward = route.legs and route.legs[li + 1]
     if leaveText and not (onward and onward.aboard) then
         addStep(steps, { kind = leaveKind, legIndex = li, pointIndex = #pts, inst = leg.toInst or leg.inst, x = last.x, y = last.y,
-                         distanceFromStart = state.dist, seconds = state.secs, text = leaveText, shortText = leaveShort, voiceText = leaveVoice,
+                         distanceFromStart = state.dist, seconds = state.secs, text = leaveText, shortText = leaveShort,
                          transportID = leg.transportID, taxiTo = leg.taxiTo, label = leg.label, mode = kind })
     end
     state.needDepart = true
@@ -1391,24 +1388,21 @@ local function teleportSteps(route, steps, leg, li, state)
     local first, last = pts[1], pts[#pts]
     local option = leg.option or {}
     local name = option.bindName or option.name or leg.label or ""
-    local kind, text, short, voice
+    local kind, text, short
     if leg.kind == "hearth" then
         kind = "hearth"
         text = format(L["Use your Hearthstone to return to %s"], name)
         short = L["Use Hearthstone"]
-        voice = format(L["Use your Hearthstone to return to %s."], name)
     else
         kind = "cast"
         text = format(L["Cast %s"], name)
         short = format(L["Cast %s"], name)
-        voice = format(L["Cast %s."], name)
     end
     if (leg.wait or 0) > 0 then
         text = text .. format(L[" (available in %s)"], shortTime(leg.wait))
-        voice = voice .. " " .. format(L["It is available in %s."], spokenDuration(leg.wait))
     end
     addStep(steps, { kind = kind, legIndex = li, pointIndex = 1, inst = leg.inst, x = first.x, y = first.y,
-                     distanceFromStart = state.dist, seconds = state.secs, text = text, shortText = short, voiceText = voice,
+                     distanceFromStart = state.dist, seconds = state.secs, text = text, shortText = short,
                      wait = leg.wait, option = option, arrivalInst = leg.toInst or leg.inst, arrivalX = last.x, arrivalY = last.y })
     state.secs = state.secs + (leg.seconds or 0)
     state.needDepart = true
@@ -1440,19 +1434,17 @@ function Instructions.Build(route)
             local final = not nextLeg
             local last = leg.points[#leg.points]
             local name = stopName(route, stopIndex, final)
-            local text, short, voice
+            local text, short
             if final then
                 text = format(L["Arrive at %s"], name)
                 short = format(L["Arrive at %s"], name)
-                voice = format(L.ARRIVED_AT, name)
             else
                 text = format(L["Stop %d: %s"], stopIndex, name)
                 short = format(L["Stop %d"], stopIndex)
-                voice = format(L["You have reached stop %d, %s. Continue to the next stop."], stopIndex, name)
             end
             addStep(steps, { kind = final and "arrive" or "stop_arrive", legIndex = li, pointIndex = #leg.points, inst = leg.toInst or leg.inst,
                              x = last.x, y = last.y, distanceFromStart = state.dist, seconds = state.secs, text = text, shortText = short,
-                             voiceText = voice, stopIndex = stopIndex, final = final })
+                             stopIndex = stopIndex, final = final })
             state.needDepart = true
         end
     end
@@ -1497,14 +1489,11 @@ function Instructions.RewriteDistances(route)
     for _, step in ipairs(steps) do
         local guess = step.guess
         if type(guess) == "table" and type(guess.yards) == "number" then
-            local distance, spoken = Util.FormatDistance(guess.yards, units), spokenDistance(guess.yards)
-            if distance ~= guess.distance or spoken ~= guess.spoken then
+            local distance = Util.FormatDistance(guess.yards, units)
+            if distance ~= guess.distance then
                 step.text = swapFirst(step.text, guess.distance, distance)
-                step.voiceText = swapFirst(step.voiceText, guess.spoken, spoken)
-                step.guessVoice = swapFirst(step.guessVoice, guess.spoken, spoken)
                 guess.text = swapFirst(guess.text, guess.distance, distance)
-                guess.voiceText = swapFirst(guess.voiceText, guess.spoken, spoken)
-                guess.distance, guess.spoken = distance, spoken
+                guess.distance = distance
                 count = count + 1
             end
         end

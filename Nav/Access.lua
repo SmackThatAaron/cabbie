@@ -617,6 +617,7 @@ local function build(cooldownsOnly)
         roadShortcuts = routing.roadShortcuts == true,
         assumeMount = routing.assumeMount or "auto",
         avoidGuarded = routing.avoidGuarded ~= false,
+        highRes = routing.highRes == true,
         createdAt = GetTime and GetTime() or 0,
     }
 
@@ -630,7 +631,7 @@ local function build(cooldownsOnly)
         tr = transports, h = teleportDigest(hearth), sp = spellDigest,
         au = access.allowUnverified, pr = access.preferRoads, rs = access.roadShortcuts,
         own = char and char.taxiOwner or characterKey(), dead = dead or nil,
-        ag = access.avoidGuarded,
+        ag = access.avoidGuarded, hr = access.highRes,
     })
 
 
@@ -664,10 +665,11 @@ local function fallbackSnapshot(err)
         allowUnverified = routing.allowUnverified ~= false, preferRoads = routing.preferRoads == true,
         roadShortcuts = routing.roadShortcuts == true,
         avoidGuarded = routing.avoidGuarded ~= false,
+        highRes = routing.highRes == true,
         degraded = tostring(err),
     }
     access.hash = Util.Hash({ "fallback", f = factionMask, tr = transports, au = access.allowUnverified, pr = access.preferRoads,
-                              rs = access.roadShortcuts, ag = access.avoidGuarded })
+                              rs = access.roadShortcuts, ag = access.avoidGuarded, hr = access.highRes })
     return access
 end
 

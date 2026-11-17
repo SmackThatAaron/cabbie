@@ -28,9 +28,10 @@ local ADDON_NAME, FGPS = ...
 local Coords = {}
 FGPS.Coords = Coords
 
-local math_atan2, math_sqrt, math_floor, math_pi = math.atan2, math.sqrt, math.floor, math.pi
+local math_atan2, math_sqrt, math_floor, math_pi, math_abs = math.atan2, math.sqrt, math.floor, math.pi, math.abs
 local type, pairs, ipairs, tonumber = type, pairs, ipairs, tonumber
 local TWO_PI = 2 * math_pi
+local surfGraph, surfInst, surfCx, surfCy, surfZ
 
 
 
@@ -368,6 +369,122 @@ end
 
 
 
+local function bestPlayerMap()
+    if C_Map and C_Map.GetBestMapForUnit then
+        local ok, best = pcall(C_Map.GetBestMapForUnit, "player")
+        if ok then
+            best = plain(best)
+            if type(best) == "number" then return best end
+        end
+    end
+    return nil
+end
+
+
+
+
+local function instancedMapXY(mapID)
+    if not mapID or not (C_Map and C_Map.GetPlayerMapPosition) then return nil end
+    if not Coords.IsInstanced() then return nil end
+    local ok, mp = pcall(C_Map.GetPlayerMapPosition, mapID, "player")
+    if not ok or mp == nil or Coords.IsSecret(mp) or type(mp) ~= "table" then return nil end
+    local vx, vy
+    if type(mp.GetXY) == "function" then
+        local okXY, rx, ry = pcall(mp.GetXY, mp)
+        if okXY then vx, vy = plain(rx), plain(ry) end
+    else
+        vx, vy = plain(mp.x), plain(mp.y)
+    end
+    if type(vx) ~= "number" or type(vy) ~= "number" then return nil end
+    local mInst, wx, wy = Coords.MapToWorld(mapID, vx, vy)
+    if type(mInst) ~= "number" or mInst < 0 or mInst == 0 or mInst == 1 or mInst == 2991 then
+        return nil
+    end
+    if type(wx) ~= "number" or type(wy) ~= "number" then return nil end
+    return wx, wy, mInst
+end
+
+
+local function unitPlayerZ()
+    if not UnitPosition then return nil end
+    local ok, _, _, rawZ = pcall(UnitPosition, "player")
+    if not ok then return nil end
+    rawZ = plain(rawZ)
+    if type(rawZ) == "number" and rawZ == rawZ and rawZ ~= 0 then return rawZ end
+    return nil
+end
+
+local function inferPlayerZ(inst, x, y, uiMapID)
+    local data = FGPS.Data
+    local floors = data and data.floors
+    if uiMapID and type(floors) == "table" then
+        local fl = floors[uiMapID]
+        if type(fl) == "number" then
+            return fl, true, fl
+        elseif type(fl) == "table" and type(fl.z) == "number" and (fl.inst == nil or fl.inst == inst) then
+            if fl.exact == true then return fl.z, nil, nil end
+            return fl.z, true, fl.z
+        end
+    end
+    local nav = FGPS.Navigator
+    if nav and nav.LevelZ then
+        local ok, lz = pcall(nav.LevelZ, nav)
+        if ok and type(lz) == "number" then
+            local route, prog = nav.route, nav.progress
+            local leg = route and route.legs and prog and route.legs[prog.legIndex or 1]
+            if (leg and leg.inst == inst) or (nav.place and nav.place.inst == inst) then
+                return lz, true, nil
+            end
+        end
+    end
+    local insideMaps = data and data.insideMaps
+    local im = type(insideMaps) == "table" and insideMaps[inst]
+    if type(im) == "table" and type(im.rooms) == "table" and Coords.SubZoneText then
+        local sub = Coords.SubZoneText()
+        if sub then
+            local matchZ, ambig
+            for i = 1, #im.rooms do
+                local r = im.rooms[i]
+                local rname = Coords.LocalRoomName(r.name, r.areaID) or r.name
+                if rname == sub and type(r.z) == "number" then
+                    if matchZ and math_abs(r.z - matchZ) > 6 then ambig = true break end
+                    matchZ = r.z
+                end
+            end
+            if matchZ and not ambig then return matchZ, true, matchZ end
+        end
+    end
+    local G = FGPS.Graph
+    local g = G and G.loaded and G.loaded[inst]
+    if g and G.Nearest and G.NodeHeight and G.NodePlace then
+        local cx, cy = math_floor(x * 0.25), math_floor(y * 0.25)
+        if surfGraph ~= g or surfInst ~= inst or surfCx ~= cx or surfCy ~= cy then
+            surfGraph, surfInst, surfCx, surfCy, surfZ = g, inst, cx, cy, nil
+            local near = G:Nearest(inst, x, y, 16, 8)
+            local bestZ, zMin, zMax, ambig
+            for i = 1, #near do
+                local key = near[i].key
+                local _, _, stacked = G:NodePlace(key)
+                if stacked then ambig = true break end
+                local nz = G:NodeHeight(key)
+                if type(nz) == "number" then
+                    if bestZ == nil then
+                        bestZ, zMin, zMax = nz, nz, nz
+                    else
+                        if nz < zMin then zMin = nz end
+                        if nz > zMax then zMax = nz end
+                    end
+                end
+            end
+            if not ambig and bestZ ~= nil and (zMax - zMin) <= 8 then
+                surfZ = bestZ
+            end
+        end
+        if surfZ ~= nil then return surfZ, true, nil end
+    end
+    return nil, nil, nil
+end
+
 
 
 local function playerXY()
@@ -380,20 +497,22 @@ local function playerXY()
         if posX and posY then x, y, inst = posY, posX, instID end
     end
     x, y, inst = plain(x), plain(y), plain(inst)
-    if type(x) ~= "number" or type(y) ~= "number" or type(inst) ~= "number" or inst < 0 then return nil end
-    return x, y, inst
+    if type(x) == "number" and type(y) == "number" and type(inst) == "number" and inst >= 0 then
+        return x, y, inst
+    end
+    local wx, wy, mInst = instancedMapXY(bestPlayerMap())
+    if wx then return wx, wy, mInst end
+    return nil
 end
 Coords.PlayerXY = playerXY
 
 
+
 function Coords.PlayerPos()
+    local bestMap = bestPlayerMap()
     local x, y, inst = playerXY()
     if not x then return nil end
-    local map
-    if C_Map and C_Map.GetBestMapForUnit then
-        local ok, best = pcall(C_Map.GetBestMapForUnit, "player")
-        if ok then map = plain(best) end
-    end
+    local map = bestMap
     local mx, my
     if map then
         local _, zx, zy = Coords.WorldToMap(inst, x, y, map)
@@ -401,7 +520,15 @@ function Coords.PlayerPos()
     else
         map, mx, my = Coords.WorldToMap(inst, x, y)
     end
-    return { inst = inst, x = x, y = y, map = map, mx = mx, my = my }
+    local uiMapID = bestMap or map
+    local z, zInferred, zHint = unitPlayerZ(), nil, nil
+    if z == nil then
+        z, zInferred, zHint = inferPlayerZ(inst, x, y, uiMapID)
+    end
+    return {
+        inst = inst, x = x, y = y, z = z, zInferred = zInferred, zHint = zHint,
+        map = map, uiMapID = uiMapID, mx = mx, my = my,
+    }
 end
 
 function Coords.PlayerFacing()
@@ -524,5 +651,6 @@ function Coords:Init()
     end
     zoneListsBuilt = false
     hbdZoneCache = {}
+    surfGraph, surfInst, surfCx, surfCy, surfZ = nil, nil, nil, nil, nil
     self.initialized = true
 end

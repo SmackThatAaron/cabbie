@@ -2,7 +2,7 @@
 -- The update window: pops up once per version when an existing Cabbie install updates (and opens
 -- any time via /cabbie whatsnew, /cabbie news, or the Welcome window's "What's New..." button).
 -- Shows a live visual HUD stage built from Cabbie's own textures so the player can see how the 3D
--- road beacon, turn arrow, step list, voice banner and combat visibility look, hover any option to
+-- road beacon, turn arrow, step list and combat visibility look, hover any option to
 -- preview it, and toggle preferences directly without hunting through Settings.
 local ADDON_NAME, FGPS = ...
 
@@ -39,7 +39,6 @@ local SYNC_KEYS = {
     ["roadBeacon"] = true,
     ["callout.enabled"] = true,
     ["combatMode"] = true,
-    ["voice.enabled"] = true,
     ["routeBlock.enabled"] = true,
     ["units"] = true,
     ["textSize"] = true,
@@ -91,15 +90,8 @@ end
 
 local function setCombatVisible(on)
     local DB = FGPS.DB
-    if not (DB and DB.Set and DB.Get) then return end
-    if on then
-        local cur = DB:Get("combatMode")
-        if cur == "hide_all" or type(cur) ~= "string" then
-            DB:Set("combatMode", "visuals_only")
-        end
-    else
-        DB:Set("combatMode", "hide_all")
-    end
+    if not (DB and DB.Set) then return end
+    DB:Set("combatMode", on and "visuals_only" or "hide_all")
 end
 
 -- True when an existing Cabbie account (one that has already seen first-time setup or the login
@@ -258,19 +250,7 @@ local function buildStage(parent)
     local combatText = look.FontString(combatPill, "OVERLAY", "rowSmall")
     combatText:SetPoint("LEFT", combatPill, "LEFT", 5, 0)
 
-    -- 4. Voice guidance pill (bottom-left above caption).
-    local voicePill = CreateFrame("Frame", nil, stage)
-    voicePill:SetPoint("BOTTOMLEFT", stage, "BOTTOMLEFT", 8, 23)
-    voicePill:SetSize(176, 18)
-    local voiceBg = voicePill:CreateTexture(nil, "ARTWORK", nil, 0)
-    voiceBg:SetAllPoints(voicePill)
-    voiceBg:SetColorTexture(0.14, 0.11, 0.04, 0.85)
-    local voiceText = look.FontString(voicePill, "OVERLAY", "rowSmall")
-    voiceText:SetPoint("LEFT", voicePill, "LEFT", 5, 0)
-    voiceText:SetTextColor(1.0, 0.86, 0.38, 1)
-    voiceText:SetText(L.WHATSNEW_STAGE_VOICE)
-
-    -- 5. Step list mini-card (right side).
+    -- 4. Step list mini-card (right side).
     local stepsCard = CreateFrame("Frame", nil, stage)
     stepsCard:SetPoint("TOPRIGHT", stage, "TOPRIGHT", -8, -8)
     stepsCard:SetSize(134, 38)
@@ -306,7 +286,6 @@ local function buildStage(parent)
     stage.Arrow = arrowHolder
     stage.CombatPill = combatPill
     stage.CombatText = combatText
-    stage.VoicePill = voicePill
     stage.StepsCard = stepsCard
     stage.Caption = caption
     return stage
@@ -316,7 +295,6 @@ local HOVER_LABELS = {
     beacon = "WHATSNEW_BEACON",
     arrow  = "WHATSNEW_ARROW",
     combat = "WHATSNEW_COMBAT",
-    voice  = "WHATSNEW_VOICE",
     steps  = "WHATSNEW_STEPS",
 }
 
@@ -329,13 +307,11 @@ function WhatsNew:Sync()
     local beaconOn = DB:Get("roadBeacon") == true
     local arrowOn = DB:Get("callout.enabled") == true
     local combatOn = combatVisibleOn()
-    local voiceOn = DB:Get("voice.enabled") == true
     local stepsOn = DB:Get("routeBlock.enabled") == true
 
     win.BeaconCheck:SetChecked(beaconOn)
     win.ArrowCheck:SetChecked(arrowOn)
     win.CombatCheck:SetChecked(combatOn)
-    win.VoiceCheck:SetChecked(voiceOn)
     win.StepsCheck:SetChecked(stepsOn)
 
     local stage = win.Stage
@@ -360,13 +336,6 @@ function WhatsNew:Sync()
         stage.Arrow:Hide()
     end
 
-    if voiceOn or hover == "voice" then
-        stage.VoicePill:SetAlpha(voiceOn and 1.0 or 0.92)
-        stage.VoicePill:Show()
-    else
-        stage.VoicePill:Hide()
-    end
-
     if stepsOn or hover == "steps" then
         stage.StepsCard:SetAlpha(stepsOn and 1.0 or 0.92)
         stage.StepsCard:Show()
@@ -389,7 +358,6 @@ function WhatsNew:Sync()
         local names = {}
         if beaconOn then names[#names + 1] = L.SETUP_METHOD_BEACON end
         if arrowOn then names[#names + 1] = L.SETUP_METHOD_ARROW end
-        if voiceOn then names[#names + 1] = L.SETUP_METHOD_VOICE end
         if stepsOn then names[#names + 1] = L.SETUP_METHOD_STEPS end
         stage.Caption:SetTextColor(0.85, 0.85, 0.85, 1)
         if #names > 0 then
@@ -454,7 +422,7 @@ function WhatsNew:Create()
 
     local function makeFullCheck(prev, key, labelKey, tipKey, onClick)
         local check = look.CheckButton(content, L[labelKey])
-        check:SetPoint("TOPLEFT", prev, "BOTTOMLEFT", 0, -5)
+        check:SetPoint("TOPLEFT", prev, "BOTTOMLEFT", prev == win.Stage and 0 or -26, -5)
         if check.SetHitRectInsets then check:SetHitRectInsets(0, -280, 0, -12) end
         check:SetScript("OnClick", function(btn)
             look.PlaySound("row")
@@ -476,38 +444,12 @@ function WhatsNew:Create()
         if FGPS.DB and FGPS.DB.Set then FGPS.DB:Set("callout.enabled", on) end
     end)
     local combatCheck, combatTip = makeFullCheck(arrowTip, "combat", "WHATSNEW_COMBAT", "WHATSNEW_COMBAT_TIP", setCombatVisible)
-
-    -- Side-by-side compact row for Voice guidance and Step list.
-    local voiceCheck = look.CheckButton(content, L.WHATSNEW_VOICE)
-    voiceCheck:SetPoint("TOPLEFT", combatTip, "BOTTOMLEFT", 0, -5)
-    if voiceCheck.SetHitRectInsets then voiceCheck:SetHitRectInsets(0, -130, 0, -12) end
-    voiceCheck:SetScript("OnClick", function(btn)
-        look.PlaySound("row")
-        if FGPS.DB and FGPS.DB.Set then FGPS.DB:Set("voice.enabled", btn:GetChecked() and true or false) end
+    local stepsCheck, stepsTip = makeFullCheck(combatTip, "steps", "WHATSNEW_STEPS", "WHATSNEW_STEPS_TIP", function(on)
+        if FGPS.DB and FGPS.DB.Set then FGPS.DB:Set("routeBlock.enabled", on) end
     end)
-    wireHover(voiceCheck, "voice")
-
-    local voiceTip = text(content, "hint")
-    voiceTip:SetPoint("TOPLEFT", voiceCheck, "BOTTOMLEFT", 26, 2)
-    voiceTip:SetWidth(205)
-    voiceTip:SetText(L.WHATSNEW_VOICE_TIP)
-
-    local stepsCheck = look.CheckButton(content, L.WHATSNEW_STEPS)
-    stepsCheck:SetPoint("TOPLEFT", combatTip, "BOTTOMLEFT", 242, -5)
-    if stepsCheck.SetHitRectInsets then stepsCheck:SetHitRectInsets(0, -130, 0, -12) end
-    stepsCheck:SetScript("OnClick", function(btn)
-        look.PlaySound("row")
-        if FGPS.DB and FGPS.DB.Set then FGPS.DB:Set("routeBlock.enabled", btn:GetChecked() and true or false) end
-    end)
-    wireHover(stepsCheck, "steps")
-
-    local stepsTip = text(content, "hint")
-    stepsTip:SetPoint("TOPLEFT", stepsCheck, "BOTTOMLEFT", 26, 2)
-    stepsTip:SetPoint("RIGHT", content, "RIGHT", 0, 0)
-    stepsTip:SetText(L.WHATSNEW_STEPS_TIP)
 
     win.HighlightsTitle = text(content, "listTitle")
-    win.HighlightsTitle:SetPoint("TOPLEFT", voiceTip, "BOTTOMLEFT", -26, -8)
+    win.HighlightsTitle:SetPoint("TOPLEFT", stepsTip, "BOTTOMLEFT", -26, -8)
     win.HighlightsTitle:SetPoint("RIGHT", content, "RIGHT", 0, 0)
     win.HighlightsTitle:SetText(L.WHATSNEW_HIGHLIGHTS_TITLE)
 
@@ -544,13 +486,11 @@ function WhatsNew:Create()
     win.BeaconCheck = beaconCheck
     win.ArrowCheck = arrowCheck
     win.CombatCheck = combatCheck
-    win.VoiceCheck = voiceCheck
     win.StepsCheck = stepsCheck
     win.Options = {
         { key = "beacon", Check = beaconCheck, Tip = beaconTip },
         { key = "arrow",  Check = arrowCheck,  Tip = arrowTip },
         { key = "combat", Check = combatCheck, Tip = combatTip },
-        { key = "voice",  Check = voiceCheck,  Tip = voiceTip },
         { key = "steps",  Check = stepsCheck,  Tip = stepsTip },
     }
 

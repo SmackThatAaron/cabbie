@@ -277,9 +277,31 @@ end
 
 
 
+local function stepTotalYards(route)
+    local total = type(route) == "table" and route.totalYards or nil
+    if type(total) ~= "number" then return nil end
+    local legs, Route = route.legs, FGPS.Route
+    if type(legs) ~= "table" or not (Route and Route.Cumulative) then return total end
+    local sum, anyPoints = 0, false
+    for i = 1, #legs do
+        local leg = legs[i]
+        if type(leg) == "table" and leg.kind == "walk" and type(leg.points) == "table" and #leg.points >= 2 then
+            sum = sum + (Route.Cumulative(leg).total or 0)
+            anyPoints = true
+        elseif type(leg) == "table" and leg.kind ~= "hearth" and leg.kind ~= "spell" then
+            if type(leg.yards) == "number" and leg.yards > 0 then
+                sum = sum + leg.yards
+            elseif type(leg.points) == "table" and #leg.points >= 2 then
+                sum = sum + (Route.Cumulative(leg).total or 0)
+            end
+        end
+    end
+    return anyPoints and sum or total
+end
+
 function Guide.YardsToStep(route, progress, step)
     if type(progress) ~= "table" or type(step) ~= "table" then return nil end
-    local total = type(route) == "table" and route.totalYards or nil
+    local total = stepTotalYards(route)
     local left, at = progress.remainingYards, step.distanceFromStart
     if type(total) == "number" and type(left) == "number" and type(at) == "number" then
         local yards = at - (total - left)
@@ -314,6 +336,132 @@ local function markedStep(route, progress)
 end
 Guide.MarkedStep = markedStep
 
+local function legZAt(leg, cum, along)
+    local pts = leg and leg.points
+    if type(pts) ~= "table" or #pts == 0 then return nil, false end
+    if #pts == 1 or type(cum) ~= "table" or type(along) ~= "number" or along <= 0 then
+        local p1 = pts[1]
+        return type(p1.z) == "number" and p1.z or nil,
+            (p1.indoor or p1.stacked or p1.climbForm) and true or false
+    end
+    local n = #pts
+    local s = 1
+    while s < n - 1 and (cum[s + 1] or 0) <= along do s = s + 1 end
+    local a, b = pts[s], pts[s + 1]
+    local multi = (a and (a.indoor or a.stacked or a.climbForm)
+        or (b and (b.indoor or b.stacked or b.climbForm))) and true or false
+    local az, bz = a and a.z, b and b.z
+    if type(az) == "number" and type(bz) == "number" then
+        local span = (cum[s + 1] or cum[s]) - (cum[s] or 0)
+        local t = span > 0 and (along - (cum[s] or 0)) / span or 0
+        if t < 0 then t = 0 elseif t > 1 then t = 1 end
+        return az + t * (bz - az), multi
+    end
+    return nil, multi
+end
+
+local function playerZForGuide(leg, cum, progress)
+    if type(progress) ~= "table" then return nil end
+    local pos = progress.pos
+    if type(pos) == "table" and not pos.zInferred and type(pos.z) == "number" then
+        return pos.z
+    end
+    if type(progress.playerZ) == "number" then return progress.playerZ end
+    if leg and cum and type(progress.alongYards) == "number" then
+        return (legZAt(leg, cum, progress.alongYards))
+    end
+    return nil
+end
+
+local function calloutVertical(route, progress, step, yardsToStep, isStepCallout)
+    local legs = type(route) == "table" and route.legs or nil
+    local leg = type(progress) == "table" and type(legs) == "table" and legs[progress.legIndex or 1] or nil
+    if type(leg) ~= "table" or leg.kind ~= "walk" then return nil, nil, nil end
+    local Route = FGPS.Route
+    local pts = leg.points
+    local cum = (Route and Route.Cumulative and type(pts) == "table" and #pts >= 2) and Route.Cumulative(leg) or nil
+    local pz = playerZForGuide(leg, cum, progress)
+
+    if type(step) == "table" and (isStepCallout or (type(yardsToStep) == "number" and yardsToStep <= 60)) then
+        if step.kind == "level" or step.kind == "ramp" then
+            local down = step.up == false or (step.up == nil and type(step.dz) == "number" and step.dz < 0)
+            local vYards
+            if type(step.dz) == "number" and abs(step.dz) >= 4 then
+                vYards = abs(step.dz)
+            elseif pz ~= nil and type(step.z) == "number" and abs(step.z - pz) >= 4 then
+                vYards = abs(step.z - pz)
+            end
+            return down and "down" or "up", vYards, nil
+        elseif type(step.joined) == "table" and #step.joined > 0 then
+            local j1 = step.joined[1]
+            if type(j1) == "table" and (j1.kind == "level" or j1.kind == "ramp") and j1.up ~= nil then
+                local vYards = type(j1.dz) == "number" and abs(j1.dz) >= 4 and abs(j1.dz) or nil
+                return j1.up == false and "down" or "up", vYards, nil
+            end
+        elseif step.kind == "board" and step.mode == "elevator" and (step.way == "up" or step.way == "down") then
+            return step.way, nil, nil
+        end
+    end
+
+    local along = type(progress.alongYards) == "number" and progress.alongYards or nil
+    if pz ~= nil and cum and along ~= nil then
+        local total = cum.total or 0
+        local aheadAlong = along + 40
+        if aheadAlong > total then aheadAlong = total end
+        local span = aheadAlong - along
+        if span > 1 then
+            local az, multi = legZAt(leg, cum, aheadAlong)
+            if not multi and type(pts) == "table" then
+                local s = 1
+                while s < #pts and (cum[s + 1] or 0) <= along do s = s + 1 end
+                for i = s, #pts do
+                    local pt = pts[i]
+                    if pt and (pt.indoor or pt.stacked or pt.climbForm) then multi = true break end
+                    if (cum[i] or 0) >= aheadAlong then break end
+                end
+            end
+            if type(az) == "number" then
+                local dz = az - pz
+                local absDz = abs(dz)
+                if multi then
+                    if absDz >= 6 then return dz < 0 and "down" or "up", absDz, nil end
+                elseif absDz >= 8 and (absDz >= 12 or absDz / span >= 0.22) then
+                    return dz < 0 and "down" or "up", absDz, nil
+                end
+            end
+        end
+    end
+
+    local pos = progress.pos
+    if pz ~= nil and type(pos) == "table" and type(pos.x) == "number" and type(pos.y) == "number"
+        and type(route.stops) == "table" then
+        local stopIdx = leg.stopIndex or #route.stops
+        local stop = route.stops[stopIdx]
+        local dest = stop and (stop.dest or stop)
+        local endLeg = (stop and type(stop.legTo) == "number" and type(legs) == "table") and legs[stop.legTo] or leg
+        local endPts = (type(endLeg) == "table" and endLeg.kind == "walk") and endLeg.points or nil
+        local endPt = (type(endPts) == "table" and #endPts >= 1) and endPts[#endPts] or nil
+        local gx = (dest and dest.x) or (endPt and endPt.x)
+        local gy = (dest and dest.y) or (endPt and endPt.y)
+        local gz = (dest and type(dest.z) == "number" and dest.z) or (endPt and type(endPt.z) == "number" and endPt.z) or nil
+        if gx and gy and gz and (not dest or dest.inst == nil or pos.inst == nil or dest.inst == pos.inst) then
+            local dx, dy = gx - pos.x, gy - pos.y
+            local goalDist2D = sqrt(dx * dx + dy * dy)
+            local goalDz = gz - pz
+            local absGoalDz = abs(goalDz)
+            if goalDist2D <= 60 and absGoalDz >= 9
+                and (absGoalDz >= 12 or absGoalDz / max(goalDist2D, 8) >= 0.22
+                    or (endPt and (endPt.indoor or endPt.stacked))) then
+                local atStopStep = isStepCallout and type(step) == "table"
+                    and (step.kind == "arrive" or step.kind == "stop_arrive")
+                    and (yardsToStep or 999) <= 35
+                return goalDz < 0 and "down" or "up", absGoalDz, not atStopStep or nil
+            end
+        end
+    end
+    return nil, nil, nil
+end
+
 function Guide.CalloutFor(route, progress, speed)
     local step = markedStep(route, progress)
     if not step then return nil end
@@ -330,11 +478,13 @@ function Guide.CalloutFor(route, progress, speed)
             return true
         end
     end)
+    local vDir, vYards, vGoal = calloutVertical(route, progress, step, yards, true)
 
 
 
     return { glyph = glyph, text = text, short = stepWords(step, Guide.ShortLandmark), yards = yards, key = step.index,
-             open = open, inst = step.inst, x = step.x, y = step.y }
+             open = open, inst = step.inst, x = step.x, y = step.y,
+             vertical = vDir, verticalYards = vYards, verticalGoal = vGoal }
 end
 
 
@@ -349,12 +499,13 @@ end
 
 local function heldAt(route, progress, cum, along, ahead)
     local steps = route.steps
-    if type(steps) ~= "table" then return ahead end
+    if type(steps) ~= "table" then return ahead, 1 end
     local current = progress.currentStep
     local first = type(current) == "table" and indexOf(steps, current) or 1
 
     while first > 1 and steps[first - 1].legIndex == progress.legIndex do first = first - 1 end
     local hold = Guide.HOLD_YARDS
+    local corridorScale = 1
     for i = first, #steps do
         local step = steps[i]
         if step.legIndex == progress.legIndex then
@@ -370,14 +521,26 @@ local function heldAt(route, progress, cum, along, ahead)
                     allowed = at + hold - 2 * d
                 end
                 if allowed < ahead then ahead = allowed end
-                if d >= hold then break end
+                local s = 1
+                if d >= 0 then
+                    if d <= hold then
+                        s = 0
+                    elseif d < hold + 20 then
+                        s = (d - hold) / 20
+                    end
+                elseif d > -12 then
+                    s = -d / 12
+                end
+                if s < corridorScale then corridorScale = s end
+                if d >= hold + 20 then break end
             end
         elseif step.legIndex > progress.legIndex then
             break
         end
     end
-    return ahead
+    return ahead, corridorScale
 end
+
 
 
 
@@ -396,12 +559,17 @@ function Guide.Aim(route, progress, speed)
     if type(leg) ~= "table" or leg.kind ~= "walk" or type(leg.points) ~= "table" or #leg.points < 2
         or type(along) ~= "number" or not (Route and Route.PointAlong and Route.Cumulative) then return nil end
     local pts = leg.points
-    local target = type(progress.pointIndex) == "number" and pts[progress.pointIndex] or nil
+    local pIdx = type(progress.pointIndex) == "number" and progress.pointIndex or nil
+    local target = pIdx and pts[pIdx] or nil
+    local prev = (pIdx and pIdx > 1) and pts[pIdx - 1] or nil
+    local tightStretch = (type(target) == "table" and (target.indoor or target.stacked or target.climbForm or target.door))
+        or (type(prev) == "table" and (prev.indoor or prev.stacked or prev.climbForm or prev.door))
     local yards = Guide.LookAheadYards(speed)
     if type(target) == "table" and (target.indoor or target.stacked) then yards = Guide.LOOKAHEAD_MIN_YARDS end
     local cum = Route.Cumulative(leg)
     local total = cum.total or 0
-    local ahead, inst = heldAt(route, progress, cum, along, along + yards), leg.inst
+    local ahead, corridorScale = heldAt(route, progress, cum, along, along + yards)
+    local inst = leg.inst
     if ahead > total then ahead = total end
     if ahead < 0 then ahead = 0 end
 
@@ -429,16 +597,90 @@ function Guide.Aim(route, progress, speed)
     end
     local aheadYards = ahead - along
     if aheadYards < 0 then aheadYards = 0 end
-    return x, y, inst, dirX, dirY, aheadYards
+    local minCorridor = (FGPS.UI and FGPS.UI.Callout and FGPS.UI.Callout.CORRIDOR_YARDS) or 4
+    local maxCorridor = (FGPS.Const and FGPS.Const.ROAD_CORRIDOR_YARDS) or 20
+    if maxCorridor < minCorridor then maxCorridor = minCorridor end
+    local corridorYards = tightStretch and minCorridor or (minCorridor + (maxCorridor - minCorridor) * corridorScale)
+    return x, y, inst, dirX, dirY, aheadYards, corridorYards
+end
+
+
+
+local function attachLiveWindow(line, route, progress, speed)
+    local Route = FGPS.Route
+    local legs = type(route) == "table" and route.legs or nil
+    local leg = type(progress) == "table" and type(legs) == "table" and legs[progress.legIndex] or nil
+    local along = type(progress) == "table" and progress.alongYards or nil
+    if type(leg) ~= "table" or leg.kind ~= "walk" or leg.split
+        or type(leg.points) ~= "table" or #leg.points < 2
+        or type(along) ~= "number" or not (Route and Route.Cumulative) then
+        return
+    end
+    local pts = leg.points
+    local cum = Route.Cumulative(leg)
+    local n = #pts
+    local pIdx = type(progress.pointIndex) == "number" and progress.pointIndex or 2
+    local target = pts[pIdx]
+    local prev = pIdx > 1 and pts[pIdx - 1] or nil
+    local tightStretch = (type(target) == "table" and (target.indoor or target.stacked or target.climbForm or target.door))
+        or (type(prev) == "table" and (prev.indoor or prev.stacked or prev.climbForm or prev.door))
+    local lookYards = Guide.LookAheadYards(speed)
+    if type(target) == "table" and (target.indoor or target.stacked) then lookYards = Guide.LOOKAHEAD_MIN_YARDS end
+
+    local segIdx = pIdx - 1
+    if segIdx < 1 then segIdx = 1 elseif segIdx > n - 1 then segIdx = n - 1 end
+    while segIdx > 1 and (cum[segIdx] or 0) > along do segIdx = segIdx - 1 end
+    while segIdx < n - 1 and (cum[segIdx + 1] or 0) < along do segIdx = segIdx + 1 end
+
+    local holdAt, holdAllowed
+    local otherCap = cum.total or 0
+    local steps = route.steps
+    if type(steps) == "table" then
+        local current = progress.currentStep
+        local first = type(current) == "table" and indexOf(steps, current) or 1
+        while first > 1 and steps[first - 1].legIndex == progress.legIndex do first = first - 1 end
+        local hold = Guide.HOLD_YARDS
+        for i = first, #steps do
+            local step = steps[i]
+            if step.legIndex == progress.legIndex then
+                local at = HOLD_KINDS[step.kind] and type(step.pointIndex) == "number" and cum[step.pointIndex] or nil
+                if at then
+                    local d = at - along
+                    local allowed = d >= hold and at or (d >= 0 and (at + hold - d) or (at + hold - 2 * d))
+                    if holdAllowed == nil or allowed < holdAllowed then
+                        if holdAllowed ~= nil and holdAllowed < otherCap then otherCap = holdAllowed end
+                        holdAt, holdAllowed = at, allowed
+                    elseif allowed < otherCap then
+                        otherCap = allowed
+                    end
+                    if d >= hold + 20 then break end
+                end
+            elseif step.legIndex > progress.legIndex then
+                break
+            end
+        end
+    end
+
+    line.liveLeg = leg
+    line.liveSegIdx = segIdx
+    line.liveMinAlong = along
+    line.liveLookYards = lookYards
+    line.liveHoldAt = holdAt
+    line.liveHoldYards = Guide.HOLD_YARDS
+    line.liveMaxAhead = otherCap
+    line.liveTight = tightStretch or nil
 end
 
 
 
 
 local function liveLine(route, progress, open)
-    local yards = Guide.YardsToStep(route, progress, markedStep(route, progress))
+    local step = markedStep(route, progress)
+    local yards = Guide.YardsToStep(route, progress, step)
+    local vDir, vYards, vGoal = calloutVertical(route, progress, step, yards, false)
     if type(yards) ~= "number" then yards = progress.remainingYards end
-    return { glyph = "ahead", yards = yards, key = "live", open = open or nil }
+    return { glyph = "ahead", yards = yards, key = "live", open = open or nil,
+             vertical = vDir, verticalYards = vYards, verticalGoal = vGoal }
 end
 
 
@@ -721,11 +963,12 @@ function Guide.Build(input)
 
 
                 if input.facing and (line or input.moving) then
-                    local aimX, aimY, aimInst, dirX, dirY, aheadYards = Guide.Aim(route, progress, input.speed)
+                    local aimX, aimY, aimInst, dirX, dirY, aheadYards, corridorYards = Guide.Aim(route, progress, input.speed)
                     if aimX then
                         line = line or liveLine(route, progress, model.rows[1] and model.rows[1].open)
                         line.live, line.aimX, line.aimY, line.aimInst = true, aimX, aimY, aimInst
-                        line.dirX, line.dirY, line.aheadYards = dirX, dirY, aheadYards
+                        line.dirX, line.dirY, line.aheadYards, line.corridorYards = dirX, dirY, aheadYards, corridorYards
+                        attachLiveWindow(line, route, progress, input.speed)
                     end
                 end
                 model.callout = line
@@ -749,11 +992,12 @@ function Guide.Build(input)
 
 
         if notice.depart and journey and state == "active" and input.facing then
-            local aimX, aimY, aimInst, dirX, dirY, aheadYards = Guide.Aim(route, progress, input.speed)
+            local aimX, aimY, aimInst, dirX, dirY, aheadYards, corridorYards = Guide.Aim(route, progress, input.speed)
             if aimX then
                 local c = model.callout
                 c.glyph, c.live, c.aimX, c.aimY, c.aimInst = "ahead", true, aimX, aimY, aimInst
-                c.dirX, c.dirY, c.aheadYards = dirX, dirY, aheadYards
+                c.dirX, c.dirY, c.aheadYards, c.corridorYards = dirX, dirY, aheadYards, corridorYards
+                attachLiveWindow(c, route, progress, input.speed)
             end
         end
     end
@@ -782,7 +1026,8 @@ function Guide.LayoutDiffers(a, b)
     local ca, cb = a.callout, b.callout
     if (ca == nil) ~= (cb == nil) then return true end
     if ca and (ca.key ~= cb.key or ca.text ~= cb.text or ca.short ~= cb.short or ca.glyph ~= cb.glyph or ca.open ~= cb.open
-        or ca.answer ~= cb.answer or ca.live ~= cb.live) then return true end
+        or ca.answer ~= cb.answer or ca.live ~= cb.live
+        or ca.vertical ~= cb.vertical or ca.verticalGoal ~= cb.verticalGoal) then return true end
     return false
 end
 

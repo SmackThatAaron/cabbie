@@ -119,6 +119,10 @@ function ServiceSearch.EntryName(s)
     local title = s.kind == "trainer" and TRAINER_TITLES[s.trainer] or nil
     if s.source == "questie" then
         title = title or (type(s.sub) == "string" and s.sub ~= "" and s.sub) or nil
+        if s.replacesPOI then
+            if title then return s.name .. " (" .. title .. ")" end
+            return s.name
+        end
         if title then return s.name .. " (" .. title .. ", " .. L["from Questie"] .. ")" end
         return s.name .. " (" .. L["from Questie"] .. ")"
     end
@@ -268,7 +272,8 @@ function ServiceSearch.InData(s, side)
     for _, code in ipairs(codes) do
         for _, i in ipairs(index[code] or {}) do
             local dx, dy = P.x[i] - s.x, P.y[i] - s.y
-            if P.inst[i] == s.inst and dx > -near and dx < near and dy > -near and dy < near
+            if not ServiceSearch.IsShadowedPOI(i) and P.inst[i] == s.inst
+                and dx > -near and dx < near and dy > -near and dy < near
                 and dx * dx + dy * dy <= near * near and (spotOnly or baseName(P.name[i]) == name)
                 and factionAllowed(P.fac[i], side) then
                 known = true
@@ -315,7 +320,32 @@ ServiceSearch.QUESTIE_PLACES_PER_YIELD = 200
 ServiceSearch.QUESTIE_SAME_YARDS = 60
 
 
-ServiceSearch.questie = { rows = {}, rev = 0, state = nil, stats = nil, task = nil, waiting = nil }
+ServiceSearch.questie = {
+    rows = {}, rev = 0, state = nil, stats = nil, task = nil, waiting = nil,
+    shadowedPOI = {}, shadowedForRows = nil,
+}
+
+function ServiceSearch.IsShadowedPOI(poiIndex)
+    local q = ServiceSearch.questie
+    if type(q) ~= "table" or type(q.shadowedPOI) ~= "table" or poiIndex == nil then return false end
+    if q.shadowedForRows ~= nil and q.rows ~= q.shadowedForRows then return false end
+    return q.shadowedPOI[poiIndex] == true
+end
+
+function ServiceSearch.Reset()
+    local q = ServiceSearch.questie
+    if type(q) == "table" then
+        q.state, q.rows, q.stats, q.task, q.waiting = nil, {}, nil, nil, nil
+        q.shadowedPOI, q.shadowedForRows = {}, nil
+        q.rev = (q.rev or 0) + 1
+    end
+    inDataIndex = nil
+    ServiceSearch.Cancel()
+    local D = FGPS.Destinations
+    if D and D.InvalidateIndex then D.InvalidateIndex() end
+    local MP = FGPS.UI and FGPS.UI.MapPlaces
+    if MP and MP.InvalidateCache then MP.InvalidateCache() end
+end
 
 local QUESTIE_SIDES = { A = 1, H = 2, AH = 0 }
 local QUESTIE_WHY = {
@@ -420,9 +450,26 @@ local function addToCell(cells, kind, inst, x, y, v)
 end
 
 
+
+
+local function namedAfterPerson(P, i)
+    local src = P.src and P.src[i]
+    return type(src) ~= "string" or src:find("^cmangos:creature:") ~= nil
+end
+
+local function isCreaturePOI(P, i)
+    local src = P and P.src and P.src[i]
+    return type(src) == "string" and src:find("^cmangos:creature:") ~= nil
+end
+
+local function personKey(kind, trainer, inst, name)
+    return kind .. "|" .. (kind == "trainer" and (trainer or "") or "") .. "|" .. tostring(inst) .. "|" .. baseName(name)
+end
+
+
 local function knownPlaces(Yield)
     local index, P = ensureIndex(), FGPS.Data and FGPS.Data.poi
-    local bundled, records, n = {}, {}, 0
+    local bundled, records, byPerson, n = {}, {}, {}, 0
     local function step()
         n = n + 1
         return n % ServiceSearch.QUESTIE_PLACES_PER_YIELD ~= 0 or Yield()
@@ -430,6 +477,13 @@ local function knownPlaces(Yield)
     for _, kind in ipairs(P and QUESTIE_KINDS or NO_ROWS) do
         for _, i in ipairs(index[TYPE_CODES[kind][1]] or NO_ROWS) do
             addToCell(bundled, kind, P.inst[i], P.x[i], P.y[i], i)
+            if isCreaturePOI(P, i) and type(P.name[i]) == "string" then
+                local teaches = kind == "trainer" and ServiceSearch.TrainerKind(P.name[i]) or nil
+                local pkey = personKey(kind, teaches, P.inst[i], P.name[i])
+                local list = byPerson[pkey]
+                if not list then list = {} byPerson[pkey] = list end
+                list[#list + 1] = i
+            end
             if not step() then return nil end
         end
     end
@@ -440,32 +494,36 @@ local function knownPlaces(Yield)
         end
         if not step() then return nil end
     end
-    return { bundled = bundled, records = records }
+    return {
+        bundled = bundled, records = records, byPerson = byPerson,
+        matchedBundled = {}, shadowedPOI = {},
+    }
 end
 
 
 
 
-local function namedAfterPerson(P, i)
-    local src = P.src and P.src[i]
-    return type(src) ~= "string" or src:find("^cmangos:creature:") ~= nil
-end
 
 
 
 
-
-
-local function serviceKnownAt(known, kind, trainer, name, inst, x, y, code)
+local function serviceKnownAt(known, kind, trainer, name, inst, x, y, code, fac)
     local key, near = baseName(name), ServiceSearch.QUESTIE_SAME_YARDS
     local P = FGPS.Data and FGPS.Data.poi
     local cx, cy = floor(x / near), floor(y / near)
+    local shadowedRow
     for dx = -1, 1 do
         for dy = -1, 1 do
             for _, i in ipairs(P and known.bundled[cellKey(kind, inst, cx + dx, cy + dy)] or NO_ROWS) do
                 if dist(P.x[i], P.y[i], x, y) <= near and (not namedAfterPerson(P, i) or baseName(P.name[i]) == key)
-                    and factionAllowed(P.fac[i], code) and (kind ~= "trainer" or ServiceSearch.TrainerKind(P.name[i]) == trainer) then
-                    return true
+                    and (kind ~= "trainer" or ServiceSearch.TrainerKind(P.name[i]) == trainer) then
+                    known.matchedBundled[i] = true
+                    if factionAllowed(P.fac[i], code) then
+                        return true
+                    elseif fac == 0 and (P.fac[i] == 1 or P.fac[i] == 2) and isCreaturePOI(P, i) then
+                        known.shadowedPOI[i] = true
+                        shadowedRow = shadowedRow or i
+                    end
                 end
             end
         end
@@ -473,11 +531,11 @@ local function serviceKnownAt(known, kind, trainer, name, inst, x, y, code)
     for dx = -1, 1 do
         for dy = -1, 1 do
             for _, s in ipairs(known.records[cellKey(kind, inst, cx + dx, cy + dy)] or NO_ROWS) do
-                if recordStandsFor(s, kind, trainer, name, inst, x, y, code) then return true, s end
+                if recordStandsFor(s, kind, trainer, name, inst, x, y, code) then return true, s, shadowedRow end
             end
         end
     end
-    return false
+    return false, nil, shadowedRow
 end
 
 
@@ -584,11 +642,11 @@ local function placeRows(field, id, name, sub, fac, spawns, kinds, trainer, code
         local spot = group.middle
         for _, kind in ipairs(kinds) do
             local teaches = kind == "trainer" and trainer or nil
-            local isKnown, record = serviceKnownAt(known, kind, teaches, name, group.inst, spot.x, spot.y, code)
+            local isKnown, record, shadowedRow = serviceKnownAt(known, kind, teaches, name, group.inst, spot.x, spot.y, code, fac)
             if not isKnown or record then
                 local row = { kind = kind, trainer = teaches, name = name, sub = sub, inst = group.inst,
                               x = floor(spot.x * 10 + 0.5) / 10, y = floor(spot.y * 10 + 0.5) / 10, map = spot.map, fac = fac,
-                              source = "questie", spots = #group > 1 and group or nil }
+                              source = "questie", spots = #group > 1 and group or nil, replacesPOI = shadowedRow }
                 row[field] = id
                 if record then rowOfRecord[record] = row else out[#out + 1] = row end
             end
@@ -719,7 +777,19 @@ local function scanQuestie(state)
     end
     local stopped = questieMailboxes(lib, code, rows, state, known, Yield)
     if stopped then return stopped end
+    for _, row in ipairs(rows) do
+        if row.npc then
+            local pkey = personKey(row.kind, row.trainer, row.inst, row.name)
+            for _, poiIndex in ipairs(known.byPerson[pkey] or NO_ROWS) do
+                if not known.matchedBundled[poiIndex] then
+                    known.shadowedPOI[poiIndex] = true
+                    row.replacesPOI = row.replacesPOI or poiIndex
+                end
+            end
+        end
+    end
     state.rows = rows
+    state.shadowedPOI = known.shadowedPOI
     return "done"
 end
 
@@ -746,7 +816,16 @@ function ServiceSearch.ReadQuestie()
             areaMaps.maps, areaMaps.byArea = nil, nil
             if q.state == "done" then
                 q.rows, state.rows = state.rows or {}, nil
+                q.shadowedPOI, state.shadowedPOI = state.shadowedPOI or {}, nil
+                q.shadowedForRows = q.rows
+                inDataIndex = nil
                 q.rev = q.rev + 1
+                if next(q.shadowedPOI) ~= nil then
+                    local D = FGPS.Destinations
+                    if D and D.InvalidateIndex then D.InvalidateIndex() end
+                    local MP = FGPS.UI and FGPS.UI.MapPlaces
+                    if MP and MP.InvalidateCache then MP.InvalidateCache() end
+                end
                 for _, s in ipairs(learnedList()) do
                     if (tonumber(s.time) or 0) >= started then shadowQuestie(s) end
                 end
@@ -941,7 +1020,7 @@ function ServiceSearch.Candidates(serviceType, pos, maxStraight, maxCount)
         local index = ensureIndex()
         for _, typeCode in ipairs(TYPE_CODES[serviceType]) do
             for _, i in ipairs(index[typeCode] or {}) do
-                if P.inst[i] == pos.inst and factionAllowed(P.fac[i], code)
+                if not ServiceSearch.IsShadowedPOI(i) and P.inst[i] == pos.inst and factionAllowed(P.fac[i], code)
                     and (sub == nil or ServiceSearch.TrainerKind(P.name[i]) == sub) then
                     local d = dist(P.x[i], P.y[i], pos.x, pos.y)
                     if d <= maxStraight then out[#out + 1] = { poiIndex = i, straightYards = d } end

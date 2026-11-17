@@ -177,6 +177,7 @@ local Router = {
 
     THUNDER_BLUFF_MESA_CHASM_CHORD_YARDS = 218,
     MOUNTAIN_MIN_YARDS = 450,
+    PROFILE_MIN_YARDS = 60,
     CLIFF_Z_YARDS = 25,
 
 
@@ -234,6 +235,14 @@ local Router = {
     CLIMB_DETOUR_BASE_YARDS = 400,
     CLIMB_DETOUR_PER_YARD = 15,
     CLIMB_DETOUR_MAX_YARDS = 600,
+
+
+
+
+    SURFACE_SLOPE_FREE = 0.30,
+    SURFACE_SLOPE_WEIGHT = 12.0,
+    SURFACE_SLOPE_SHARP_FREE = 0.59,
+    SURFACE_SLOPE_SHARP_WEIGHT = 20.0,
     HEIGHT_GUESS_YARDS = 30,
     HEIGHT_GUESS_SPREAD = 12,
 
@@ -328,21 +337,24 @@ end
 
 
 
-function Router._chasm(G, inst, x1, y1, dx, dy, z1, z2)
+
+
+function Router._chasm(G, inst, x1, y1, dx, dy, z1, z2, linked)
     local cliffZ = Router.CLIFF_Z_YARDS
-    local below, other = 0, 0
+    local below, other, above, atOrBelow = 0, 0, 0, 0
     for i = 1, 3 do
         local t = i / 4
         local base = z1 + (z2 - z1) * t
-        local near = G:Nearest(inst, x1 + dx * t, y1 + dy * t, Router.WALL_GAP_YARDS + 5, 8)
+        local near = G:Nearest(inst, x1 + dx * t, y1 + dy * t, Router.WALL_GAP_YARDS + 5, 32)
         for n = 1, #near do
             local zh = near[n].key and G:NodeHeightGuess(near[n].key)
             if zh then
                 if zh < base - cliffZ then below = below + 1 else other = other + 1 end
+                if zh > base + cliffZ then above = above + 1 else atOrBelow = atOrBelow + 1 end
             end
         end
     end
-    return below > 0 and other == 0
+    return (below > 0 and other == 0) or (not linked and above > 0 and atOrBelow == 0)
 end
 
 
@@ -358,7 +370,7 @@ end
 
 
 
-local function cutsMountain(inst, x1, y1, x2, y2, z1, z2, dock)
+local function cutsMountain(inst, x1, y1, x2, y2, z1, z2, dock, linked)
     if not inst or not x1 or not x2 then return false, false end
     local dx, dy = x2 - x1, y2 - y1
     local d = sqrt(dx * dx + dy * dy)
@@ -369,13 +381,14 @@ local function cutsMountain(inst, x1, y1, x2, y2, z1, z2, dock)
         and rise > Router.CLIMB_WALKABLE_SLOPE * d
     local gap = Router.MOUNTAIN_GAP_YARDS
     local sparse = d >= Router.MOUNTAIN_MIN_YARDS and d * 0.5 > gap
-    local profile = z1 and z2 and not cliff and not sparse and d > (pier and Router.DOCK_WALL_EXEMPT_YARDS or 2 * gap)
+    local minProfile = pier and Router.DOCK_WALL_EXEMPT_YARDS or (linked and 2 * gap or Router.PROFILE_MIN_YARDS)
+    local profile = z1 and z2 and not cliff and not sparse and d > minProfile
     if not cliff and not sparse and not profile then return false, false end
     local G = FGPS.Graph
     local g = G:Ensure(inst)
     if not g or (g.n or 0) < 1000 then return false, false end
     if cliff then return true, false end
-    if profile then return Router._chasm(G, inst, x1, y1, dx, dy, z1, z2), false end
+    if profile then return Router._chasm(G, inst, x1, y1, dx, dy, z1, z2, linked), false end
 
 
     if pier and not (z1 and z2) then return false, false end
@@ -452,7 +465,7 @@ end
 
 
 
-local function judgeStraight(inst, x1, y1, x2, y2, cityTrip, z1, z2, dock, linked)
+local function judgeStraight(inst, x1, y1, x2, y2, cityTrip, z1, z2, dock, linked, stored)
     local climb = (type(z1) == "number" and type(z2) == "number") and abs(z2 - z1) or 0
 
 
@@ -477,13 +490,16 @@ local function judgeStraight(inst, x1, y1, x2, y2, cityTrip, z1, z2, dock, linke
 
 
 
-    local hard, sparse = cutsMountain(inst, x1, y1, x2, y2, z1, z2, dock)
+    local hard, sparse = cutsMountain(inst, x1, y1, x2, y2, z1, z2, dock, stored)
+    if not hard and not linked and Router._sheerAttach and Router._sheerAttach(inst, x1, y1, x2, y2, z1, z2, dock) then
+        return true, false, climb
+    end
     if wall and linked then return hard, "quayrock", climb end
     return hard, sparse, climb
 end
 
-local function cutsObstacle(inst, x1, y1, x2, y2, cityTrip, z1, z2, dock, linked)
-    local hard, sparse = judgeStraight(inst, x1, y1, x2, y2, cityTrip, z1, z2, dock, linked)
+local function cutsObstacle(inst, x1, y1, x2, y2, cityTrip, z1, z2, dock, linked, stored)
+    local hard, sparse = judgeStraight(inst, x1, y1, x2, y2, cityTrip, z1, z2, dock, linked, stored)
     return hard, sparse
 end
 
@@ -1243,6 +1259,18 @@ end
 
 
 
+function Router._surfaceSlopeFactor(za, zb, yards, variant)
+    if not za or not zb or not yards or yards <= 0 then return 1 end
+    local roadsOnly = variant == "roads_only"
+    local free = roadsOnly and Router.SURFACE_SLOPE_FREE or Router.SURFACE_SLOPE_SHARP_FREE
+    local over = abs(zb - za) / yards - free
+    if over <= 0 then return 1 end
+    local weight = roadsOnly and Router.SURFACE_SLOPE_WEIGHT or Router.SURFACE_SLOPE_SHARP_WEIGHT
+    return 1 + weight * over * over
+end
+
+
+
 
 
 
@@ -1260,10 +1288,21 @@ local function attachCost(ctx, cand, nodeKey, virtualZ, stacked, vx, vy)
     local surcharge = charged * (straightRisk(attachYards) - 1) + climbCharge(ctx, attachYards, virtualZ, cand.footZ, stacked)
     local segYards = cand.segYards or 0
     if segYards > 0 then
-        local s2 = C.EdgeSeconds(cand.segKind, segYards, access, nil, surfaceExtra(cand.segKind, nodeKey, cand.otherKey), cand.shaped)
+        local extra2 = surfaceExtra(cand.segKind, nodeKey, cand.otherKey)
+        local s2 = C.EdgeSeconds(cand.segKind, segYards, access, nil, extra2, cand.shaped)
         if not s2 then return nil end
 
         local f2 = C.RoadFactor(variant, cand.segKind) * C.ChordFactor(cand.segKind, segYards, cand.shaped, cand.segDoubt)
+        if cand.segKind == KIND_SURFACE and extra2 ~= Router.ON_FOOT and cand.otherKey then
+            local G = Graph()
+            local whole = G:EdgeYards(nodeKey, cand.otherKey, KIND_SURFACE)
+            if not whole then
+                local _, ax, ay = G:NodePos(nodeKey)
+                local _, bx, by = G:NodePos(cand.otherKey)
+                if ax and bx then whole = sqrt((bx - ax) * (bx - ax) + (by - ay) * (by - ay)) end
+            end
+            f2 = f2 * Router._surfaceSlopeFactor(G:NodeHeight(nodeKey), G:NodeHeight(cand.otherKey), whole, variant)
+        end
         honest = honest + s2
         charged = charged + s2 * f2
         if cand.segKind == KIND_SURFACE_SWIM then
@@ -1601,9 +1640,10 @@ local function visit(nbKey, kind, yards, seconds, transportID, shaped, entry)
 
     if kind == KIND_SURFACE or kind == KIND_SURFACE_SWIM then
         local length = yards or 0
+        local onFoot = kind ~= KIND_SURFACE_SWIM and cur.indoor and indoorNode(nbKey)
         if kind == KIND_SURFACE_SWIM then
             secs = length / Const.SWIM_SPEED
-        elseif cur.indoor and indoorNode(nbKey) then
+        elseif onFoot then
             secs = length / Const.RUN_SPEED
         else
             secs = length / ctx.ground
@@ -1613,6 +1653,9 @@ local function visit(nbKey, kind, yards, seconds, transportID, shaped, entry)
         if not factor then
             factor = C.RoadFactor(variant, kind)
             ctx.rf[kind] = factor
+        end
+        if kind == KIND_SURFACE and not onFoot and cur.z and length > 0 then
+            factor = factor * Router._surfaceSlopeFactor(cur.z, G:NodeHeight(nbKey), length, variant)
         end
     elseif kind >= 7 and kind <= 11 then
         secs, mode, tid = edgeBase(ctx, node, nbKey, kind, yards, seconds, transportID, shaped, cur.indoor)
@@ -1624,6 +1667,12 @@ local function visit(nbKey, kind, yards, seconds, transportID, shaped, entry)
         secs, mode = C.EdgeSeconds(kind, yards, access, seconds, surfaceExtra(kind, node, nbKey, cur.indoor), shaped), "ground"
     end
     if not secs then return end
+    local wetChord = not shaped and (kind == KIND_CONNECTOR or kind == KIND_ROAD or kind == 17)
+        and Router._chordCrossesWater(G, C, node, nbKey, kind)
+    if wetChord then
+        secs = (yards or 0) / Const.SWIM_SPEED
+        factor = 1
+    end
     if not factor then
         local doubt
         if kind == KIND_ROAD then doubt = G:EdgeDoubt((G:Split(node)), entry) end
@@ -1642,8 +1691,9 @@ local function visit(nbKey, kind, yards, seconds, transportID, shaped, entry)
         local _, nx2, ny2 = G:NodePos(nbKey)
         if fx and nx2 then
             local dock = dockBetween(node, nbKey)
+            local stored = kind == KIND_CONNECTOR
             local hard, sparse = cutsObstacle(finst, fx, fy, nx2, ny2, ctx.cityTrip, G:NodeHeightGuess(node), G:NodeHeightGuess(nbKey),
-                dock, kind == KIND_CONNECTOR and dock)
+                dock, stored and dock, stored)
             if hard then return end
             factor = factor * sparseFactor(sparse)
         end
@@ -1672,9 +1722,16 @@ local function visit(nbKey, kind, yards, seconds, transportID, shaped, entry)
 
     local baseSecs = secs
     local charged = baseSecs * factor
+    if (variant == "roads_only" or variant == "prefer_roads")
+        and (kind == KIND_SURFACE or kind == 1 or kind == 2 or kind == KIND_CONNECTOR or kind == KIND_MESH or kind == 19)
+        and not (cur.indoor and indoorNode(nbKey))
+        and G:IsRoadNode(node) and not G:IsRoadNode(nbKey) then
+        charged = charged + C.RoadExitSeconds(variant, kind, false, true, false)
+    end
 
 
-    if kind == KIND_SURFACE_SWIM then charged = charged + Const.SWIM_CROSSING_CHARGE end
+
+    if kind == KIND_SURFACE_SWIM or wetChord then charged = charged + Const.SWIM_CROSSING_CHARGE end
 
 
     local penalty, boarding = 0, 0
@@ -3046,7 +3103,8 @@ local function relaxAttachList(ctx, fromKey, g, list, via, fromZ)
     end
     for nodeKey, cand in pairs(list) do
         if not closed[nodeKey] and nodeKey ~= fromKey then
-            local secs, yards, charged = attachCost(ctx, cand, nodeKey, fromZ, nil, vx, vy)
+            local isStacked = (fromKey == ORIGIN and (ctx.originStacked or cand.stacked)) or nil
+            local secs, yards, charged = attachCost(ctx, cand, nodeKey, fromZ, isStacked, vx, vy)
             if secs then relax(ctx, nodeKey, g + charged, fromKey, KIND_ATTACH, yards, secs, 0, "ground", nil, via) end
         end
     end
@@ -3414,7 +3472,7 @@ local function newWalk(ctx, fromKey)
     local inst, x, y = posOf(ctx, fromKey)
     local z
     if fromKey >= 0 then
-        z = Graph():NodeHeight(fromKey)
+        z = Router._groundPointZ(fromKey)
     elseif fromKey == ORIGIN and type(ctx.origin.z) == "number" then
         z = ctx.origin.z
     end
@@ -3488,6 +3546,10 @@ end
 function Router._tagPoint(point, key, fromKey, kind)
     if not point or type(key) ~= "number" or key < 0 then return end
     local G = Graph()
+    local gz = Router._groundPointZ(key, kind)
+    if point.z == nil or (gz ~= nil and gz ~= G:NodeHeight(key)) then
+        point.z = gz
+    end
     if not G:IsSurfaceNode(key) then return end
     local name, indoor, stacked, door = G:NodePlace(key)
     if name then point.room = name end
@@ -3498,7 +3560,6 @@ function Router._tagPoint(point, key, fromKey, kind)
         local form = G:ClimbForm(fromKey, key)
         if form then point.climbForm = form end
     end
-    if point.z == nil then point.z = G:NodeHeight(key) end
 end
 
 
@@ -3506,21 +3567,23 @@ end
 
 
 
-
-
-
-function Router._shapeTags(fromKey, toKey, ax, ay, mids, bx, by)
+function Router._shapeTags(fromKey, toKey, ax, ay, mids, bx, by, kind)
     if fromKey < 0 or toKey < 0 then return nil end
     local G = Graph()
-    if not (G:IsSurfaceNode(fromKey) and G:IsSurfaceNode(toKey)) then return nil end
-    local nameA, indoorA, stackedA = G:NodePlace(fromKey)
-    local nameB, indoorB, stackedB = G:NodePlace(toKey)
+    local surface = G:IsSurfaceNode(fromKey) and G:IsSurfaceNode(toKey)
+    local zA, zB = Router._groundPointZ(fromKey, kind), Router._groundPointZ(toKey, kind)
+    if not surface and not (type(zA) == "number" and type(zB) == "number") then return nil end
+    local tags = {}
+    if surface then
+        local nameA, indoorA, stackedA = G:NodePlace(fromKey)
+        local nameB, indoorB, stackedB = G:NodePlace(toKey)
 
 
-    local tags = { room = nameA ~= nil and nameA == nameB and nameA or nil,
-                   indoor = (indoorA and indoorB) and true or nil, stacked = (stackedA and stackedB) and true or nil,
-                   climbForm = G:ClimbForm(fromKey, toKey) }
-    local zA, zB = G:NodeHeight(fromKey), G:NodeHeight(toKey)
+        tags.room = nameA ~= nil and nameA == nameB and nameA or nil
+        tags.indoor = (indoorA and indoorB) and true or nil
+        tags.stacked = (stackedA and stackedB) and true or nil
+        tags.climbForm = G:ClimbForm(fromKey, toKey)
+    end
     if type(zA) == "number" and type(zB) == "number" then
         local along, total = {}, 0
         local px, py = ax, ay
@@ -3656,7 +3719,10 @@ local function addAttach(ctx, leg, cand, edge, toVirtual)
                 Router._emitAttachShape(leg, cand, edge.from, cand.otherKey, true, hazard)
             end
             addPoint(leg, cand.fx, cand.fy, 0, cand.segKind, segYards, segYards * share)
-            leg.points[#leg.points].hazard = hazard
+            local foot = leg.points[#leg.points]
+            foot.hazard = hazard
+            local fz = Router._candGroundFootZ(cand, edge.from)
+            if fz ~= nil then foot.z = fz end
         end
         if attachYards < ZERO_YARDS then
 
@@ -3677,7 +3743,15 @@ local function addAttach(ctx, leg, cand, edge, toVirtual)
 
 
                 local foot = leg.points[#leg.points]
-                if foot.z == nil and (cand.segKind == KIND_SURFACE or cand.segKind == KIND_SURFACE_SWIM) then foot.z = cand.footZ end
+                local fz = Router._candGroundFootZ(cand, edge.to)
+                if fz ~= nil then foot.z = fz end
+                if edge.from == ORIGIN and #leg.points == 2 then
+                    leg._corridorAttach = {
+                        attachYards = attachYards, segKind = cand.segKind,
+                        otherKey = cand.otherKey, toKey = edge.to,
+                        footZ = fz or zTo, steep = foot.steep, stacked = cand.stacked,
+                    }
+                end
             else
                 noteClimb(leg, nil, 0, zFrom, zTo, guessed)
             end
@@ -3930,7 +4004,7 @@ function Router._emitAttachShape(leg, cand, fromNode, toNode, toVirtual, hazard)
     else
         low, high = fullLen - cand.segYards + ZERO_YARDS, fullLen - ZERO_YARDS
     end
-    local shapeTags = Router._shapeTags(fromNode, toNode, ax, ay, mids, bx, by)
+    local shapeTags = Router._shapeTags(fromNode, toNode, ax, ay, mids, bx, by, cand.segKind)
     local prev = leg.points[#leg.points]
     local px, py = prev.x, prev.y
     local snap = cand.segKind == 2
@@ -4066,6 +4140,247 @@ local function closerRoadFoot(fromKey, dx, dy)
     return best
 end
 
+
+Router._CORRIDOR_ROAD_KINDS = {
+    [1] = true, [2] = true, [4] = true, [6] = true, [12] = true,
+    [16] = true, [17] = true, [18] = true, [22] = true,
+}
+
+
+
+
+
+function Router._smoothOriginCorridor(ctx, walk)
+    local info = walk and walk._corridorAttach
+    if walk then walk._corridorAttach = nil end
+    if not info or info.steep or info.stacked or ctx.originStacked then return end
+    local corridor = Const.ROAD_CORRIDOR_YARDS or 20
+    if info.attachYards > corridor then return end
+    if ctx.origin and ctx.origin.place and ctx.origin.place.indoor then return end
+    local kinds = Router._CORRIDOR_ROAD_KINDS
+    if not kinds[info.segKind] then return end
+    local G, R, D = Graph(), Route(), Coords().Distance
+    for _, key in ipairs({ info.otherKey, info.toKey }) do
+        if type(key) == "number" and key >= 0 and G:IsSurfaceNode(key) then
+            local _, indoor, stacked, door = G:NodePlace(key)
+            if indoor or stacked or door then return end
+        end
+    end
+    if info.segKind == KIND_SURFACE and type(info.otherKey) == "number" and type(info.toKey) == "number"
+        and G:ClimbForm(info.otherKey, info.toKey) then
+        return
+    end
+    local pts = walk.points
+    if not pts or #pts < 3 then return end
+    local p1, foot, p3 = pts[1], pts[2], pts[3]
+    if foot.k ~= KIND_ATTACH or foot.indoor or foot.stacked or foot.door
+        or p3.indoor or p3.stacked or p3.door or p3.climbForm or p3.steep then
+        return
+    end
+    local footZ = type(foot.z) == "number" and foot.z or info.footZ
+    local minForward = info.attachYards * 2.0
+    if minForward < 12 then minForward = 12 end
+    local maxNodeSpan = minForward * 1.5
+    if maxNodeSpan < 45 then maxNodeSpan = 45 end
+    local keep = 3
+    local alongRoad = D(foot.x, foot.y, p3.x, p3.y)
+    local slideU
+    while alongRoad < minForward and keep < #pts do
+        local prv, cur, nxt = pts[keep - 1], pts[keep], pts[keep + 1]
+        if R.IsPreserved(cur) or cur.indoor or cur.stacked or cur.door or cur.climbForm or cur.steep
+            or nxt.indoor or nxt.stacked or nxt.door or nxt.climbForm or not kinds[nxt.k] then
+            break
+        end
+        if type(footZ) == "number"
+            and ((type(cur.z) == "number" and abs(cur.z - footZ) > 5)
+                or (type(nxt.z) == "number" and abs(nxt.z - footZ) > 5)) then
+            break
+        end
+        local ax, ay = cur.x - prv.x, cur.y - prv.y
+        local bx, by = nxt.x - cur.x, nxt.y - cur.y
+        local al, bl = sqrt(ax * ax + ay * ay), sqrt(bx * bx + by * by)
+        if al > 0.5 and bl > 0.5 and (ax * bx + ay * by) / (al * bl) < 0.866 then
+            break
+        end
+        if bl <= 0.01 then
+            keep = keep + 1
+        elseif alongRoad + bl <= maxNodeSpan then
+            alongRoad = alongRoad + bl
+            keep = keep + 1
+        else
+            slideU = (minForward - alongRoad) / bl
+            break
+        end
+    end
+    local target = pts[keep]
+    local tx, ty, tz = target.x, target.y, target.z
+    local arcToTarget = alongRoad
+    if slideU and slideU > 0 and slideU < 1 then
+        local nxt = pts[keep + 1]
+        tx = target.x + (nxt.x - target.x) * slideU
+        ty = target.y + (nxt.y - target.y) * slideU
+        arcToTarget = alongRoad + D(target.x, target.y, tx, ty)
+        if type(target.z) == "number" and type(nxt.z) == "number" then
+            tz = target.z + (nxt.z - target.z) * slideU
+        end
+    end
+    if tz == nil and type(footZ) == "number" then
+        local z0, arc0 = footZ, 0
+        local arc = 0
+        for i = 3, keep do
+            arc = arc + D(pts[i - 1].x, pts[i - 1].y, pts[i].x, pts[i].y)
+            if type(pts[i].z) == "number" then z0, arc0 = pts[i].z, arc end
+        end
+        local j, span = keep + 1, arcToTarget - arc0
+        local px, py = tx, ty
+        while j <= #pts and pts[j].z == nil and pts[j].shape do
+            span = span + D(px, py, pts[j].x, pts[j].y)
+            px, py = pts[j].x, pts[j].y
+            j = j + 1
+        end
+        local jz = pts[j] and pts[j].z
+        if type(jz) == "number" then
+            span = span + D(px, py, pts[j].x, pts[j].y)
+            tz = span > 0.01 and (z0 + (jz - z0) * ((arcToTarget - arc0) / span)) or z0
+        else
+            tz = z0
+        end
+    end
+    if D(p1.x, p1.y, tx, ty) < ZERO_YARDS then return end
+    local finalAlong = D(foot.x, foot.y, tx, ty)
+    if finalAlong < 8 and keep < #pts then
+        local nxt = pts[keep + 1]
+        local mx, my = tx - p1.x, ty - p1.y
+        local nx2, ny2 = nxt.x - tx, nxt.y - ty
+        local ml, nl = sqrt(mx * mx + my * my), sqrt(nx2 * nx2 + ny2 * ny2)
+        if ml <= 0.5 or nl <= 0.5 or (mx * nx2 + my * ny2) / (ml * nl) < 0.707 then
+            return
+        end
+    end
+    local z1 = p1.z or ctx.originZ or ctx.originZg
+    local z2 = tz or (target.node and G:NodeHeightGuess(target.node)) or footZ
+    if type(footZ) == "number" and type(z2) == "number" and abs(z2 - footZ) > 5 then return end
+    if type(z1) == "number" and type(z2) == "number" and abs(z2 - z1) > 5 then return end
+    if Router.judgeStraight(walk.inst, p1.x, p1.y, tx, ty, ctx.cityTrip, z1, z2).hard then return end
+    if FGPS.Cost and FGPS.Cost.OverSwim and FGPS.Cost.OverSwim(walk.inst, p1.x, p1.y, tx, ty) then return end
+    local prevNode = (type(info.otherKey) == "number" and info.otherKey >= 0) and info.otherKey or nil
+    for i = 2, keep - 1 do
+        if pts[i].node then prevNode = pts[i].node end
+    end
+    if slideU and slideU > 0 and slideU < 1 then
+        target.x, target.y, target.z = tx, ty, tz
+        target.node = nil
+        target.shape = true
+    else
+        if target.z == nil and type(tz) == "number" then target.z = tz end
+        if prevNode then target.corridorBefore = prevNode end
+    end
+    if finalAlong >= 8 then
+        target.corridorX, target.corridorY = foot.x, foot.y
+    end
+    local shift = keep - 2
+    local oldN = #pts
+    for i = keep, oldN do pts[i - shift] = pts[i] end
+    for i = oldN - shift + 1, oldN do pts[i] = nil end
+end
+
+do
+    local WAY_NEIGHBOR_KINDS = {
+        [1] = true, [2] = true, [4] = true, [6] = true,
+        [12] = true, [16] = true, [17] = true, [18] = true,
+    }
+
+    function Router._smoothWalk(ctx, walk)
+        local pts = walk and walk.points
+        if not pts or #pts < 3 then return end
+        local inst = walk.inst
+        local inside = FGPS.Data and FGPS.Data.insideMaps
+        if inside and inside[inst] then return end
+        local G, C, R = Graph(), Cost(), Route()
+        local highRes = ctx and ctx.access and ctx.access.highRes == true
+        local checks, maxChecks = 0, highRes and 96 or 48
+
+        local function hasOutdoorFloor(x, y, z)
+            local hits = G:Nearest(inst, x, y, 18, 1, function(key)
+                if not G:IsSurfaceNode(key) then return false end
+                local _, indoor, stacked, door = G:NodePlace(key)
+                return not (indoor or stacked or door)
+            end, z)
+            local hit = hits and hits[1]
+            if not hit then return false end
+            local hz = G:NodeHeight(hit.key) or G:NodeHeightGuess(hit.key)
+            return hz == nil or abs(hz - z) <= 3.5
+        end
+
+        local beforeCum = R.Cumulative(walk).total
+        R.SmoothLeg(walk, {
+            highRes = highRes,
+            isPinnedNode = function(key, p)
+                if not G:IsSurfaceNode(key) then return true end
+                if inCapital(inst, p.x, p.y) then return true end
+                local hasWay = false
+                G:Neighbors(key, function(_, kind)
+                    if WAY_NEIGHBOR_KINDS[kind] then hasWay = true end
+                end)
+                return hasWay
+            end,
+            canShortcut = function(a, b, chord)
+                if checks >= maxChecks then return false end
+                checks = checks + 1
+                local mx, my, mz = (a.x + b.x) * 0.5, (a.y + b.y) * 0.5, (a.z + b.z) * 0.5
+                if not hasOutdoorFloor(mx, my, mz) then return false end
+                if chord > 36 then
+                    if not hasOutdoorFloor(a.x + (b.x - a.x) * 0.25, a.y + (b.y - a.y) * 0.25, a.z + (b.z - a.z) * 0.25) then
+                        return false
+                    end
+                    if not hasOutdoorFloor(a.x + (b.x - a.x) * 0.75, a.y + (b.y - a.y) * 0.75, a.z + (b.z - a.z) * 0.75) then
+                        return false
+                    end
+                end
+                if Router._inBlockedLiquid(inst, mx, my) or Router._overHazardFloor(inst, a.x, a.y, b.x, b.y) then
+                    return false
+                end
+                if C.OverSwim and C.OverSwim(inst, a.x, a.y, b.x, b.y) then return false end
+                if C.OverBlocked and C.OverBlocked(inst, a.x, a.y, b.x, b.y) then return false end
+                if ctx and ctx.guarded and C.GuardedShare(ctx.guarded, inst, a.x, a.y, b.x, b.y, a.z, b.z) > 0 then
+                    return false
+                end
+                return not Router.judgeStraight(inst, a.x, a.y, b.x, b.y, ctx and ctx.cityTrip, a.z, b.z).hard
+            end,
+            canFillet = function(a, b)
+                local mx, my = (a.x + b.x) * 0.5, (a.y + b.y) * 0.5
+                if Router._inBlockedLiquid(inst, mx, my) or Router._overHazardFloor(inst, a.x, a.y, b.x, b.y) then
+                    return false
+                end
+                if C.OverSwim and C.OverSwim(inst, a.x, a.y, b.x, b.y) then return false end
+                if ctx and ctx.guarded and C.GuardedShare(ctx.guarded, inst, a.x, a.y, b.x, b.y, a.z, b.z) > 0 then
+                    return false
+                end
+                return true
+            end,
+        })
+        if walk._cum == nil then
+            local afterCum = R.Cumulative(walk).total
+            local delta = afterCum - beforeCum
+            if walk.yards then
+                walk.yards = walk.yards + delta
+                if walk.yards < 0 then walk.yards = 0 end
+            end
+            if walk.surfaceYards and delta < 0 then
+                walk.surfaceYards = walk.surfaceYards + delta
+                if walk.surfaceYards < 0 then walk.surfaceYards = 0 end
+            end
+            if walk.seconds then
+                local spd = (ctx and ctx.ground) or (C.GroundSpeed and C.GroundSpeed(ctx and ctx.access)) or (Const.RUN_SPEED or 7)
+                if spd and spd > 0 then
+                    walk.seconds = walk.seconds + delta / spd
+                    if walk.seconds < 0 then walk.seconds = 0 end
+                end
+            end
+        end
+    end
+end
+
 local function buildLegs(ctx, edges)
     local legs = {}
     local walk
@@ -4131,7 +4446,7 @@ local function buildLegs(ctx, edges)
                     local prev = walk.points[#walk.points]
                     local px, py = prev.x, prev.y
                     local snap = e.kind == 2
-                    local shapeTags = mids and Router._shapeTags(e.from, e.to, px, py, mids, nx, ny)
+                    local shapeTags = mids and Router._shapeTags(e.from, e.to, px, py, mids, nx, ny, e.kind)
 
 
                     local hazard = e.kind == KIND_SURFACE_SWIM and Graph():HazardCrossing(e.from, e.to) or nil
@@ -4172,6 +4487,8 @@ local function buildLegs(ctx, edges)
 
 
                 extendWalkToPier(walk, e, "from", ctx.access)
+                Router._smoothOriginCorridor(ctx, walk)
+                Router._smoothWalk(ctx, walk)
                 legs[#legs + 1] = finishWalk(walk)
                 walk = nil
             end
@@ -4193,6 +4510,8 @@ local function buildLegs(ctx, edges)
             local lastLeg = legs[#legs]
             mergeLastFlags(lastLeg, walk.points[#walk.points].f)
         else
+            Router._smoothOriginCorridor(ctx, walk)
+            Router._smoothWalk(ctx, walk)
             legs[#legs + 1] = finishWalk(walk)
         end
     end
@@ -4382,6 +4701,343 @@ function Router._inBlockedLiquid(inst, x, y)
     return b.c[cy * b.w + cx + 1] ~= nil
 end
 
+do
+
+
+    Router.SHEER_WALL_Z_YARDS = 15
+    Router.SHEER_WALL_SLOPE = 0.45
+
+    local function inSwimCell(inst, x, y)
+        local water = FGPS.Data and FGPS.Data.water
+        local layer = water and water[inst]
+        local s = layer and layer.s
+        if type(s) ~= "table" or type(s.c) ~= "table" or x == nil or y == nil then return false end
+        local cell = s.cell or 50
+        local cx, cy = floor((x - layer.ox) / cell), floor((y - layer.oy) / cell)
+        if cx < 0 or cy < 0 or cx >= (s.w or 0) or cy >= (s.h or 0) then return false end
+        return s.c[cy * s.w + cx + 1] ~= nil
+    end
+
+    local function touchesSwim(G, key, cand)
+        if cand and cand.segKind == KIND_SURFACE_SWIM then return true end
+        local wet = false
+        G:Neighbors(key, function(_, kind)
+            if kind == KIND_SURFACE_SWIM then wet = true end
+        end)
+        return wet
+    end
+
+
+
+
+
+    function Router._sheerAttach(inst, x1, y1, x2, y2, z1, z2, dock)
+        if dock == true or not z1 or not z2 or not inst or not x1 or not x2 then return false end
+        local rise = abs(z2 - z1)
+        if rise <= Router.HEIGHT_GUESS_SPREAD then return false end
+        local dx, dy = x2 - x1, y2 - y1
+        local d = sqrt(dx * dx + dy * dy)
+        if d < Router.WALL_CHECK_MIN_YARDS then return false end
+        local G = Graph()
+        local g = G:Ensure(inst)
+        if not g or (g.n or 0) < 1000 then return false end
+        local wallZ, wallSlope = Router.SHEER_WALL_Z_YARDS, Router.SHEER_WALL_SLOPE
+        if rise >= 20 and rise > wallSlope * d then return true end
+        local cliffZ = Router.CLIFF_Z_YARDS
+        local maxR = Router.WALL_GAP_YARDS + 5
+        local checkSpan = d > 2 * Router.MOUNTAIN_GAP_YARDS and d < Router.MOUNTAIN_MIN_YARDS
+        for i = 1, 3 do
+            local t = i / 4
+            local sx, sy = x1 + dx * t, y1 + dy * t
+            local base = z1 + (z2 - z1) * t
+            if checkSpan then
+                local spanNear = G:Nearest(inst, sx, sy, maxR, 8)
+                local below, above, other = 0, 0, 0
+                for n = 1, #spanNear do
+                    local zh = spanNear[n].key and G:NodeHeightGuess(spanNear[n].key)
+                    if zh then
+                        if zh < base - cliffZ then below = below + 1
+                        elseif zh > base + cliffZ then above = above + 1
+                        else other = other + 1 end
+                    end
+                end
+                if other == 0 and (below > 0 or above > 0) then return true end
+            end
+            local d1 = d * t
+            local d2 = d - d1
+            local rCap = maxR
+            if d1 - 5 < rCap then rCap = d1 - 5 end
+            if d2 - 5 < rCap then rCap = d2 - 5 end
+            if rCap >= 10 then
+                local near = G:Nearest(inst, sx, sy, rCap, 8)
+                local nHere, sheerHere = 0, 0
+                for n = 1, #near do
+                    local zh = near[n].key and G:NodeHeightGuess(near[n].key)
+                    if zh then
+                        nHere = nHere + 1
+                        local r1, r2 = abs(zh - z1), abs(z2 - zh)
+                        if (r1 > wallZ and r1 > wallSlope * d1) or (r2 > wallZ and r2 > wallSlope * d2) then
+                            sheerHere = sheerHere + 1
+                        end
+                    end
+                end
+                if nHere > 0 and sheerHere == nHere then return true end
+            end
+        end
+        return false
+    end
+
+
+
+    function Router._waterAttachZ(G, pos, map, inSurface)
+        if not pos or pos.z ~= nil or inSurface then return nil end
+        if type(pos.place) == "table" and pos.place.indoor then return nil end
+        local g = G:Ensure(pos.inst)
+        if not g or (g.n or 0) < 1000 then return nil end
+        if not inSwimCell(pos.inst, pos.x, pos.y) then return nil end
+        local surfReach = G.SURFACE_ATTACH_RADIUS
+        local bestZ, bestD, bestKey
+        for key, cand in pairs(map) do
+            local d = cand.attachYards or cand.dist or 0
+            local wet = touchesSwim(G, key, cand)
+            if not wet and d <= surfReach then return nil end
+            if wet then
+                local cz = cand.footZg or G:NodeHeightGuess(key)
+                if cz and (not bestD or d < bestD or (d == bestD and key < bestKey)) then
+                    bestZ, bestD, bestKey = cz, d, key
+                end
+            end
+        end
+        return bestZ
+    end
+
+
+
+    function Router._filterCliffAttaches(G, pos, kept, keptN, pz, fromWater, isDest, isHub)
+        if isHub or keptN <= 1 then return kept, keptN end
+        local refZ = pz or (not isDest and type(pos.zHint) == "number" and pos.zHint or nil)
+        if not refZ then return kept, keptN end
+        local g = G:Ensure(pos.inst)
+        if not g or (g.n or 0) < 1000 then return kept, keptN end
+        local stepZ = Router.CLIMB_STEP_YARDS
+        local wetOrigin = fromWater or (pz ~= nil and inSwimCell(pos.inst, pos.x, pos.y))
+        local hasSameLevel, hadMain = false, false
+        for key, cand in pairs(kept) do
+            if not cand.offMain then hadMain = true end
+            local cz = cand.footZg or G:NodeHeightGuess(key)
+            if cz and abs(cz - refZ) <= stepZ then hasSameLevel = true end
+        end
+        if not hasSameLevel then return kept, keptN end
+        local spread = Router.HEIGHT_GUESS_SPREAD
+        local slope = Router.CLIMB_WALKABLE_SLOPE
+        local stackedStep = Router.STACKED_LEVEL_YARDS * 2
+        local surfReach = G.SURFACE_ATTACH_RADIUS
+        local out, outN, hasMain = {}, 0, false
+        for key, cand in pairs(kept) do
+            local drop = false
+            if not dockAt(key) then
+                local cz = cand.footZg or G:NodeHeightGuess(key)
+                if cz then
+                    local dz = abs(cz - refZ)
+                    local d = cand.attachYards or cand.dist or 0
+                    if wetOrigin and dz > stepZ + 3 then
+                        drop = true
+                    elseif pz ~= nil then
+                        if (cand.stacked and dz >= stackedStep) or (dz > spread and dz > slope * d) then
+                            drop = true
+                        end
+                    elseif cand.stacked and dz > spread and d <= surfReach then
+                        drop = true
+                    end
+                end
+            end
+            if not drop then
+                out[key] = cand
+                outN = outN + 1
+                if not cand.offMain then hasMain = true end
+            end
+        end
+
+
+        if not wetOrigin and pz == nil and hadMain and not hasMain then return kept, keptN end
+        if outN > 0 then return out, outN end
+        return kept, keptN
+    end
+end
+
+
+
+
+
+
+
+function Router._chordCrossesWater(G, C, node, nbKey, kind)
+    if not (C and C.OverSwim) then return false end
+    if kind == KIND_CONNECTOR and (isTransportStop(G:NodeFlags(node)) or isTransportStop(G:NodeFlags(nbKey))) then
+        return false
+    end
+    local finst, fx, fy = G:NodePos(node)
+    local _, nx2, ny2 = G:NodePos(nbKey)
+    if not (fx and nx2) or not C.OverSwim(finst, fx, fy, nx2, ny2) then return false end
+    local world = G:Ensure(finst)
+    if not world or ((world.n or 0) < 1000 and (finst == 0 or finst == 1 or finst == 2991)) then return false end
+    local _, aIn, aSt = G:NodePlace(node)
+    if aIn or aSt then return false end
+    local _, bIn, bSt = G:NodePlace(nbKey)
+    if bIn or bSt then return false end
+    local memo = world._wetChord
+    if not memo then
+        memo = {}
+        world._wetChord = memo
+    end
+    local aIdx, bIdx = node % KEY_BASE, nbKey % KEY_BASE
+    if aIdx > bIdx then aIdx, bIdx = bIdx, aIdx end
+    local pairKey = aIdx * KEY_BASE + bIdx
+    local cached = memo[pairKey]
+    if cached ~= nil then return cached end
+    local az, bz = G:NodeHeightGuess(node), G:NodeHeightGuess(nbKey)
+    local edgeZ = (az and bz) and (0.5 * (az + bz)) or az or bz
+    local isBridge = false
+    if edgeZ ~= nil then
+        local mx, my = 0.5 * (fx + nx2), 0.5 * (fy + ny2)
+        local swimZ, bestSwimD = nil, 999
+        for _, hit in ipairs(G:Nearest(finst, mx, my, 85, 128)) do
+            if hit.dist < bestSwimD then
+                local isSwim = false
+                G:Neighbors(hit.key, function(_, nkind)
+                    if nkind == KIND_SURFACE_SWIM or nkind == 5 then isSwim = true end
+                end)
+                if isSwim then
+                    local hz = G:NodeHeight(hit.key)
+                    if hz ~= nil then bestSwimD, swimZ = hit.dist, hz end
+                end
+            end
+        end
+        if swimZ ~= nil and edgeZ - swimZ >= Router.STACKED_LEVEL_YARDS then
+            isBridge = true
+        end
+    end
+    local wet = not isBridge
+    memo[pairKey] = wet
+    return wet
+end
+
+
+
+
+
+
+Router.GROUND_Z_CLAMP_RADIUS = 15
+Router.GROUND_Z_CLAMP_DIFF = 20
+Router.GROUND_Z_MAX_SPREAD = 10
+function Router._groundPointZ(key, kind)
+    if type(key) ~= "number" or key < 0 then return nil end
+    local G = Graph()
+    local z = G:NodeHeight(key)
+    if z == nil or G:IsSurfaceNode(key) then return z end
+    if kind ~= nil and kind ~= 1 and kind ~= 2 and kind ~= 3 and kind ~= 4 and kind ~= 17 then
+        return z
+    end
+    if isTransportStop(G:NodeFlags(key)) then return z end
+    local inst, x, y = G:NodePos(key)
+    local world = inst and G:Ensure(inst)
+    if not world then return z end
+    local memo = world._groundPointZ
+    if not memo then
+        memo = {}
+        world._groundPointZ = memo
+    end
+    local idx = key - inst * KEY_BASE
+    local cached = memo[idx]
+    if cached ~= nil then return cached == false and z or cached end
+    if kind == nil then
+        local target = false
+        G:Neighbors(key, function(_, nkind)
+            if nkind == 1 or nkind == 2 or nkind == 3 or nkind == 4 or nkind == 17 then target = true end
+        end)
+        if not target then
+            memo[idx] = false
+            return z
+        end
+    end
+    local minZ, maxZ, nearZ, nearD, ambiguous, hasDry = nil, nil, nil, nil, false, false
+    for _, hit in ipairs(G:Nearest(inst, x, y, Router.GROUND_Z_CLAMP_RADIUS, 24)) do
+        if G:IsSurfaceNode(hit.key) then
+            local _, hIn, hSt = G:NodePlace(hit.key)
+            if hIn or hSt then
+                ambiguous = true
+                break
+            end
+            local hz = G:NodeHeight(hit.key)
+            if hz ~= nil then
+                local dry = false
+                G:Neighbors(hit.key, function(_, nkind)
+                    if nkind == KIND_SURFACE then dry = true end
+                end)
+                if dry then
+                    hasDry = true
+                    if not minZ or hz < minZ then minZ = hz end
+                    if not maxZ or hz > maxZ then maxZ = hz end
+                    if not nearD or hit.dist < nearD or (hit.dist == nearD and hit.key < key) then
+                        nearD, nearZ = hit.dist, hz
+                    end
+                end
+            end
+        end
+    end
+    if ambiguous or not hasDry or (maxZ - minZ) > Router.GROUND_Z_MAX_SPREAD or abs(z - nearZ) <= Router.GROUND_Z_CLAMP_DIFF then
+        memo[idx] = false
+        return z
+    end
+
+
+    local q, seen, head, tail = { key }, { [key] = true }, 1, 1
+    local caveMouth = false
+    while head <= tail and tail < 30 do
+        local curK = q[head]
+        head = head + 1
+        G:Neighbors(curK, function(nb)
+            if caveMouth then return end
+            if G:IsSurfaceNode(nb) then
+                local sz = G:NodeHeight(nb)
+                if sz ~= nil and abs(sz - z) <= 15 then caveMouth = true end
+            elseif not seen[nb] and tail < 30 then
+                seen[nb] = true
+                tail = tail + 1
+                q[tail] = nb
+            end
+        end)
+        if caveMouth then break end
+    end
+    if caveMouth then
+        memo[idx] = false
+        return z
+    end
+    memo[idx] = nearZ
+    return nearZ
+end
+
+function Router._candGroundFootZ(cand, nodeKey)
+    if not cand or type(cand.footZ) ~= "number" then return nil end
+    local key = type(nodeKey) == "number" and nodeKey >= 0 and nodeKey or cand.key
+    if not cand.otherKey or type(key) ~= "number" or key < 0 then
+        return Router._groundPointZ(key, cand.segKind) or cand.footZ
+    end
+    local G = Graph()
+    local za = Router._groundPointZ(key, cand.segKind)
+    local zb = Router._groundPointZ(cand.otherKey, cand.segKind)
+    if not (za and zb) then return cand.footZ end
+    if za == G:NodeHeight(key) and zb == G:NodeHeight(cand.otherKey) then return cand.footZ end
+    local _, ax, ay = G:NodePos(key)
+    local _, bx, by = G:NodePos(cand.otherKey)
+    if not (ax and bx and cand.fx and cand.fy) then return za end
+    local D = Coords().Distance
+    local da = D(ax, ay, cand.fx, cand.fy)
+    local db = D(cand.fx, cand.fy, bx, by)
+    local tot = da + db
+    return tot > 0 and (za + (zb - za) * (da / tot)) or za
+end
+
 
 
 
@@ -4471,8 +5127,9 @@ Router.DOOR_SPOT_YARDS = 3
 function Router._doorFloor(pos, map, count, stated)
     if not Router._lineReach(pos.inst) then return map, count end
     local G = Graph()
+    local inferredDoor = pos.inferred and not pos.place
     local head, near
-    if stated and pos.z ~= nil then
+    if stated and pos.z ~= nil and not inferredDoor then
         for key, cand in pairs(map) do
             local d, z = cand.attachYards or cand.dist or 0, cand.footZ or G:NodeHeight(key)
             if d <= Router.DOOR_SPOT_YARDS and z ~= nil and abs(z - pos.z) <= Router.STACKED_LEVEL_YARDS
@@ -4485,7 +5142,27 @@ function Router._doorFloor(pos, map, count, stated)
         head = Router._keptHead(map, G)
         if not head or (head.attachYards or head.dist or 0) > Router.DOOR_SPOT_YARDS
                 or floor((G:NodeFlags(head.key) or 0) / 8) % 2 ~= 1 then
-            return map, count
+            head, near = nil, nil
+            if inferredDoor then
+                for key, cand in pairs(map) do
+                    local d = cand.attachYards or cand.dist or 0
+                    if floor((G:NodeFlags(key) or 0) / 8) % 2 == 1
+                            and (not head or d < near or (d == near and key < head.key)) then
+                        head, near = cand, d
+                    end
+                end
+                if not head then
+                    for _, hit in ipairs(G:Nearest(pos.inst, pos.x, pos.y, G.SURFACE_ATTACH_RADIUS, 128)) do
+                        local z = G:NodeHeight(hit.key)
+                        if floor((G:NodeFlags(hit.key) or 0) / 8) % 2 == 1
+                                and (pos.z == nil or z == nil or abs(z - pos.z) <= (G.MAX_ATTACH_DZ or 15))
+                                and (not head or hit.dist < near or (hit.dist == near and hit.key < head.key)) then
+                            head, near = { key = hit.key, dist = hit.dist, attachYards = hit.dist, footZ = z }, hit.dist
+                        end
+                    end
+                end
+            end
+            if not head then return map, count end
         end
     end
     G:IsIsolated(head.key)
@@ -4494,6 +5171,9 @@ function Router._doorFloor(pos, map, count, stated)
     local kept, keptN = {}, 0
     for key, cand in pairs(map) do
         if (off and off[key - base] or 0) == own then kept[key], keptN = cand, keptN + 1 end
+    end
+    if keptN == 0 and inferredDoor then
+        kept[head.key], keptN = head, 1
     end
     return kept, keptN
 end
@@ -4508,7 +5188,10 @@ function attachFor(ctx, pos, isDest, isHub)
 
     local opts = { allowUnverified = ctx.access.allowUnverified ~= false, map = not isHub and pos.map or nil,
                    floor = not isHub and pos.floor or nil, poiIndex = (isDest and not isHub) and pos.poiIndex or nil,
-                   place = not isHub and pos.place or nil, free = not isHub and Router._freePoint(ctx, pos, isDest) or nil }
+                   originPoi = (not isDest and not isHub) and pos.poiIndex or nil,
+                   place = not isHub and pos.place or nil, free = not isHub and Router._freePoint(ctx, pos, isDest) or nil,
+                   z = not isHub and pos.z or nil, zHint = not isHub and pos.zHint or nil,
+                   highRes = not isHub and ctx.access.highRes or nil }
 
 
     local perf = FGPS.Perf
@@ -4531,12 +5214,18 @@ function attachFor(ctx, pos, isDest, isHub)
 
 
 
-
-
+    local waterZ
     if count > 0 then
         local kept, keptN = {}, 0
         local G = Graph()
         local pz = pos.z
+        local fromWater = false
+        if pz == nil and not isHub then
+            waterZ = Router._waterAttachZ(G, pos, map, list.inSurface)
+            if waterZ ~= nil then
+                pz, fromWater = waterZ, true
+            end
+        end
         for key, cand in pairs(map) do
             local fx, fy = cand.fx, cand.fy
             if not fx then
@@ -4555,12 +5244,13 @@ function attachFor(ctx, pos, isDest, isHub)
             if not cut and (cand.segKind == KIND_CONNECTOR or cand.segKind == KIND_MESH) then
                 local _, ax, ay = G:NodePos(key)
                 local dock = dockBetween(key, cand.otherKey)
-                local linked = cand.segKind == KIND_CONNECTOR and dock
-                if ax and fx then cut = cutsObstacle(pos.inst, fx, fy, ax, ay, ctx.cityTrip, cand.footZg, nz, dock, linked) end
+                local stored = cand.segKind == KIND_CONNECTOR
+                local linked = stored and dock
+                if ax and fx then cut = cutsObstacle(pos.inst, fx, fy, ax, ay, ctx.cityTrip, cand.footZg, nz, dock, linked, stored) end
                 if not cut and ax and cand.otherKey then
                     local _, bx, by = G:NodePos(cand.otherKey)
                     if bx then
-                        cut = cutsObstacle(pos.inst, ax, ay, bx, by, ctx.cityTrip, nz, G:NodeHeightGuess(cand.otherKey), dock, linked)
+                        cut = cutsObstacle(pos.inst, ax, ay, bx, by, ctx.cityTrip, nz, G:NodeHeightGuess(cand.otherKey), dock, linked, stored)
                     end
                 end
             end
@@ -4571,8 +5261,10 @@ function attachFor(ctx, pos, isDest, isHub)
                 keptN = keptN + 1
             end
         end
+        kept, keptN = Router._filterCliffAttaches(G, pos, kept, keptN, pz, fromWater, isDest, isHub)
         map, count = kept, keptN
     end
+    if not isDest and not isHub and pos == ctx.origin then ctx.originWaterZ = waterZ end
 
     local ringed = false
     if count > 0 then map, count, ringed = Router._ownPiece(pos, map, count) end
@@ -5181,11 +5873,12 @@ local function computeSegment(ctx)
     ctx.originZ, ctx.destZ, ctx.originGuessed, ctx.destGuessed = o.z, d.z, nil, nil
     ctx.originZg, ctx.destZg = nil, nil
     if not ctx.originZ then
-        ctx.originZ = guessHeight(ctx.originAttach, true, nil, o.zHint)
+        ctx.originZ = guessHeight(ctx.originAttach, true, nil, o.zHint) or ctx.originWaterZ
         ctx.originGuessed = ctx.originZ ~= nil or nil
 
         if not ctx.originZ then ctx.originZg = guessHeight(ctx.originAttach, true, true, o.zHint) end
     end
+    ctx.originStacked = ctx.originZ ~= nil and levelsApart(ctx.originAttach) or nil
     ctx.destLow, ctx.destHigh, ctx.destLowG, ctx.destHighG = nil, nil, nil, nil
     if not ctx.destZ then
         ctx.destZ = guessHeight(ctx.destAttach, false)
@@ -5280,7 +5973,7 @@ end
 
 
 local function positionHeight(p)
-    if type(p.z) == "number" then return p.z end
+    if type(p.z) == "number" and not p.zInferred then return p.z end
     local G = Graph()
     if type(p.poiIndex) == "number" then
 
@@ -5687,6 +6380,128 @@ function Router._guardedNotes(route, access)
 
                         local a, b = pts[i - 1], pts[j]
                         local share, place = C.GuardedShare(index, leg.inst, a.x, a.y, b.x, b.y, zs[i - 1], zs[j], true)
+                        if share == 0 and FGPS.Graph then
+                            local G = FGPS.Graph
+                            local dx, dy = b.x - a.x, b.y - a.y
+                            local crow = sqrt(dx * dx + dy * dy)
+                            if crow >= 80 and crow <= 1800 then
+                                local ha = G:Nearest(leg.inst, a.x, a.y, 6, 1)
+                                local hb = G:Nearest(leg.inst, b.x, b.y, 6, 1)
+                                local ka, kb = ha[1] and ha[1].key, hb[1] and hb[1].key
+                                if ka and kb and ka ~= kb then
+                                    local maxDist = crow * 2.2
+                                    local function roadTree(root)
+                                        local prev, dist, q, h = { [root] = 0 }, { [root] = 0 }, { root }, 1
+                                        while h <= #q and #q <= 256 do
+                                            local u = q[h]
+                                            h = h + 1
+                                            local du = dist[u]
+                                            G:Neighbors(u, function(nb, kind, yd)
+                                                if prev[nb] == nil and (kind == 4 or kind == 17 or kind == 18) then
+                                                    local nd = du + (yd or 1)
+                                                    if nd <= maxDist then
+                                                        prev[nb], dist[nb] = u, nd
+                                                        q[#q + 1] = nb
+                                                    end
+                                                end
+                                            end)
+                                        end
+                                        return prev, dist, q
+                                    end
+                                    local prevA, distA, qA = roadTree(ka)
+                                    local bestCost, bestU, bestV = maxDist + 1, nil, nil
+                                    if prevA[kb] ~= nil then
+                                        bestU, bestV = kb, kb
+                                    else
+                                        local prevB, distB, qB = roadTree(kb)
+                                        local cellsB, vxOf, vyOf = {}, {}, {}
+                                        for ib = 1, #qB do
+                                            local v = qB[ib]
+                                            local _, vx, vy = G:NodePos(v)
+                                            if vx then
+                                                vxOf[v], vyOf[v] = vx, vy
+                                                local ck = floor(vx / 90) * 131072 + floor(vy / 90)
+                                                local list = cellsB[ck]
+                                                if not list then list = {}; cellsB[ck] = list end
+                                                list[#list + 1] = v
+                                            end
+                                        end
+                                        for ia = 1, #qA do
+                                            local u = qA[ia]
+                                            if prevB[u] ~= nil then
+                                                local tot = distA[u] + distB[u]
+                                                if tot < bestCost then bestCost, bestU, bestV = tot, u, u end
+                                            else
+                                                local _, ux, uy = G:NodePos(u)
+                                                if ux then
+                                                    local cx, cy = floor(ux / 90), floor(uy / 90)
+                                                    for dcx = -1, 1 do
+                                                        for dcy = -1, 1 do
+                                                            local list = cellsB[(cx + dcx) * 131072 + (cy + dcy)]
+                                                            if list then
+                                                                for k = 1, #list do
+                                                                    local v = list[k]
+                                                                    local dxv, dyv = vxOf[v] - ux, vyOf[v] - uy
+                                                                    local gap = sqrt(dxv * dxv + dyv * dyv)
+                                                                    if gap <= 85 then
+                                                                        local tot = distA[u] + gap + distB[v]
+                                                                        if tot < bestCost then bestCost, bestU, bestV = tot, u, v end
+                                                                    end
+                                                                end
+                                                            end
+                                                        end
+                                                    end
+                                                end
+                                            end
+                                        end
+                                        if bestU then
+                                            local cur = bestV
+                                            while cur ~= kb and cur ~= 0 do
+                                                local nxt = prevB[cur]
+                                                if nxt and nxt ~= 0 then
+                                                    local _, ux, uy = G:NodePos(cur)
+                                                    local _, vx, vy = G:NodePos(nxt)
+                                                    if ux and vx then
+                                                        local s2, pl2 = C.GuardedShare(index, leg.inst, ux, uy, vx, vy, G:NodeHeight(cur), G:NodeHeight(nxt), true)
+                                                        if s2 > 0 and not held[pl2] and not named[pl2] then
+                                                            share, place = s2, pl2
+                                                            break
+                                                        end
+                                                    end
+                                                end
+                                                cur = nxt or 0
+                                            end
+                                        end
+                                    end
+                                    if bestU and share == 0 then
+                                        if bestU ~= bestV then
+                                            local _, ux, uy = G:NodePos(bestU)
+                                            local _, vx, vy = G:NodePos(bestV)
+                                            if ux and vx then
+                                                local s2, pl2 = C.GuardedShare(index, leg.inst, ux, uy, vx, vy, G:NodeHeight(bestU), G:NodeHeight(bestV), true)
+                                                if s2 > 0 and not held[pl2] and not named[pl2] then share, place = s2, pl2 end
+                                            end
+                                        end
+                                        local cur = bestU
+                                        while share == 0 and cur ~= ka and cur ~= 0 do
+                                            local p = prevA[cur]
+                                            if p and p ~= 0 then
+                                                local _, ux, uy = G:NodePos(p)
+                                                local _, vx, vy = G:NodePos(cur)
+                                                if ux and vx then
+                                                    local s2, pl2 = C.GuardedShare(index, leg.inst, ux, uy, vx, vy, G:NodeHeight(p), G:NodeHeight(cur), true)
+                                                    if s2 > 0 and not held[pl2] and not named[pl2] then
+                                                        share, place = s2, pl2
+                                                        break
+                                                    end
+                                                end
+                                            end
+                                            cur = p or 0
+                                        end
+                                    end
+                                end
+                            end
+                        end
                         if share > 0 and not held[place] and not named[place] then
                             leg.guardedRoundAt = leg.guardedRoundAt or {}
                             leg.guardedRoundAt[i - 1] = place.name or false
@@ -6264,10 +7079,11 @@ function Router._computeGoals(handle)
         if not Scheduler().Yield() then return cancelled() end
         ctx.originZ = origin.z
         if not ctx.originZ then
-            ctx.originZ = guessHeight(ctx.originAttach, true, nil, origin.zHint)
+            ctx.originZ = guessHeight(ctx.originAttach, true, nil, origin.zHint) or ctx.originWaterZ
             ctx.originGuessed = ctx.originZ ~= nil or nil
             if not ctx.originZ then ctx.originZg = guessHeight(ctx.originAttach, true, true, origin.zHint) end
         end
+        ctx.originStacked = ctx.originZ ~= nil and levelsApart(ctx.originAttach) or nil
         for i = 1, nStops do
             local goal = Router._prepareGoal(ctx, stops[i], goalKeys[i], cities[i])
             goal.index = i

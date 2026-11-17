@@ -119,10 +119,19 @@ local function goTo(dest, mode)
 end
 
 
+
 function Favorites:Add(dest)
+    if not isPlace(dest) or isFavorite(dest) then return false end
     local Search = places()
-    if not (isPlace(dest) and Search and Search.ToggleFavorite) or isFavorite(dest) then return false end
-    return Search:ToggleFavorite(dest)
+    if Search and Search.ToggleFavorite then
+        return Search:ToggleFavorite(dest)
+    end
+    local Destinations = FGPS.Destinations
+    if not (Destinations and Destinations.AddFavorite) then return false end
+    local ok = Destinations.AddFavorite(dest)
+    if not ok then return false end
+    FGPS:Print(L["Added to favorites: %s"], describe(dest))
+    return true
 end
 
 

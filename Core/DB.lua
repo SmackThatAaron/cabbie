@@ -68,19 +68,17 @@ local settingsDefaults = {
     roadBeacon = true,
     inWorldPin = false,
 
-
     windowSounds = true,
     mapClickModifier = "CTRL_RIGHT",
     removeStopOnMarkerOnly = false,
     goToMapPin = true,
     askCorpseRun = false,
     combatMode = "visuals_only",
-
-    voice = { enabled = false, systemVoice = false, rate = 0, volume = 70, verbosity = "normal" },
     transports = { taxi = true, boat = true, zeppelin = true, tram = true, hearth = true, spells = true },
     routing = { preferRoads = true, roadShortcuts = false, allowUnverified = true, arrivalRadius = 50,
                 offRouteYards = 40, recalcMinSeconds = 5, assumeMount = "auto",
-                avoidGuarded = true },
+                avoidGuarded = true,
+                highRes = false },
 
 
     perf = { instrument = true, frameBudgetMs = 4, spareFrame = true, frameBudgetMaxMs = 12 },
@@ -398,16 +396,27 @@ end
 
 
 
+
+
+
 local function dropRetired(self)
     self.account.routeReports = nil
     if not FGPS:IsOwnerInstall() then
         self.account.lastSession = nil
         self.account.selftest = nil
+    elseif type(self.account.lastSession) == "table" then
+        self.account.lastSession.voice = nil
+        self.account.lastSession.ttsStatus = nil
     end
     local settings = self.account.settings
     if type(settings) == "table" then
         settings.learnPaths = nil
         settings.factionAccent = nil
+        settings.voice = nil
+        settings.cues = nil
+        if settings.combatMode == "all" then
+            settings.combatMode = "visuals_only"
+        end
         if type(settings.routing) == "table" then
             settings.routing.avoidDanger = nil
             settings.routing.dangerMargin = nil

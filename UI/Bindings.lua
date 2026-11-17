@@ -68,13 +68,7 @@ local function actionSearch()
 end
 
 
-
 local function actionRepeat()
-    local Voice = FGPS.UI.Voice
-    if Voice and Voice.Repeat and Voice:IsEnabled() and Voice:IsAvailable() then
-        return Voice:Repeat() and true or false
-    end
-
     local Navigator = navigator()
     local progress = Navigator and Navigator.GetProgress and select(2, pcall(Navigator.GetProgress, Navigator)) or nil
     local step = type(progress) == "table" and progress.currentStep or nil
@@ -85,19 +79,6 @@ local function actionRepeat()
     end
     FGPS:Print(L["There is no instruction to repeat."])
     return false
-end
-
-
-
-local function actionMute()
-    local Voice = FGPS.UI.Voice
-    if not Voice or not Voice.Mute then
-        FGPS:Print(L["Voice guidance is not available in this session."])
-        return false
-    end
-    Voice:Mute()
-    FGPS:Print(L["Voice guidance muted; queued speech cleared."])
-    return true
 end
 
 
@@ -200,13 +181,12 @@ end
 
 
 
-Bindings.ORDER = { "goTo", "search", "pauseResume", "repeat", "mute", "cancel", "clear", "mapDestination" }
+Bindings.ORDER = { "goTo", "search", "pauseResume", "repeat", "cancel", "clear", "mapDestination" }
 Bindings.ACTIONS = {
     goTo = { binding = "CABBIE_GOTO", label = "Go to a place", run = actionGoTo },
     search = { binding = "CABBIE_SEARCH", label = "Open the Places page", run = actionSearch },
     pauseResume = { binding = "CABBIE_PAUSE_RESUME", label = "Pause or resume guidance", run = actionPauseResume },
     ["repeat"] = { binding = "CABBIE_REPEAT", label = "Repeat the current instruction", run = actionRepeat },
-    mute = { binding = "CABBIE_MUTE", label = "Mute voice guidance", run = actionMute },
 
 
 

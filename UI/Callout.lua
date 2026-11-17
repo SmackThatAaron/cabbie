@@ -112,6 +112,9 @@ Callout.ROTATION = {
 
 Callout.TURN_MARK = "Interface\\AddOns\\Cabbie\\Media\\turn_mark"
 Callout.TURN_MARK_SIZE = 32
+Callout.ELEVATION_MARK = "Interface\\AddOns\\Cabbie\\Media\\arrow_chevron"
+Callout.ELEVATION_MARK_SIZE = 16
+Callout.elevCache = { dir = nil, goal = false, yards = nil, units = nil, cb = nil, onGlyph = nil }
 Callout.MARK_SIDE = {
     slight_left = "left", left = "left", sharp_left = "left",
     slight_right = "right", right = "right", sharp_right = "right",
@@ -354,8 +357,8 @@ end
 local function sizeWords(frame, scale)
     if (frame.fgpsTextScale or 1) == scale then return end
     frame.fgpsTextScale = scale
-    for _, line in ipairs({ frame.Text, frame.Ruler, frame.Distance }) do
-        setFont(frame, line, line.fgpsRole, scale)
+    for _, line in ipairs({ frame.Text, frame.Ruler, frame.Distance, frame.Elevation }) do
+        if line then setFont(frame, line, line.fgpsRole, scale) end
     end
     fitWords(frame, frame.Ruler:GetText() or "")
 end
@@ -387,6 +390,10 @@ local function applyLook(frame)
     local mark = math.floor(Callout.TURN_MARK_SIZE * textScale + 0.5)
     frame.TurnMark:SetSize(mark, mark)
     frame.fgpsMarkSize = mark
+    if frame.ElevationMark then
+        local elevSz = math.floor(Callout.ELEVATION_MARK_SIZE * textScale + 0.5)
+        frame.ElevationMark:SetSize(elevSz, elevSz)
+    end
     local line = math.floor(Callout.LINE_HEIGHT * textScale + 0.5)
     local height = glyph + Callout.GLYPH_GAP + line + Callout.TEXT_BOTTOM
     if frame:GetHeight() == height and frame:GetNumPoints() > 0 then return end
@@ -409,6 +416,27 @@ local function enabled()
     if not FGPS.UI.Guide.Enabled() then return false end
     local DB = FGPS.DB
     return not (DB and DB.Get) or DB:Get("callout.enabled") ~= false
+end
+
+
+
+
+
+local function fallbackEnabled(callout)
+    if not FGPS.UI.Guide.Enabled() then return false end
+    local Pin = FGPS.UI.InWorldPin
+    if not (Pin and Pin.IsEnabled and Pin.IsEnabled()) then return false end
+    if Pin.IsActive and Pin.IsActive() then return false end
+    local pst = Pin.state
+    if not pst or pst.backedOff or pst.suppressed then return false end
+    if callout.answer then return false end
+    if callout.key == "rooms" or callout.key == "lost" then return true end
+    local prog = pst.progress
+    if not pst.route or not prog or (pst.navState ~= "active" and pst.navState ~= "in_transit") then return false end
+    local Coords = FGPS.Coords
+    if Coords and Coords.IsInstanced and Coords.IsInstanced() then return true end
+    if prog.positionAvailable == false then return true end
+    return type(pst.unavailableMaps) == "table" and next(pst.unavailableMaps) ~= nil
 end
 
 
@@ -444,8 +472,15 @@ local function createFrame()
 
     frame:SetScript("OnHide", function(self)
         Callout.glyph = nil
+        local ec = Callout.elevCache
+        ec.dir, ec.goal, ec.yards, ec.units, ec.cb = nil, false, nil, nil, nil
         Look.ForgetLine(self.Text)
         Look.ForgetLine(self.Distance)
+        if self.Elevation then
+            Look.ForgetLine(self.Elevation)
+            self.Elevation:Hide()
+        end
+        if self.ElevationMark then self.ElevationMark:Hide() end
     end)
 
 
@@ -463,15 +498,24 @@ local function createFrame()
     frame.Ruler:SetAlpha(0)
     frame.Distance = frame:CreateFontString(nil, "OVERLAY", Look.Font("callout"))
     placeDistance(frame, false)
+    frame.Elevation = frame:CreateFontString(nil, "OVERLAY", Look.Font("mapLabel"))
+    if frame.Elevation.SetWordWrap then frame.Elevation:SetWordWrap(false) end
+    frame.Elevation:Hide()
 
 
 
 
-    frame.fgpsFonts = { scroll = fontOf(frame.Text, ""), callout = fontOf(frame.Distance, "OUTLINE") }
+    frame.fgpsFonts = {
+        scroll = fontOf(frame.Text, ""),
+        callout = fontOf(frame.Distance, "OUTLINE"),
+        elevation = fontOf(frame.Elevation, "OUTLINE"),
+    }
     frame.fgpsFonts.scroll.shadow = shadowOf(Look.Font("scroll"))
     frame.fgpsFonts.callout.shadow = shadowOf(Look.Font("callout"))
+    frame.fgpsFonts.elevation.shadow = shadowOf(Look.Font("mapLabel"))
     frame.Text.fgpsRole, frame.Ruler.fgpsRole, frame.Distance.fgpsRole = "scroll", "scroll", "callout"
-    frame.Text.fgpsScale, frame.Ruler.fgpsScale, frame.Distance.fgpsScale = 1, 1, 1
+    frame.Elevation.fgpsRole = "elevation"
+    frame.Text.fgpsScale, frame.Ruler.fgpsScale, frame.Distance.fgpsScale, frame.Elevation.fgpsScale = 1, 1, 1, 1
 
 
     frame.Scroll = frame:CreateTexture(nil, "BACKGROUND")
@@ -492,6 +536,13 @@ local function createFrame()
     frame.Glyph:SetSize(Callout.GLYPH_SIZE, Callout.GLYPH_SIZE)
     frame.Glyph:SetPoint("TOP", frame, "TOP", 0, 0)
     frame.Glyph:Hide()
+    frame.ElevationMark = frame:CreateTexture(nil, "ARTWORK")
+    frame.ElevationMark:SetTexture(Callout.ELEVATION_MARK)
+    frame.ElevationMark:SetSize(Callout.ELEVATION_MARK_SIZE, Callout.ELEVATION_MARK_SIZE)
+    frame.ElevationMark:SetPoint("LEFT", frame.Glyph, "RIGHT", 6, 0)
+    frame.ElevationMark:Hide()
+    frame.Elevation:SetPoint("LEFT", frame.ElevationMark, "RIGHT", 3, 0)
+    Callout.elevCache.onGlyph = true
 
 
 
@@ -527,50 +578,163 @@ end
 
 
 
+local function pointAtCum(pts, cum, n, startIdx, along)
+    if along <= 0 then return pts[1].x, pts[1].y end
+    local total = cum.total or 0
+    if along >= total then return pts[n].x, pts[n].y end
+    local lo = startIdx
+    if lo < 1 then lo = 1 elseif lo > n - 1 then lo = n - 1 end
+    while lo > 1 and cum[lo] > along do lo = lo - 1 end
+    for i = lo, n - 1 do
+        local nextAlong = cum[i + 1]
+        if nextAlong >= along then
+            local seg = nextAlong - cum[i]
+            local u = seg > 0 and (along - cum[i]) / seg or 0
+            local a, b = pts[i], pts[i + 1]
+            return a.x + (b.x - a.x) * u, a.y + (b.y - a.y) * u
+        end
+    end
+    return pts[n].x, pts[n].y
+end
+
+
 local function turnArrow(frame, elapsed)
     local line = Callout.live
     local Coords = FGPS.Coords
     if not (line and Coords) then return end
-    local dirX, dirY, aheadYards = line.dirX, line.dirY, line.aheadYards
-    if Callout.blendLeft > 0 then
-        local left = Callout.blendLeft - (elapsed or 0)
-        if left < 0 then left = 0 end
-        Callout.blendLeft = left
-        local u = 1 - left / Callout.BLEND_SECONDS
-        Callout.shownX = Callout.fromX + (line.aimX - Callout.fromX) * u
-        Callout.shownY = Callout.fromY + (line.aimY - Callout.fromY) * u
-        if dirX and dirY and Callout.fromDirX and Callout.fromDirY then
-            local bx = Callout.fromDirX + (dirX - Callout.fromDirX) * u
-            local by = Callout.fromDirY + (dirY - Callout.fromDirY) * u
-            local blen = sqrt(bx * bx + by * by)
-            if blen > 1e-4 then
-                Callout.shownDirX, Callout.shownDirY = bx / blen, by / blen
+    local dirX, dirY, aheadYards, corridorYards = line.dirX, line.dirY, line.aheadYards, line.corridorYards
+    local facing = Coords.PlayerFacing()
+    local px, py, pinst
+    if facing then px, py, pinst = Coords.PlayerXY() end
+
+    local projectedLive = false
+    local liveLeg = line.liveLeg
+    if liveLeg and px and pinst == line.aimInst and Callout.blendLeft <= 0 then
+        local pts = liveLeg.points
+        local cum = liveLeg._cum
+        local nPts = pts and #pts or 0
+        if cum and nPts >= 2 then
+            local segIdx = line.liveSegIdx or 1
+            local sLo = segIdx - 1
+            if sLo < 1 then sLo = 1 end
+            local sHi = segIdx + 3
+            if sHi > nPts - 1 then sHi = nPts - 1 end
+            local bestSq, bestAlong = 1e30, nil
+            for i = sLo, sHi do
+                local a, b = pts[i], pts[i + 1]
+                local vx, vy = b.x - a.x, b.y - a.y
+                local len2 = vx * vx + vy * vy
+                local t = 0
+                if len2 > 1e-6 then
+                    t = ((px - a.x) * vx + (py - a.y) * vy) / len2
+                    if t < 0 then t = 0 elseif t > 1 then t = 1 end
+                end
+                local dxp = a.x + vx * t - px
+                local dyp = a.y + vy * t - py
+                local dsq = dxp * dxp + dyp * dyp
+                if dsq < bestSq then
+                    bestSq = dsq
+                    bestAlong = cum[i] + (cum[i + 1] - cum[i]) * t
+                end
+            end
+            if bestAlong and bestSq <= 1600 then
+                local minAlong = line.liveMinAlong or 0
+                if bestAlong < minAlong then bestAlong = minAlong end
+                local total = cum.total or 0
+                local ahead = bestAlong + (line.liveLookYards or aheadYards or 0)
+                local corridorScale = 1
+                local holdAt = line.liveHoldAt
+                if holdAt then
+                    local d = holdAt - bestAlong
+                    local h = line.liveHoldYards or 12
+                    local cap = d >= h and holdAt or (d >= 0 and (holdAt + h - d) or (holdAt + h - 2 * d))
+                    if cap < ahead then ahead = cap end
+                    if d >= 0 then
+                        if d <= h then corridorScale = 0
+                        elseif d < h + 20 then corridorScale = (d - h) / 20 end
+                    elseif d > -12 then
+                        corridorScale = -d / 12
+                    end
+                end
+                local maxAhead = line.liveMaxAhead
+                if maxAhead and ahead > maxAhead then ahead = maxAhead end
+                if ahead > total then ahead = total end
+                if ahead < 0 then ahead = 0 end
+
+                local ax, ay = pointAtCum(pts, cum, nPts, sLo, ahead)
+                local baseAlong = bestAlong > 0 and bestAlong or 0
+                if pts[2] and pts[2].k == 14 and cum[2] and baseAlong < cum[2] and ahead > cum[2] then
+                    baseAlong = cum[2]
+                end
+                local bx, by = pointAtCum(pts, cum, nPts, sLo, baseAlong)
+                local ldx, ldy = ax - bx, ay - by
+                local llen = sqrt(ldx * ldx + ldy * ldy)
+                if llen > 1e-4 then
+                    dirX, dirY = ldx / llen, ldy / llen
+                end
+                aheadYards = ahead - bestAlong
+                if aheadYards < 0 then aheadYards = 0 end
+                if holdAt then
+                    local minC = Callout.CORRIDOR_YARDS
+                    local maxC = (FGPS.Const and FGPS.Const.ROAD_CORRIDOR_YARDS) or 20
+                    if maxC < minC then maxC = minC end
+                    corridorYards = line.liveTight and minC or (minC + (maxC - minC) * corridorScale)
+                end
+                Callout.shownX, Callout.shownY = ax, ay
+                Callout.shownDirX, Callout.shownDirY = dirX, dirY
+                Callout.shownAhead, Callout.shownCorridor = aheadYards, corridorYards
+                projectedLive = true
+            end
+        end
+    end
+
+    if not projectedLive then
+        if Callout.blendLeft > 0 then
+            local left = Callout.blendLeft - (elapsed or 0)
+            if left < 0 then left = 0 end
+            Callout.blendLeft = left
+            local u = 1 - left / Callout.BLEND_SECONDS
+            Callout.shownX = Callout.fromX + (line.aimX - Callout.fromX) * u
+            Callout.shownY = Callout.fromY + (line.aimY - Callout.fromY) * u
+            if dirX and dirY and Callout.fromDirX and Callout.fromDirY then
+                local bx = Callout.fromDirX + (dirX - Callout.fromDirX) * u
+                local by = Callout.fromDirY + (dirY - Callout.fromDirY) * u
+                local blen = sqrt(bx * bx + by * by)
+                if blen > 1e-4 then
+                    Callout.shownDirX, Callout.shownDirY = bx / blen, by / blen
+                else
+                    Callout.shownDirX, Callout.shownDirY = dirX, dirY
+                end
             else
                 Callout.shownDirX, Callout.shownDirY = dirX, dirY
             end
+            if aheadYards and Callout.fromAhead then
+                Callout.shownAhead = Callout.fromAhead + (aheadYards - Callout.fromAhead) * u
+            else
+                Callout.shownAhead = aheadYards
+            end
+            if corridorYards and Callout.fromCorridor then
+                Callout.shownCorridor = Callout.fromCorridor + (corridorYards - Callout.fromCorridor) * u
+            else
+                Callout.shownCorridor = corridorYards
+            end
         else
-            Callout.shownDirX, Callout.shownDirY = dirX, dirY
+            Callout.shownX, Callout.shownY = line.aimX, line.aimY
+            Callout.shownDirX, Callout.shownDirY, Callout.shownAhead = dirX, dirY, aheadYards
+            Callout.shownCorridor = corridorYards
         end
-        if aheadYards and Callout.fromAhead then
-            Callout.shownAhead = Callout.fromAhead + (aheadYards - Callout.fromAhead) * u
-        else
-            Callout.shownAhead = aheadYards
-        end
-    else
-        Callout.shownX, Callout.shownY = line.aimX, line.aimY
-        Callout.shownDirX, Callout.shownDirY, Callout.shownAhead = dirX, dirY, aheadYards
     end
     local aimX, aimY = Callout.shownX, Callout.shownY
     local rotation
-    local facing = Coords.PlayerFacing()
     if facing then
-        local x, y, inst = Coords.PlayerXY()
+        local x, y, inst = px, py, pinst
         if x and inst == line.aimInst then
             local dx, dy = aimX - x, aimY - y
             local tx, ty = Callout.shownDirX, Callout.shownDirY
-            local buf = Callout.CORRIDOR_YARDS
+            local buf = Callout.shownCorridor or Callout.CORRIDOR_YARDS
             if tx and ty and buf > 0 then
                 local look = Callout.CORRIDOR_LOOKAHEAD_YARDS
+                if buf * 0.6 > look then look = buf * 0.6 end
                 local rem = Callout.shownAhead
                 if type(rem) == "number" and rem < look then
                     local s = rem > 0 and (rem / look) or 0
@@ -816,6 +980,65 @@ local function placeScroll(frame, mark, distanceWidth)
     scroll:SetPoint("BOTTOMRIGHT", frame.Text, "BOTTOMRIGHT", right, -upDown)
 end
 
+local function elevationTint(dir)
+    local Skins = FGPS.UI and FGPS.UI.Skins
+    local cb = Skins and Skins.ColorSchemeName and Skins.ColorSchemeName() == "colorblind"
+    if dir == "down" then
+        if cb then return 0.92, 0.46, 0.08, true end
+        return 1.0, 0.62, 0.30, false
+    end
+    if cb then return 0.34, 0.71, 0.91, true end
+    return 0.56, 0.88, 1.0, false
+end
+
+local function paintElevation(frame, callout)
+    local line, mark = frame.Elevation, frame.ElevationMark
+    if not (line and mark) then return end
+    local dir = (not callout.answer and callout.key ~= "notice" and callout.key ~= "wrongway"
+        and (callout.vertical == "up" or callout.vertical == "down")) and callout.vertical or nil
+    local ec = Callout.elevCache
+    if not dir then
+        if ec.dir ~= nil then
+            ec.dir, ec.goal, ec.yards = nil, false, nil
+            FGPS.UI.Look.SetLine(line, "")
+            line:Hide()
+            mark:Hide()
+        end
+        return
+    end
+    local onGlyph = frame.Glyph:IsShown() == true
+    if ec.onGlyph ~= onGlyph then
+        ec.onGlyph = onGlyph
+        mark:ClearAllPoints()
+        if onGlyph then
+            mark:SetPoint("LEFT", frame.Glyph, "RIGHT", 6, 0)
+        else
+            mark:SetPoint("TOP", frame, "TOP", -24, -18)
+        end
+    end
+    local goal = callout.verticalGoal == true
+    local rawYards = callout.verticalYards
+    local yards = (type(rawYards) == "number" and rawYards >= 1) and math.floor(rawYards + 0.5) or nil
+    local units = (FGPS.DB and FGPS.DB.settings and FGPS.DB.settings.units) or "yards"
+    local r, g, b, cb = elevationTint(dir)
+    if ec.dir ~= dir or ec.goal ~= goal or ec.yards ~= yards or ec.units ~= units or ec.cb ~= cb then
+        ec.dir, ec.goal, ec.yards, ec.units, ec.cb = dir, goal, yards, units, cb
+        local L, Look = FGPS.L, FGPS.UI.Look
+        local head = goal and (dir == "down" and L["Goal below"] or L["Goal above"])
+            or (dir == "down" and L["Below"] or L["Above"])
+        local label = head
+        if yards then
+            local distLabel = (Look and Look.Distance and Look.Distance(yards, 1)) or string.format("%d yd", yards)
+            label = head .. " \194\183 " .. distLabel
+        end
+        Look.SetLine(line, label, r, g, b)
+        if mark.SetRotation then mark:SetRotation(dir == "down" and pi or 0) end
+        mark:SetVertexColor(r, g, b, 0.98)
+    end
+    if not line:IsShown() then line:Show() end
+    if not mark:IsShown() then mark:Show() end
+end
+
 
 
 
@@ -824,9 +1047,9 @@ local function paint(model)
     if not frame then return end
     local callout = type(model) == "table" and model.callout or nil
     if type(callout) ~= "table" and Callout.editing then callout = Callout.SAMPLE end
-    if not (type(callout) == "table" and enabled() and not hiddenInCombat()) then
+    if not (type(callout) == "table" and (enabled() or fallbackEnabled(callout)) and not hiddenInCombat()) then
         Callout.live, Callout.shownX, Callout.shownY, Callout.blendLeft = nil, nil, nil, 0
-        Callout.shownDirX, Callout.shownDirY, Callout.shownAhead = nil, nil, nil
+        Callout.shownDirX, Callout.shownDirY, Callout.shownAhead, Callout.shownCorridor = nil, nil, nil, nil
         Callout.offset, Callout.offsetRate, Callout.turnFrom = 0, 0, nil
         Callout.wrongWayPulsed = false
         if frame.Glyph.fgpsOpenCue then
@@ -853,8 +1076,18 @@ local function paint(model)
 
 
 
+
+
+    local Guide = FGPS.UI.Guide
+    local gSteps = (type(callout.key) == "number" and Guide and Guide.route and type(Guide.route.steps) == "table")
+        and Guide.route.steps or nil
+    local step = (gSteps and gSteps[callout.key])
+        or ((type(callout.key) == "number" and Guide and Guide.MarkedStep and Guide.route)
+            and Guide.MarkedStep(Guide.route, Guide.progress) or nil)
+    local joinedCue = step ~= nil and step.index == callout.key and type(step.joined) == "table" and #step.joined > 0
+    local actionAhead = callout.glyph == "ahead" and type(callout.key) == "number"
     local hideWords = not lookFlag("showWords") and not callout.answer
-        and Callout.ROTATION[callout.glyph] ~= nil
+        and Callout.ROTATION[callout.glyph] ~= nil and not actionAhead and not joinedCue
 
 
     local words = not hideWords and (callout.short or callout.text) or ""
@@ -902,22 +1135,27 @@ local function paint(model)
 
     local was = Callout.live
     local sx, sy = Callout.shownX, Callout.shownY
-    local sdx, sdy, sahead = Callout.shownDirX, Callout.shownDirY, Callout.shownAhead
+    local sdx, sdy, sahead, scorridor = Callout.shownDirX, Callout.shownDirY, Callout.shownAhead, Callout.shownCorridor
     local shownRotation = Callout.glyph and frame.Glyph:IsShown() and Callout.rotation or nil
     if live and was and sx and was.aimInst == live.aimInst
         and (live.aimX - sx) ^ 2 + (live.aimY - sy) ^ 2 <= Callout.BLEND_MAX_YARDS * Callout.BLEND_MAX_YARDS then
-        if live.aimX ~= was.aimX or live.aimY ~= was.aimY
-            or live.dirX ~= was.dirX or live.dirY ~= was.dirY or live.aheadYards ~= was.aheadYards then
+        if live.liveLeg ~= nil and was.liveLeg == live.liveLeg then
+
+            Callout.blendLeft = 0
+        elseif live.aimX ~= was.aimX or live.aimY ~= was.aimY
+            or live.dirX ~= was.dirX or live.dirY ~= was.dirY
+            or live.aheadYards ~= was.aheadYards or live.corridorYards ~= was.corridorYards then
             Callout.fromX, Callout.fromY, Callout.blendLeft = sx, sy, Callout.BLEND_SECONDS
-            Callout.fromDirX, Callout.fromDirY, Callout.fromAhead = sdx, sdy, sahead
+            Callout.fromDirX, Callout.fromDirY, Callout.fromAhead, Callout.fromCorridor = sdx, sdy, sahead, scorridor
         end
     else
         Callout.shownX, Callout.shownY, Callout.blendLeft = nil, nil, 0
-        Callout.shownDirX, Callout.shownDirY, Callout.shownAhead = nil, nil, nil
+        Callout.shownDirX, Callout.shownDirY, Callout.shownAhead, Callout.shownCorridor = nil, nil, nil, nil
         if live then Callout.turnFrom = shownRotation end
     end
     Callout.live = live
     paintGlyph(frame, callout.glyph, live ~= nil)
+    paintElevation(frame, callout)
     if live then
         turnArrow(frame, 0)
     else
@@ -943,6 +1181,7 @@ local function repaint()
     local Guide = FGPS.UI.Guide
     Callout.Paint(Guide and Guide.Get and Guide.Get() or nil)
 end
+Callout.Repaint = repaint
 
 
 local function inFight()
@@ -1032,10 +1271,16 @@ function Callout:Init()
         repaint()
     end, self)
     Events:Register("SETTINGS_CHANGED", function(_, key)
-        if key == "*" or key == "combatMode" or key == "callout" or (type(key) == "string" and key:sub(1, 8) == "callout.") then
+        if key == "*" or key == "combatMode" or key == "callout" or key == "roadBeacon" or key == "inWorldPin"
+            or key == "units" or key == "accessibility.colorScheme"
+            or (type(key) == "string" and key:sub(1, 8) == "callout.") then
             applyLook(Callout.frame)
             repaint()
         end
+    end, self)
+    Events:Register("UI_PRESET_APPLIED", function()
+        applyLook(Callout.frame)
+        repaint()
     end, self)
 
 
