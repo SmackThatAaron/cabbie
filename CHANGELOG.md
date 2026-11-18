@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.10.0 (2026-11-18)
+
+Restart the game completely after updating (a `/reload` will not load updated add-on files and tables of contents).
+
+- **Blackfathom Deeps sunken temple entrance:** Routes from Ashenvale to Blackfathom Deeps (`BFD`) and on inside to its bosses now follow Zoram Strand's spiral stairwell, west archway, and underground corridor right to the dungeon portal instead of stopping on the cliff above, including with **Only use verified paths** turned on.
+- **Multi-level & spiral ramp guidance:** Live route tracking, the on-screen turn arrow, and the 3D Road beacon now stay locked to your current floor on spiral staircases, corkscrew ramps, and vertically overlapping multi-level walkways and dungeons instead of jumping to levels overhead or underneath.
+
 ## 1.9.0 (2026-11-17)
 
 Restart the game completely after updating (a `/reload` will not load new or removed files).

@@ -3,5 +3,5 @@
 local ADDON_NAME, ns = ...
 local core = Cabbie
 if type(core) == "table" and type(core.ResumeData) == "function" then
-    ns.Data = core.ResumeData(ADDON_NAME, "2026.11.17.24")
+    ns.Data = core.ResumeData(ADDON_NAME, "2026.11.18.4")
 end

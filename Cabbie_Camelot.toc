@@ -2,7 +2,7 @@
 ## Title: Cabbie
 ## Notes: Turn-by-turn directions to any place by the fastest practical route.
 ## Author: Cabbie contributors
-## Version: 1.9.0
+## Version: 1.10.0
 ## SavedVariables: CabbieDB
 ## SavedVariablesPerCharacter: CabbieCharDB
 ## X-License: GPL-3.0-or-later

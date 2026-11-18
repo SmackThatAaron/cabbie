@@ -445,7 +445,7 @@ local function inferPlayerZ(inst, x, y, uiMapID)
             local matchZ, ambig
             for i = 1, #im.rooms do
                 local r = im.rooms[i]
-                local rname = Coords.LocalRoomName(r.name, r.areaID) or r.name
+                local rname = Coords.LocalRoomName(r.name, r.area or r.areaID) or r.name
                 if rname == sub and type(r.z) == "number" then
                     if matchZ and math_abs(r.z - matchZ) > 6 then ambig = true break end
                     matchZ = r.z

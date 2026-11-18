@@ -583,12 +583,14 @@ end
 
 local function advanceBeaconMinAhead(legs, li, pos, fx, fy, enterPoint, step, startL, startP, ax, ay, curAlong, basePoint, sightG)
     local minAhead = InWorldPin.BEACON_MIN_AHEAD_YARDS
+    local deckMinAhead = 8
     local cap = InWorldPin.BEACON_CAP_YARDS
     if not ax or distance(pos.x, pos.y, ax, ay) >= minAhead or curAlong >= cap then
         return ax, ay, basePoint, false, nil, false
     end
     local bestX, bestY, bestPoint = ax, ay, basePoint
     local prevPt = basePoint
+    local startZ = pointRawZ(basePoint, sightG)
     for l = startL, #legs do
         local leg = legs[l]
         if type(leg) ~= "table" or (leg.kind ~= nil and leg.kind ~= "walk") then break end
@@ -597,6 +599,9 @@ local function advanceBeaconMinAhead(legs, li, pos, fx, fy, enterPoint, step, st
         local pFrom = (l == startL) and startP or 1
         if prevPt == nil and pFrom > 1 and type(points[pFrom - 1]) == "table" then
             prevPt = points[pFrom - 1]
+        end
+        if startZ == nil and prevPt then
+            startZ = pointRawZ(prevPt, sightG)
         end
         for p = pFrom, #points do
             local pt = points[p]
@@ -610,6 +615,10 @@ local function advanceBeaconMinAhead(legs, li, pos, fx, fy, enterPoint, step, st
                 if l == li and enterPoint and p == enterPoint then
                     return pt.x, pt.y, step, false, "step", false
                 end
+                local ptZ = pointRawZ(pt, sightG)
+                if startZ == nil and ptZ ~= nil then
+                    startZ = ptZ
+                end
                 local remSeg = distance(ax, ay, pt.x, pt.y)
                 if remSeg > 0.001 then
                     if fx and (pt.x - ax) * fx + (pt.y - ay) * fy < -0.35 * remSeg
@@ -617,11 +626,19 @@ local function advanceBeaconMinAhead(legs, li, pos, fx, fy, enterPoint, step, st
                             or distance(pos.x, pos.y, pt.x, pt.y) <= distance(pos.x, pos.y, ax, ay)) then
                         return bestX, bestY, bestPoint, false, nil, false
                     end
-                    if prevPt and distance(pos.x, pos.y, bestX, bestY) >= 15 then
+                    local bestDist = bestX and distance(pos.x, pos.y, bestX, bestY) or 0
+                    if bestDist >= deckMinAhead then
+                        if ((pt.climbForm or (prevPt and prevPt.climbForm) or isMultiDeckPoint(pt) or isMultiDeckPoint(prevPt))
+                                and fx and (pt.x - ax) * fx + (pt.y - ay) * fy <= 0.01 * remSeg)
+                            or (startZ ~= nil and ptZ ~= nil and abs(ptZ - startZ) > 8.5) then
+                            return bestX, bestY, bestPoint, false, nil, false
+                        end
+                    end
+                    if prevPt and bestDist >= 15 then
                         if isMultiDeckPoint(pt) ~= isMultiDeckPoint(prevPt) then
                             return bestX, bestY, bestPoint, false, nil, false
                         end
-                        local ptZ, prevZ = pointRawZ(pt, sightG), pointRawZ(prevPt, sightG)
+                        local prevZ = pointRawZ(prevPt, sightG)
                         if ptZ ~= nil and prevZ ~= nil and abs(ptZ - prevZ) > 12 then
                             return bestX, bestY, bestPoint, false, nil, false
                         end
@@ -764,7 +781,7 @@ local function sightTarget(route, progress, pos, useBeacon)
                     baseZ, minSightZ, maxSightZ = ptZ, ptZ, ptZ
                 end
                 local seg = distance(cx, cy, pt.x, pt.y)
-                if useBeacon and not fx then
+                if not fx then
                     if seg > 0.5 then
                         fx, fy = (pt.x - cx) / seg, (pt.y - cy) / seg
                     elseif p > 1 and type(points[p - 1]) == "table" and points[p - 1].x then
@@ -773,13 +790,22 @@ local function sightTarget(route, progress, pos, useBeacon)
                     end
                 end
                 if not useBeacon then
+                    local multiDeck = isMultiDeckPoint(pt) or isMultiDeckPoint(prevPt)
+                        or pt.climbForm or (prevPt and prevPt.climbForm)
+                    local pinSight = multiDeck and 4.5 or sight
+                    if bestX and distance(pos.x, pos.y, bestX, bestY) >= 8 then
+                        if (multiDeck and fx and (pt.x - cx) * fx + (pt.y - cy) * fy <= 0.01 * seg)
+                            or (baseZ ~= nil and ptZ ~= nil and abs(ptZ - baseZ) > 8.5) then
+                            return bestX, bestY, bestPoint
+                        end
+                    end
                     if along + seg >= cap then
                         local u = (cap - along) / seg
                         local x, y = cx + (pt.x - cx) * u, cy + (pt.y - cy) * u
-                        if inSight(pos, count, x, y, sight) then return x, y, nil end
+                        if inSight(pos, count, x, y, pinSight) then return x, y, nil end
                         return bestX, bestY, bestPoint
                     end
-                    if not inSight(pos, count, pt.x, pt.y, sight) then return bestX, bestY, bestPoint end
+                    if not inSight(pos, count, pt.x, pt.y, pinSight) then return bestX, bestY, bestPoint end
                     bestX, bestY, bestPoint = pt.x, pt.y, pt
                     count = count + 1
                     passed[count] = pt
@@ -789,10 +815,12 @@ local function sightTarget(route, progress, pos, useBeacon)
                         and (enterPoint ~= nil or along + seg > turnRelease)
                     local segSight = sight
                     if not lockTurn then
-                        local tightCorridor = isMultiDeckPoint(pt) or isMultiDeckPoint(prevPt)
+                        local multiDeck = isMultiDeckPoint(pt) or isMultiDeckPoint(prevPt)
+                            or pt.climbForm or (prevPt and prevPt.climbForm)
+                        local tightCorridor = multiDeck
                             or pt.k == 1 or pt.k == 2 or pt.k == 16 or pt.k == 22
                             or (baseZ ~= nil and ptZ ~= nil and abs(ptZ - baseZ) > 4.5)
-                        if tightCorridor and along + seg > 28 then
+                        if multiDeck or (tightCorridor and along + seg > 28) then
                             segSight = InWorldPin.BEACON_CANYON_SIGHT_YARDS or 3.5
                         elseif along + seg > 38 then
                             segSight = InWorldPin.BEACON_FAR_SIGHT_YARDS or 6

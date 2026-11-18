@@ -72,7 +72,7 @@ Guide.LIVE_STILL_SECONDS = 3
 local HOLD_KINDS = {
     turn_slight_left = true, turn_left = true, turn_sharp_left = true,
     turn_slight_right = true, turn_right = true, turn_sharp_right = true,
-    uturn = true, enter = true, level = true,
+    uturn = true, enter = true, level = true, ramp = true,
 }
 
 
@@ -565,7 +565,7 @@ function Guide.Aim(route, progress, speed)
     local tightStretch = (type(target) == "table" and (target.indoor or target.stacked or target.climbForm or target.door))
         or (type(prev) == "table" and (prev.indoor or prev.stacked or prev.climbForm or prev.door))
     local yards = Guide.LookAheadYards(speed)
-    if type(target) == "table" and (target.indoor or target.stacked) then yards = Guide.LOOKAHEAD_MIN_YARDS end
+    if tightStretch then yards = Guide.LOOKAHEAD_MIN_YARDS end
     local cum = Route.Cumulative(leg)
     local total = cum.total or 0
     local ahead, corridorScale = heldAt(route, progress, cum, along, along + yards)
@@ -625,7 +625,7 @@ local function attachLiveWindow(line, route, progress, speed)
     local tightStretch = (type(target) == "table" and (target.indoor or target.stacked or target.climbForm or target.door))
         or (type(prev) == "table" and (prev.indoor or prev.stacked or prev.climbForm or prev.door))
     local lookYards = Guide.LookAheadYards(speed)
-    if type(target) == "table" and (target.indoor or target.stacked) then lookYards = Guide.LOOKAHEAD_MIN_YARDS end
+    if tightStretch then lookYards = Guide.LOOKAHEAD_MIN_YARDS end
 
     local segIdx = pIdx - 1
     if segIdx < 1 then segIdx = 1 elseif segIdx > n - 1 then segIdx = n - 1 end
@@ -669,6 +669,9 @@ local function attachLiveWindow(line, route, progress, speed)
     line.liveHoldYards = Guide.HOLD_YARDS
     line.liveMaxAhead = otherCap
     line.liveTight = tightStretch or nil
+    line.liveZ = type(progress.playerZ) == "number" and progress.playerZ
+        or (type(progress.levelZ) == "number" and progress.levelZ)
+        or nil
 end
 
 

@@ -1843,30 +1843,63 @@ function Graph:Nearest(inst, x, y, radiusYards, maxCount, filterFn, z)
     local maxRing = ceil(radiusYards / CELL)
     if maxCount == 1 then return self:_nearestOne(g, inst, x, y, radiusSq, maxRing, filterFn, z) end
     if type(z) == "number" then
-        local poolMax = maxCount * 4
-        if poolMax < 24 then poolMax = 24 end
-        local raw = self:Nearest(inst, x, y, radiusYards, poolMax, filterFn)
-        if #raw <= 1 then return raw end
-        for i = 1, #raw do
-            local e = raw[i]
-            local _, idx = splitKey(e.key)
-            local nz = unpackHeight(g.z, idx)
-            if nz == nil then nz = unpackHeight(g.zg, idx) end
-            local d = e.dist
-            local scoreSq = d * d
-            if nz ~= nil then
-                local dz = abs(nz - z) - 6
-                if dz > 0 then scoreSq = scoreSq + (dz * 3) * (dz * 3) end
+        local xs, ys, zs, zgs = g.x, g.y, g.z, g.zg
+        local scored = {}
+        local function scanCellZ(cx, cy)
+            local x0, y0 = cx * CELL, cy * CELL
+            local gx, gy = 0, 0
+            if x < x0 then gx = x0 - x elseif x > x0 + CELL then gx = x - (x0 + CELL) end
+            if y < y0 then gy = y0 - y elseif y > y0 + CELL then gy = y - (y0 + CELL) end
+            if gx * gx + gy * gy > radiusSq then return end
+            local k = cellKey(cx, cy)
+            local cell = grid[k]
+            if not cell then return end
+            local first, last = cellSpan(g, k, cell, x, x0, radiusSq)
+            for i = first, last do
+                local idx = cell[i]
+                local dx = xs[idx] - x
+                local dx2 = dx * dx
+                if dx2 <= radiusSq then
+                    local dy = ys[idx] - y
+                    local dsq = dx2 + dy * dy
+                    if dsq <= radiusSq then
+                        local nz = unpackHeight(zs, idx)
+                        if nz == nil then nz = unpackHeight(zgs, idx) end
+                        local scoreSq = dsq
+                        if nz ~= nil then
+                            local dz = abs(nz - z) - 6
+                            if dz > 0 then scoreSq = dsq + (dz * 3) * (dz * 3) end
+                        end
+                        scored[#scored + 1] = { key = base + idx, idx = idx, dist = sqrt(dsq), scoreSq = scoreSq }
+                    end
+                end
             end
-            e._scoreSq = scoreSq
         end
-        tsort(raw, function(a, b)
-            if a._scoreSq ~= b._scoreSq then return a._scoreSq < b._scoreSq end
+        for r = 0, maxRing do
+            if r == 0 then
+                scanCellZ(cx0, cy0)
+            else
+                for i = -r, r do
+                    scanCellZ(cx0 + i, cy0 - r)
+                    scanCellZ(cx0 + i, cy0 + r)
+                end
+                for j = -r + 1, r - 1 do
+                    scanCellZ(cx0 - r, cy0 + j)
+                    scanCellZ(cx0 + r, cy0 + j)
+                end
+            end
+        end
+        if #scored == 0 then return results end
+        tsort(scored, function(a, b)
+            if a.scoreSq ~= b.scoreSq then return a.scoreSq < b.scoreSq end
             return a.key < b.key
         end)
-        for i = 1, maxCount < #raw and maxCount or #raw do
-            local e = raw[i]
-            results[i] = { key = e.key, dist = e.dist }
+        for i = 1, #scored do
+            local e = scored[i]
+            if not filterFn or filterFn(e.key, e.idx, g) then
+                results[#results + 1] = { key = e.key, dist = e.dist }
+                if #results >= maxCount then break end
+            end
         end
         return results
     end
@@ -1976,7 +2009,7 @@ end
 
 
 
-local function placeFilter(self, g, inst, x, y, list, place, isolated, out, told, statedZ)
+local function placeFilter(self, g, inst, x, y, list, place, isolated, out, told, statedZ, hintZ)
     local surf = g._surf
     if not surf then return list end
     local base = inst * KEY_BASE
@@ -2012,7 +2045,7 @@ local function placeFilter(self, g, inst, x, y, list, place, isolated, out, told
             if nz ~= nil and abs(nz - statedZ) > maxDz then return false end
         end
         return true
-    end)[1]
+    end, statedZ or hintZ)[1]
     if nearest then
         local _, indoor, stacked = placeOf(g, nearest.key - base)
         if indoor or stacked then
@@ -2437,7 +2470,7 @@ function Graph:AttachCandidates(inst, x, y, opts)
         end
     end
     local namedLevels
-    gathered, namedLevels = placeFilter(self, g, inst, x, y, gathered, place, isolated, out, opts.place ~= nil, tonumber(opts.z))
+    gathered, namedLevels = placeFilter(self, g, inst, x, y, gathered, place, isolated, out, opts.place ~= nil, tonumber(opts.z), tonumber(opts.zHint))
     for i = 1, #gathered do out[i] = gathered[i] end
 
 

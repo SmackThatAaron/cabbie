@@ -619,8 +619,11 @@ local function turnArrow(frame, elapsed)
             if sLo < 1 then sLo = 1 end
             local sHi = segIdx + 3
             if sHi > nPts - 1 then sHi = nPts - 1 end
-            local bestSq, bestAlong = 1e30, nil
+            local maxAlong = (line.liveMinAlong or cum[segIdx] or 0) + 28
+            local liveZ = type(line.liveZ) == "number" and line.liveZ or nil
+            local bestSq, bestScoreSq, bestAlong = 1e30, 1e30, nil
             for i = sLo, sHi do
+                if i > sLo and cum[i] > maxAlong then break end
                 local a, b = pts[i], pts[i + 1]
                 local vx, vy = b.x - a.x, b.y - a.y
                 local len2 = vx * vx + vy * vy
@@ -632,7 +635,13 @@ local function turnArrow(frame, elapsed)
                 local dxp = a.x + vx * t - px
                 local dyp = a.y + vy * t - py
                 local dsq = dxp * dxp + dyp * dyp
-                if dsq < bestSq then
+                local scoreSq = dsq
+                if liveZ and type(a.z) == "number" and type(b.z) == "number" then
+                    local dz = abs(a.z + (b.z - a.z) * t - liveZ) - 6
+                    if dz > 0 then scoreSq = dsq + dz * dz * 9 end
+                end
+                if scoreSq < bestScoreSq then
+                    bestScoreSq = scoreSq
                     bestSq = dsq
                     bestAlong = cum[i] + (cum[i + 1] - cum[i]) * t
                 end

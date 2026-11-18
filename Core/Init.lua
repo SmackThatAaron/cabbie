@@ -28,7 +28,7 @@ end
 FGPS.version = metadata("Version") or "0.0.0-dev"
 
 
-FGPS.fileVersion = "1.9.0"
+FGPS.fileVersion = "1.10.0"
 FGPS.title = metadata("Title") or "Cabbie"
 
 function FGPS.UpdatedWhileRunning()

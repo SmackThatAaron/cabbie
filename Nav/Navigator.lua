@@ -450,8 +450,9 @@ local function graphSurfaceZ(self, inst, qx, qy, hintZ)
     end
     local loaded = type(G.loaded) == "table" and G.loaded[inst] or G
     local cx, cy = floor(qx * 0.5), floor(qy * 0.5)
+    local hb = type(hintZ) == "number" and floor(hintZ / 6 + 0.5) or false
     local cache = self._pzCache
-    if cache and cache.g == loaded and cache.inst == inst and cache.cx == cx and cache.cy == cy and cache.ind == indoor then
+    if cache and cache.g == loaded and cache.inst == inst and cache.cx == cx and cache.cy == cy and cache.ind == indoor and cache.hb == hb then
         return cache.z
     end
     local key
@@ -460,7 +461,13 @@ local function graphSurfaceZ(self, inst, qx, qy, hintZ)
         key = G:NearestKey(inst, qx, qy, 20, matchPlayerIndoor, hintZ)
         _pzGraph, _pzIndoor = nil, nil
         if not key and indoor == true then
-            key = G:NearestKey(inst, qx, qy, 20, nil, hintZ)
+            local fb = G:NearestKey(inst, qx, qy, 20, nil, hintZ)
+            if fb then
+                local fz = heightFn(G, fb)
+                if type(hintZ) ~= "number" or (type(fz) == "number" and math.abs(fz - hintZ) <= 12) then
+                    key = fb
+                end
+            end
         end
     else
         key = G:NearestKey(inst, qx, qy, 20, nil, hintZ)
@@ -471,7 +478,7 @@ local function graphSurfaceZ(self, inst, qx, qy, hintZ)
         cache = {}
         self._pzCache = cache
     end
-    cache.g, cache.inst, cache.cx, cache.cy, cache.ind, cache.z = loaded, inst, cx, cy, indoor, nz
+    cache.g, cache.inst, cache.cx, cache.cy, cache.ind, cache.hb, cache.z = loaded, inst, cx, cy, indoor, hb, nz
     return nz
 end
 
@@ -550,7 +557,15 @@ local function projectNear(leg, x, y, fromIndex, sinceAlong, bandYards, z)
     if R and R.ProjectWindow then
         local band = R.WINDOW_BAND_YARDS
         if bandYards and not (band and band >= bandYards) then band = bandYards end
-        local ok, i, t, d, along = pcall(R.ProjectWindow, leg, x, y, fromIndex, R.WINDOW_AHEAD_YARDS, band, sinceAlong, z)
+        local ahead = R.WINDOW_AHEAD_YARDS
+        if sinceAlong and type(leg.points) == "table" then
+            local idx = fromIndex or 1
+            local curPt, prevPt = leg.points[idx], idx > 1 and leg.points[idx - 1] or nil
+            if (curPt and (curPt.climbForm or curPt.selfOverlap)) or (prevPt and (prevPt.climbForm or prevPt.selfOverlap)) then
+                if not ahead or ahead > 32 then ahead = 32 end
+            end
+        end
+        local ok, i, t, d, along = pcall(R.ProjectWindow, leg, x, y, fromIndex, ahead, band, sinceAlong, z)
         if ok and type(i) == "number" and i >= 1 and i <= #leg.points and type(d) == "number" then
             local narrow = R.WINDOW_BAND_YARDS
 
@@ -610,7 +625,11 @@ local function keepContinuous(self, leg, pos, segIndex, perp, along, held, z)
             accept = true
         else
             if moved >= self.PROGRESS_YARDS then
-                local there = alongSegmentCos(leg, segIndex, mx, my, moved)
+                local pts = leg.points
+                local sp = pts and pts[segIndex]
+                local crossDeck = type(z) == "number" and sp and sp.selfOverlap
+                    and type(sp.z) == "number" and math.abs(sp.z - z) > 7.5
+                local there = not crossDeck and alongSegmentCos(leg, segIndex, mx, my, moved) or 0
                 if there > 0.5 and there > alongSegmentCos(leg, ri, mx, my, moved) + 0.5 then
                     m.toward = m.toward + 1
                 else
@@ -3302,7 +3321,7 @@ function Navigator:Advance(pos)
             and perp ~= nil and perp <= corridor
             and d * d <= corridor * corridor + radius * radius
         local wrongDeck = (not isLegEnd) and (not passed) and pt.stacked and not pt.climbForm
-            and refZ ~= nil and type(pt.z) == "number" and math.abs(pt.z - refZ) > 10
+            and refZ ~= nil and type(pt.z) == "number" and math.abs(pt.z - refZ) > 7.5
         if ((d <= radius or inCorridor) and alongOk and not wrongDeck) or passed then
             if isLegEnd then
                 if self:CompleteLeg(p.legIndex, pos) then return end
@@ -3576,7 +3595,7 @@ local function noteLevel(self, pos)
     if not room then
         if pt.stacked and not pt.climbForm and explicitZ ~= nil then
             local expectedZ = legHeightAt(leg, self.progress and self.progress.alongYards) or pt.z
-            if type(expectedZ) == "number" and math.abs(explicitZ - expectedZ) > 9 then
+            if type(expectedZ) == "number" and math.abs(explicitZ - expectedZ) > 7.5 then
                 self.wrongLevelTicks = self.wrongLevelTicks + 1
                 if self.wrongLevelTicks < self.WRONG_LEVEL_TICKS then return end
                 self.wrongLevelTicks = 0
@@ -3611,9 +3630,10 @@ local function noteLevel(self, pos)
     if G and G.Nearest and G.NodeHeight and G.NodePlace and (not G.IsLoaded or G:IsLoaded(inst)) then
         local nearRoom, unstacked = roomHeightsNear(G, inst, pos.x, pos.y, self.TRAIL_ROOM_YARDS, room, place.indoor)
         if unstacked then return end
-        if type(pt.z) == "number" then
+        local expectedZ = legHeightAt(leg, self.progress and self.progress.alongYards) or pt.z
+        if type(expectedZ) == "number" then
             for _, h in ipairs(nearRoom) do
-                if math.abs(h.z - pt.z) <= self.TRAIL_LEVEL_YARDS then return end
+                if math.abs(h.z - expectedZ) <= self.TRAIL_LEVEL_YARDS then return end
             end
         end
     end

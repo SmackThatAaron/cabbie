@@ -26,7 +26,7 @@ FGPS.Data.interiors = {
   {
     name = "Blackfathom Deeps",
     kind = "dungeon",
-    entrance = { inst = 1, x = 743.4, y = 4246.7, map = 1440 },
+    entrance = { inst = 1, x = 743.4, y = 4246.7, map = 1440, z = -24.9 },
     instanceMap = 48,
     status = "entrance-only",
     source = "cmangos:areatrigger_teleport:259 (exit target)",
@@ -38,7 +38,7 @@ FGPS.Data.interiors = {
   {
     name = "Blackrock Depths",
     kind = "dungeon",
-    entrance = { inst = 0, x = -922.2, y = -7178.4, map = 1427 },
+    entrance = { inst = 0, x = -922.2, y = -7178.4, map = 1427, z = 166.1 },
     instanceMap = 230,
     status = "entrance-only",
     source = "cmangos:areatrigger_teleport:1472 (exit target)",
@@ -50,7 +50,7 @@ FGPS.Data.interiors = {
   {
     name = "Blackrock Spire",
     kind = "dungeon",
-    entrance = { inst = 0, x = -1228.4, y = -7524.7, map = 1428 },
+    entrance = { inst = 0, x = -1228.4, y = -7524.7, map = 1428, z = 287.2 },
     instanceMap = 229,
     status = "entrance-only",
     source = "cmangos:areatrigger_teleport:1470 (exit target)",
@@ -81,7 +81,7 @@ FGPS.Data.interiors = {
   {
     name = "Deadmines",
     kind = "dungeon",
-    entrance = { inst = 0, x = 1675.9, y = -11208.7, map = 1436 },
+    entrance = { inst = 0, x = 1675.9, y = -11208.7, map = 1436, z = 24.6 },
     instanceMap = 36,
     status = "entrance-only",
     source = "cmangos:areatrigger_teleport:119 (exit target)",
@@ -93,7 +93,7 @@ FGPS.Data.interiors = {
   {
     name = "Dire Maul",
     kind = "dungeon",
-    entrance = { inst = 1, x = 777.8, y = -3981, map = 1444 },
+    entrance = { inst = 1, x = 777.8, y = -3981, map = 1444, z = 161 },
     instanceMap = 429,
     status = "entrance-only",
     source = "cmangos:areatrigger_teleport:3195 (exit target)",
@@ -104,7 +104,7 @@ FGPS.Data.interiors = {
   {
     name = "Dire Maul (East Back Door)",
     kind = "dungeon",
-    entrance = { inst = 1, x = 129.3, y = -4031.2, map = 1444 },
+    entrance = { inst = 1, x = 129.3, y = -4031.2, map = 1444, z = 26.5 },
     instanceMap = 429,
     status = "entrance-only",
     source = "cmangos:areatrigger_teleport:3196 (exit target)",
@@ -115,7 +115,7 @@ FGPS.Data.interiors = {
   {
     name = "Dire Maul (East)",
     kind = "dungeon",
-    entrance = { inst = 1, x = 934.5, y = -3738.6, map = 1444 },
+    entrance = { inst = 1, x = 934.5, y = -3738.6, map = 1444, z = 161 },
     instanceMap = 429,
     status = "entrance-only",
     source = "cmangos:areatrigger_teleport:3194 (exit target)",
@@ -126,7 +126,7 @@ FGPS.Data.interiors = {
   {
     name = "Dire Maul (North)",
     kind = "dungeon",
-    entrance = { inst = 1, x = 1078.4, y = -3520.2, map = 1444 },
+    entrance = { inst = 1, x = 1078.4, y = -3520.2, map = 1444, z = 161.1 },
     instanceMap = 429,
     status = "entrance-only",
     source = "cmangos:areatrigger_teleport:3193 (exit target)",
@@ -137,7 +137,7 @@ FGPS.Data.interiors = {
   {
     name = "Dire Maul (West Side Door)",
     kind = "dungeon",
-    entrance = { inst = 1, x = 1249.2, y = -3749.4, map = 1444 },
+    entrance = { inst = 1, x = 1249.2, y = -3749.4, map = 1444, z = 160.2 },
     instanceMap = 429,
     status = "entrance-only",
     source = "cmangos:areatrigger_teleport:3191 (exit target)",
@@ -148,7 +148,7 @@ FGPS.Data.interiors = {
   {
     name = "Dire Maul (West)",
     kind = "dungeon",
-    entrance = { inst = 1, x = 1250.5, y = -3829.7, map = 1444 },
+    entrance = { inst = 1, x = 1250.5, y = -3829.7, map = 1444, z = 160.2 },
     instanceMap = 429,
     status = "entrance-only",
     source = "cmangos:areatrigger_teleport:3190 (exit target)",
@@ -169,7 +169,7 @@ FGPS.Data.interiors = {
   {
     name = "Gnomeregan",
     kind = "dungeon",
-    entrance = { inst = 0, x = 927.8, y = -5162.6, map = 1426 },
+    entrance = { inst = 0, x = 927.8, y = -5162.6, map = 1426, z = 257.2 },
     instanceMap = 90,
     status = "entrance-only",
     source = "cmangos:areatrigger_teleport:322 (exit target)",
@@ -181,7 +181,7 @@ FGPS.Data.interiors = {
   {
     name = "Gnomeregan (Train Depot)",
     kind = "dungeon",
-    entrance = { inst = 0, x = 770.2, y = -4859, map = 1426 },
+    entrance = { inst = 0, x = 770.2, y = -4859, map = 1426, z = 241.8 },
     instanceMap = 90,
     status = "entrance-only",
     source = "cmangos:areatrigger_teleport:525 (exit target)",
@@ -193,7 +193,7 @@ FGPS.Data.interiors = {
   {
     name = "Maraudon (Orange)",
     kind = "dungeon",
-    entrance = { inst = 1, x = 2614.2, y = -1468.2, map = 1443 },
+    entrance = { inst = 1, x = 2614.2, y = -1468.2, map = 1443, z = 76.4 },
     instanceMap = 349,
     status = "entrance-only",
     source = "cmangos:areatrigger_teleport:3131 (exit target)",
@@ -205,7 +205,7 @@ FGPS.Data.interiors = {
   {
     name = "Maraudon (Purple)",
     kind = "dungeon",
-    entrance = { inst = 1, x = 2877.4, y = -1182.8, map = 1443 },
+    entrance = { inst = 1, x = 2877.4, y = -1182.8, map = 1443, z = 85.9 },
     instanceMap = 349,
     status = "entrance-only",
     source = "cmangos:areatrigger_teleport:3126 (exit target)",
@@ -217,7 +217,7 @@ FGPS.Data.interiors = {
   {
     name = "Ragefire Chasm",
     kind = "dungeon",
-    entrance = { inst = 1, x = -4419.2, y = 1815, map = 1454 },
+    entrance = { inst = 1, x = -4419.2, y = 1815, map = 1454, z = -18.8 },
     instanceMap = 389,
     status = "entrance-only",
     source = "cmangos:areatrigger_teleport:2226 (exit target)",
@@ -229,7 +229,7 @@ FGPS.Data.interiors = {
   {
     name = "Razorfen Downs",
     kind = "dungeon",
-    entrance = { inst = 1, x = -2524.2, y = -4659.6, map = 1413 },
+    entrance = { inst = 1, x = -2524.2, y = -4659.6, map = 1413, z = 81.4 },
     instanceMap = 129,
     status = "entrance-only",
     source = "cmangos:areatrigger_teleport:444 (exit target)",
@@ -241,7 +241,7 @@ FGPS.Data.interiors = {
   {
     name = "Razorfen Kraul",
     kind = "dungeon",
-    entrance = { inst = 1, x = -1664.3, y = -4463.3, map = 1413 },
+    entrance = { inst = 1, x = -1664.3, y = -4463.3, map = 1413, z = 84 },
     instanceMap = 47,
     status = "entrance-only",
     source = "cmangos:areatrigger_teleport:242 (exit target)",
@@ -263,7 +263,7 @@ FGPS.Data.interiors = {
   {
     name = "Scarlet Monastery (Armory)",
     kind = "dungeon",
-    entrance = { inst = 0, x = -835.8, y = 2886, map = 1420 },
+    entrance = { inst = 0, x = -835.8, y = 2886, map = 1420, z = 160.3 },
     instanceMap = 189,
     status = "entrance-only",
     source = "cmangos:areatrigger_teleport:606 (exit target)",
@@ -275,7 +275,7 @@ FGPS.Data.interiors = {
   {
     name = "Scarlet Monastery (Cathedral)",
     kind = "dungeon",
-    entrance = { inst = 0, x = -823.6, y = 2915.1, map = 1420 },
+    entrance = { inst = 0, x = -823.6, y = 2915.1, map = 1420, z = 160.3 },
     instanceMap = 189,
     status = "entrance-only",
     source = "cmangos:areatrigger_teleport:604 (exit target)",
@@ -287,7 +287,7 @@ FGPS.Data.interiors = {
   {
     name = "Scarlet Monastery (Graveyard)",
     kind = "dungeon",
-    entrance = { inst = 0, x = -801.6, y = 2915.3, map = 1420 },
+    entrance = { inst = 0, x = -801.6, y = 2915.3, map = 1420, z = 160.3 },
     instanceMap = 189,
     status = "entrance-only",
     source = "cmangos:areatrigger_teleport:602 (exit target)",
@@ -299,7 +299,7 @@ FGPS.Data.interiors = {
   {
     name = "Scarlet Monastery (Library)",
     kind = "dungeon",
-    entrance = { inst = 0, x = -820.8, y = 2869.3, map = 1420 },
+    entrance = { inst = 0, x = -820.8, y = 2869.3, map = 1420, z = 160.3 },
     instanceMap = 189,
     status = "entrance-only",
     source = "cmangos:areatrigger_teleport:608 (exit target)",
@@ -311,7 +311,7 @@ FGPS.Data.interiors = {
   {
     name = "Scholomance",
     kind = "dungeon",
-    entrance = { inst = 0, x = -2553.1, y = 1273.9, map = 1422 },
+    entrance = { inst = 0, x = -2553.1, y = 1273.9, map = 1422, z = 91.8 },
     instanceMap = 289,
     status = "entrance-only",
     source = "cmangos:areatrigger_teleport:2568 (exit target)",
@@ -322,7 +322,7 @@ FGPS.Data.interiors = {
   {
     name = "Shadowfang Keep",
     kind = "dungeon",
-    entrance = { inst = 0, x = 1567.5, y = -233, map = 1421 },
+    entrance = { inst = 0, x = 1567.5, y = -233, map = 1421, z = 76.9 },
     instanceMap = 33,
     status = "entrance-only",
     source = "cmangos:areatrigger_teleport:194 (exit target)",
@@ -334,7 +334,7 @@ FGPS.Data.interiors = {
   {
     name = "Stormwind Stockade",
     kind = "dungeon",
-    entrance = { inst = 0, x = 845.5, y = -8766.1, map = 1453 },
+    entrance = { inst = 0, x = 845.5, y = -8766.1, map = 1453, z = 88 },
     instanceMap = 34,
     status = "entrance-only",
     source = "cmangos:areatrigger_teleport:503 (exit target)",
@@ -357,7 +357,7 @@ FGPS.Data.interiors = {
   {
     name = "Stratholme (Back Door)",
     kind = "dungeon",
-    entrance = { inst = 0, x = -4048.3, y = 3233.1, map = 1423 },
+    entrance = { inst = 0, x = -4048.3, y = 3233.1, map = 1423, z = 108.4 },
     instanceMap = 329,
     status = "entrance-only",
     source = "cmangos:areatrigger_teleport:2221 (exit target)",
@@ -379,7 +379,7 @@ FGPS.Data.interiors = {
   {
     name = "Uldaman",
     kind = "dungeon",
-    entrance = { inst = 0, x = -2954.6, y = -6066.2, map = 1432 },
+    entrance = { inst = 0, x = -2954.6, y = -6066.2, map = 1432, z = 209.8 },
     instanceMap = 70,
     status = "entrance-only",
     source = "cmangos:areatrigger_teleport:288 (exit target)",
@@ -390,7 +390,7 @@ FGPS.Data.interiors = {
   {
     name = "Wailing Caverns",
     kind = "dungeon",
-    entrance = { inst = 1, x = -2217.8, y = -738.5, map = 1413 },
+    entrance = { inst = 1, x = -2217.8, y = -738.5, map = 1413, z = 16.9 },
     instanceMap = 43,
     status = "entrance-only",
     source = "cmangos:areatrigger_teleport:226 (exit target)",
@@ -402,7 +402,7 @@ FGPS.Data.interiors = {
   {
     name = "Zul'Farrak",
     kind = "dungeon",
-    entrance = { inst = 1, x = -2890.7, y = -6795.6, map = 1446 },
+    entrance = { inst = 1, x = -2890.7, y = -6795.6, map = 1446, z = 8.9 },
     instanceMap = 209,
     status = "entrance-only",
     source = "cmangos:areatrigger_teleport:922 (exit target)",

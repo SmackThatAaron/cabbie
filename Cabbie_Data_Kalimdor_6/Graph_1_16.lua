@@ -25,9 +25,9 @@ merge(g.cd, (function() return {
 } end)())
 g.hz = {}
 merge(g.hz, (function() return {
-  [1348668] = 1, [1349317] = 1,
+  [1348667] = 1, [1349316] = 1,
 } end)())
-g.surf = { first = 29257, last = 297172, row = 50, w = 2,
+g.surf = { first = 29256, last = 297172, row = 50, w = 2,
   names = {
     "The Great Sea",
     "Jagged Reef",
@@ -5820,6 +5820,6 @@ g.surf = { first = 29257, last = 297172, row = 50, w = 2,
   "-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f",
   "-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f",
   "-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f-f",
-  "-f-f-f-f-f###%#%#%#%#%###%#%#%#%#%#%#%#%##,@#%##&RC[9bA9HeFB9bA9&B@4##5v#&##,@C}##A1A9#$>Z>Z':*1':':",
-  "*1,t#######$#$##5v:N#%#%##'p#%C#",
+  "-f-f-f-f-f###%#%#%#%#%###%#%#%#%#%#%#%#%##,@#%##&RC[9bA9HeFB9bA9&B@4#&##5v#&##,@C}##A1A9#$>Z>Z':*1':",
+  "':*1,t#######$#$##5v:N#%#%##'p#%C#",
 } }

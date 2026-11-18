@@ -3581,7 +3581,7 @@ function Router._shapeTags(fromKey, toKey, ax, ay, mids, bx, by, kind)
 
         tags.room = nameA ~= nil and nameA == nameB and nameA or nil
         tags.indoor = (indoorA and indoorB) and true or nil
-        tags.stacked = (stackedA and stackedB) and true or nil
+        tags.stacked = (stackedA or stackedB) and true or nil
         tags.climbForm = G:ClimbForm(fromKey, toKey)
     end
     if type(zA) == "number" and type(zB) == "number" then
@@ -3630,6 +3630,82 @@ end
 
 
 
+
+
+
+
+function Router._markSelfOverlap(leg)
+    local pts = leg and leg.points
+    local n = type(pts) == "table" and #pts or 0
+    if n < 4 then return end
+    local split = leg.split
+    local cum, total = { 0 }, 0
+    for i = 2, n do
+        if split and i == split + 1 then
+            cum[i] = total
+        else
+            local a, b = pts[i - 1], pts[i]
+            local dx, dy = b.x - a.x, b.y - a.y
+            total = total + sqrt(dx * dx + dy * dy)
+            cum[i] = total
+        end
+    end
+    if total < 24 then return end
+    local cell, stride = 18, 65536
+    local grid, samples, ns = {}, {}, 0
+    local function push(x, y, z, s, i1, i2)
+        ns = ns + 1
+        samples[ns] = { x = x, y = y, z = z, s = s, i1 = i1, i2 = i2 }
+        local k = floor(x / cell) * stride + floor(y / cell)
+        local list = grid[k]
+        if list then list[#list + 1] = ns else grid[k] = { ns } end
+    end
+    for i = 1, n do
+        local p = pts[i]
+        if type(p.z) == "number" then push(p.x, p.y, p.z, cum[i], i, i) end
+        if i < n and not (split and i == split) then
+            local b = pts[i + 1]
+            if type(p.z) == "number" and type(b.z) == "number" then
+                local seg = cum[i + 1] - cum[i]
+                if seg > 12 then
+                    local steps = floor(seg / 10)
+                    for m = 1, steps do
+                        local u = m / (steps + 1)
+                        push(p.x + (b.x - p.x) * u, p.y + (b.y - p.y) * u, p.z + (b.z - p.z) * u, cum[i] + seg * u, i, i + 1)
+                    end
+                end
+            end
+        end
+    end
+    for aIdx = 1, ns do
+        local a = samples[aIdx]
+        local cx, cy = floor(a.x / cell), floor(a.y / cell)
+        for dx = -1, 1 do
+            local base = (cx + dx) * stride
+            for dy = -1, 1 do
+                local list = grid[base + cy + dy]
+                if list then
+                    for j = 1, #list do
+                        local bIdx = list[j]
+                        if bIdx > aIdx then
+                            local b = samples[bIdx]
+                            if abs(b.s - a.s) >= 24 and abs(b.z - a.z) >= 6 then
+                                local qx, qy = b.x - a.x, b.y - a.y
+                                if qx * qx + qy * qy <= 324 then
+                                    pts[a.i1].stacked, pts[a.i1].selfOverlap = true, true
+                                    pts[a.i2].stacked, pts[a.i2].selfOverlap = true, true
+                                    pts[b.i1].stacked, pts[b.i1].selfOverlap = true, true
+                                    pts[b.i2].stacked, pts[b.i2].selfOverlap = true, true
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
 local function finishWalk(leg)
     local R = Route()
     local pts = leg.points
@@ -3663,6 +3739,7 @@ local function finishWalk(leg)
         leg.label = L["Open ground"]
     end
     labelClimb(leg)
+    Router._markSelfOverlap(leg)
     return leg
 end
 
@@ -5350,24 +5427,33 @@ local function guessHeight(candidates, anyLevel, borrowed, hint)
         if z and not cand.offMain and (cand.attachYards or cand.dist) <= reach then onMain = true break end
     end
     local levelZ
+    local onMainNearHint = false
     if type(hint) == "number" then
+        for _, cand in pairs(candidates) do
+            local z, d = borrowed and cand.footZg or cand.footZ, cand.attachYards or cand.dist
+            if z and not cand.offMain and d <= reach and abs(z - hint) <= spread then
+                onMainNearHint = true
+                break
+            end
+        end
         local stacked = false
         for _, cand in pairs(candidates) do
             local z, d = cand.footZ, cand.attachYards or cand.dist
             if borrowed then z = cand.footZg end
-            if onMain and cand.offMain then z = nil end
+            if onMainNearHint and cand.offMain then z = nil end
             if z and d <= reach and abs(z - hint) <= spread then
                 if cand.stacked then stacked = true end
                 local off, cur = abs(z - hint), levelZ and abs(levelZ - hint)
                 if not levelZ or off < cur or (off == cur and z < levelZ) then levelZ = z end
             end
         end
-        if not stacked then levelZ = nil end
+        if not stacked and not levelsApart(candidates) then levelZ = nil end
     end
     for _, cand in pairs(candidates) do
         local z, d = cand.footZ, cand.attachYards or cand.dist
         if borrowed then z = cand.footZg end
-        if onMain and cand.offMain then z = nil end
+        local dropOffMain = onMain and cand.offMain and not (type(hint) == "number" and not onMainNearHint and z and abs(z - hint) <= spread)
+        if dropOffMain then z = nil end
         if z and d <= reach then
 
             if not nearest or d < nearest or (d == nearest and z < best) then nearest, best = d, z end
@@ -6079,8 +6165,11 @@ end
 
 
 function Router._placeKey(p)
-    local name = p.place and p.place.name
-    return type(name) == "string" and name or "-"
+    local pl = p.place
+    if type(pl) ~= "table" then return "-" end
+    local ind = pl.indoor == true and "i" or (pl.indoor == false and "o" or "")
+    local name = type(pl.name) == "string" and pl.name or "-"
+    return ind ~= "" and (ind .. ":" .. name) or name
 end
 
 local function posKey(p)
